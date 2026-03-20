@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QNetworkReply>
+#include <QVariantList>
 
 #include "BiliModels.h"
 
@@ -48,6 +49,7 @@ class BiliController : public QObject {
   // 播放地址
   Q_PROPERTY(QString playUrl READ playUrl NOTIFY playUrlChanged)
   Q_PROPERTY(int playQuality READ playQuality NOTIFY playUrlChanged)
+  Q_PROPERTY(QVariantList acceptQualities READ acceptQualities NOTIFY acceptQualitiesChanged)
 
   // 下载状态
   Q_PROPERTY(bool isDownloading READ isDownloading NOTIFY downloadStateChanged)
@@ -99,6 +101,7 @@ public:
 
   QString playUrl() const;
   int playQuality() const;
+  QVariantList acceptQualities() const;
 
   bool isDownloading() const { return m_isDownloading; }
   double downloadProgress() const { return m_downloadProgress; }
@@ -165,6 +168,7 @@ signals:
   void currentPageChanged();
   void videoDetailChanged();
   void playUrlChanged();
+  void acceptQualitiesChanged();
   void loginStateChanged();
   void qrcodeChanged();
   void globalErrorChanged();
@@ -198,6 +202,7 @@ private:
 
   QString m_playUrl;
   int m_playQuality;
+  QVector<int> m_acceptQualities;
 
   // 下载状态
   bool m_isDownloading;

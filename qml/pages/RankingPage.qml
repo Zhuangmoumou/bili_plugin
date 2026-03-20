@@ -108,6 +108,7 @@ Rectangle {
             viewCount: model.views || ""
             durationText: model.durationText || ""
             bvid: model.bvid || ""
+            showCollection: model.partCount > 1
             onClicked: rankingPage.videoSelected(bvid)
         }
 

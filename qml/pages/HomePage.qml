@@ -100,6 +100,7 @@ Rectangle {
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
                     bvid: model.bvid || ""
+                    showCollection: model.partCount > 1
                     fontFamily: homePage.fontFamily
                     onClicked: homePage.videoSelected(bvid)
                 }
@@ -150,6 +151,7 @@ Rectangle {
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
                     bvid: model.bvid || ""
+                    showCollection: model.partCount > 1
                     rankIndex: index + 1
                     showRank: true
                     fontFamily: homePage.fontFamily

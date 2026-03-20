@@ -50,6 +50,9 @@ BiliController::BiliController(QObject *parent)
   });
   sessionCheckTimer->start(5 * 60 * 1000); // 5 分钟
 
+  // 默认可用清晰度
+  m_acceptQualities = {16, 32, 64};
+
   loadLoginStatus();
   loadSearchHistory();
 }
@@ -125,6 +128,14 @@ QString BiliController::videoPubDate() const {
 
 QString BiliController::playUrl() const { return m_playUrl; }
 int BiliController::playQuality() const { return m_playQuality; }
+
+QVariantList BiliController::acceptQualities() const {
+  QVariantList list;
+  for (int q : m_acceptQualities) {
+    list << q;
+  }
+  return list;
+}
 
 bool BiliController::loggedIn() const { return m_loggedIn; }
 QString BiliController::userName() const { return m_userName; }
@@ -563,6 +574,18 @@ void BiliController::fetchPlayUrl(int quality) {
         QString videoUrl;
         QString audioUrl;
         int finalQuality = 32;
+
+        // 解析可用清晰度
+        QVector<int> newAccepts;
+        QJsonArray accept = data.value("accept_quality").toArray();
+        for (const QJsonValue &v : accept) {
+          int q = v.toInt(0);
+          if (q > 0) newAccepts.append(q);
+        }
+        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
+          self->m_acceptQualities = newAccepts;
+          emit self->acceptQualitiesChanged();
+        }
 
         // 优先 durl 格式（MP4）
         QJsonArray durl = data.value("durl").toArray();

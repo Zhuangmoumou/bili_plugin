@@ -40,6 +40,7 @@ QVariant VideoListModel::data(const QModelIndex &index, int role) const
     case DescRole:      return item.desc;
     case RcmdReasonRole: return item.rcmdReason;
     case DurationTextRole: return formatDuration(item.duration);
+    case PartCountRole: return item.partCount;
     default: return QVariant();
     }
 }
@@ -60,7 +61,8 @@ QHash<int, QByteArray> VideoListModel::roleNames() const
         {CidRole, "cid"},
         {DescRole, "desc"},
         {RcmdReasonRole, "rcmdReason"},
-        {DurationTextRole, "durationText"}
+        {DurationTextRole, "durationText"},
+        {PartCountRole, "partCount"}
     };
 }
 
@@ -153,6 +155,21 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.duration = obj.value("duration").toInt();
     item.cid = obj.value("cid").toVariant().toLongLong();
     item.pubdate = obj.value("pubdate").toVariant().toLongLong();
+
+    // 分P数量（列表接口通常为 videos 字段，可能是字符串）
+    int videos = obj.value("videos").toVariant().toInt();
+    if (videos > 0) {
+        item.partCount = videos;
+    } else {
+        // 有些接口返回 pages 数组或 pages 数值
+        QJsonArray pages = obj.value("pages").toArray();
+        if (!pages.isEmpty()) {
+            item.partCount = pages.size();
+        } else {
+            int pagesCount = obj.value("pages").toVariant().toInt();
+            if (pagesCount > 0) item.partCount = pagesCount;
+        }
+    }
 
     QJsonObject owner = obj.value("owner").toObject();
     item.ownerName = owner.value("name").toString();

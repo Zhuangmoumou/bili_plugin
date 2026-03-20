@@ -25,6 +25,9 @@ Rectangle {
     property string lastPage: "home"
     property bool _animating: false
 
+    // 播放清晰度（由详情页选择）
+    property int playQualitySelected: 16
+
     // 首页推荐列表滚动位置缓存（仅从详情页返回时恢复）
     property real homePopularX: 0
     property bool restoreHomePopularOnShow: false
@@ -134,10 +137,13 @@ Rectangle {
                     controller: root.rootController
                     rootRef: root
                     onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
                         if (homeLoader.item) {
                             root.homePopularX = homeLoader.item.popularContentX();
                         }
-                        root.navigateTo("detail", { bvid: bvid })
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
                     }
                     onSearchRequested: root.navigateTo("search")
                     onLoginRequested: root.navigateTo("user")
@@ -158,7 +164,12 @@ Rectangle {
                         root.rootController.searchModel().clear();
                         root.goBack();
                     }
-                    onVideoSelected: root.navigateTo("detail", { bvid: bvid })
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
                 }
             }
         }
@@ -170,8 +181,12 @@ Rectangle {
                 Pages.VideoDetailPage {
                     controller: root.rootController
                     bvid: root.detailBvid
+                    rootRef: root
                     onBackClicked: root.goBack()
-                    onPlayRequested: root.navigateTo("player")
+                    onPlayRequested: {
+                        root.playQualitySelected = quality;
+                        root.navigateTo("player")
+                    }
                     onCommentsRequested: root.navigateTo("comments")
                 }
             }
@@ -183,6 +198,7 @@ Rectangle {
             sourceComponent: Component {
                 Pages.PlayerPage {
                     controller: root.rootController
+                    playQuality: root.playQualitySelected
                     onBackClicked: root.goBack()
                 }
             }
@@ -206,7 +222,12 @@ Rectangle {
                 Pages.RankingPage {
                     controller: root.rootController
                     onBackClicked: root.goBack()
-                    onVideoSelected: root.navigateTo("detail", { bvid: bvid })
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
                 }
             }
         }

@@ -16,6 +16,8 @@ Rectangle {
     property string upName: ""
     property string viewCount: ""
     property string durationText: ""
+    // 稳妥显示：由外部显式控制是否显示合集
+    property bool showCollection: false
 
     signal clicked(string bvid)
 
@@ -111,11 +113,36 @@ Rectangle {
                 }
             }
 
+            // 合集标识（多P视频）
+            Rectangle {
+                visible: showCollection
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 4
+                anchors.bottomMargin: 4
+                height: 13
+                width: collectionText.implicitWidth + 8
+                radius: Theme.radiusSmall
+                color: Qt.rgba(0.6, 0.6, 0.6, 0.9)
+                z: 2
+
+                Text {
+                    id: collectionText
+                    anchors.centerIn: parent
+                    text: "合集"
+                    color: "#222222"
+                    font.pixelSize: Theme.fontTiny
+                    font.family: Theme.fontFamily
+                    font.bold: true
+                }
+            }
+
             // 底部渐变
             Rectangle {
                 width: parent.width
                 height: 20
                 anchors.bottom: parent.bottom
+                z: 1
                 gradient: Gradient {
                     GradientStop { position: 0.0; color: "transparent" }
                     GradientStop { position: 1.0; color: Theme.bgCard }

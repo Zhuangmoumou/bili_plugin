@@ -15,6 +15,7 @@ Rectangle {
     color: "#000000"
 
     property var controller: null
+    property int playQuality: 16
     signal backClicked()
 
     property bool controlsVisible: true
@@ -510,7 +511,7 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        if (controller) controller.downloadAndPlay(16);
+        if (controller) controller.downloadAndPlay(playQuality);
         hideControlsTimer.start();
     }
 

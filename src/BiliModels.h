@@ -28,6 +28,7 @@ struct VideoItem {
     QString desc;
     QString rcmdReason;
     qint64 pubdate = 0;   // 发布时间（秒级时间戳）
+    int partCount = 1;    // 分P数量，默认为1
 };
 
 struct CommentItem {
@@ -80,7 +81,8 @@ public:
         CidRole,
         DescRole,
         RcmdReasonRole,
-        DurationTextRole
+        DurationTextRole,
+        PartCountRole
     };
     Q_ENUM(Roles)
 

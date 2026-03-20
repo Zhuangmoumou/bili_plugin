@@ -12,9 +12,42 @@ Rectangle {
     property var controller: null
     property string bvid: ""
     property bool fullTitleVisible: false
+    property var rootRef: null
+
+    // 清晰度选择（默认16）
+    property int selectedQuality: 16
+    property var availableQualities: [16, 32, 64]
+
+    function qualityLabel(qn) {
+        switch (qn) {
+        case 16: return "360P";
+        case 32: return "480P";
+        case 64: return "720P";
+        case 80: return "1080P";
+        case 112: return "1080P+";
+        case 116: return "1080P60";
+        case 120: return "4K";
+        case 125: return "HDR";
+        default: return qn + "P";
+        }
+    }
+
+    function updateQualities() {
+        if (controller && controller.acceptQualities && controller.acceptQualities.length > 0) {
+            availableQualities = controller.acceptQualities;
+        } else {
+            availableQualities = [16, 32, 64];
+        }
+        if (availableQualities.indexOf(selectedQuality) < 0) {
+            selectedQuality = availableQualities[0];
+        }
+        if (rootRef) {
+            rootRef.playQualitySelected = selectedQuality;
+        }
+    }
 
     signal backClicked()
-    signal playRequested()
+    signal playRequested(int quality)
     signal commentsRequested()
 
     readonly property string fontFamily: "Microsoft YaHei"
@@ -234,10 +267,10 @@ Rectangle {
                         }
 
                         MouseArea {
-                            id: playArea
-                            anchors.fill: parent
-                            anchors.margins: -8
-                            onClicked: detailPage.playRequested()
+                        id: playArea
+                        anchors.fill: parent
+                        anchors.margins: -8
+                        onClicked: detailPage.playRequested(detailPage.selectedQuality)
                         }
                     }
 
@@ -258,6 +291,29 @@ Rectangle {
                             color: "white"
                             font.pixelSize: 9
                             font.family: fontFamily
+                        }
+                    }
+
+                    // 合集标识（多P视频）
+                    Rectangle {
+                        anchors.right: coverContainer.right
+                        anchors.bottom: coverContainer.bottom
+                        anchors.rightMargin: 5
+                        anchors.bottomMargin: 24
+                        height: 16
+                        width: collectionText.implicitWidth + 10
+                        radius: 4
+                        color: Qt.rgba(0.6, 0.6, 0.6, 0.9)
+                        visible: controller && controller.videoPartModel() && controller.videoPartModel().count > 1
+
+                        Text {
+                            id: collectionText
+                            anchors.centerIn: parent
+                            text: "合集"
+                            color: "#222222"
+                            font.pixelSize: 9
+                            font.family: fontFamily
+                            font.bold: true
                         }
                     }
 
@@ -440,9 +496,68 @@ Rectangle {
                                         anchors.fill: parent
                                         onClicked: {
                                             if (controller) {
-                                                controller.downloadVideoToDisk(64);
+                                                controller.downloadVideoToDisk(detailPage.selectedQuality);
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ─────────────────────────────────────
+                // 清晰度选择器
+                // ─────────────────────────────────────
+                Row {
+                    id: qualityRow
+                    spacing: 6
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16
+                    anchors.right: parent.right
+                    anchors.rightMargin: 16
+
+                    Text {
+                        text: "清晰度: " + qualityLabel(detailPage.selectedQuality)
+                        color: primaryLight
+                        font.family: fontFamily
+                        font.pixelSize: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Repeater {
+                        model: detailPage.availableQualities
+
+                        Rectangle {
+                            height: 18
+                            width: Math.max(38, qualityText.implicitWidth + 10)
+                            radius: 9
+                            color: detailPage.selectedQuality === modelData
+                                   ? primaryColor
+                                   : Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            border.color: detailPage.selectedQuality === modelData
+                                           ? primaryLight
+                                           : Qt.rgba(1, 1, 1, 0.12)
+
+                            Text {
+                                id: qualityText
+                                anchors.centerIn: parent
+                                text: qualityLabel(modelData) + (detailPage.selectedQuality === modelData ? " ✓" : "")
+                                color: detailPage.selectedQuality === modelData
+                                       ? "white"
+                                       : "#cbd5e1"
+                                font.family: fontFamily
+                                font.pixelSize: 9
+                                font.bold: detailPage.selectedQuality === modelData
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    detailPage.selectedQuality = modelData
+                                    if (detailPage.rootRef) {
+                                        detailPage.rootRef.playQualitySelected = modelData
                                     }
                                 }
                             }
@@ -938,7 +1053,29 @@ Rectangle {
         if (controller && bvid.length > 0 && controller.videoBvid !== bvid) {
             controller.fetchVideoDetail(bvid)
         }
+
+        // 默认清晰度
+        if (rootRef && rootRef.playQualitySelected > 0) {
+            selectedQuality = rootRef.playQualitySelected
+        }
+        updateQualities()
+
+        // 尝试获取可用清晰度
+        if (controller && controller.videoCid > 0) {
+            controller.fetchPlayUrl(selectedQuality)
+        }
+
         enterAnimation.start()
+    }
+
+    Connections {
+        target: controller
+        function onAcceptQualitiesChanged() { detailPage.updateQualities(); }
+        function onVideoDetailChanged() {
+            if (controller && controller.videoCid > 0) {
+                controller.fetchPlayUrl(detailPage.selectedQuality)
+            }
+        }
     }
 
     ParallelAnimation {
