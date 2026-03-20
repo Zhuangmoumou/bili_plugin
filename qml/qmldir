@@ -1,0 +1,22 @@
+module BiliPlugin
+
+# Singleton
+singleton Theme 1.0 Theme.qml
+
+# Components
+VideoCard 1.0 components/VideoCard.qml
+VideoCardCompact 1.0 components/VideoCardCompact.qml
+TitleBar 1.0 components/TitleBar.qml
+LoadingIndicator 1.0 components/LoadingIndicator.qml
+ErrorOverlay 1.0 components/ErrorOverlay.qml
+Toast 1.0 components/Toast.qml
+IconButton 1.0 components/IconButton.qml
+
+# Pages
+HomePage 1.0 pages/HomePage.qml
+SearchPage 1.0 pages/SearchPage.qml
+VideoDetailPage 1.0 pages/VideoDetailPage.qml
+PlayerPage 1.0 pages/PlayerPage.qml
+CommentsPage 1.0 pages/CommentsPage.qml
+RankingPage 1.0 pages/RankingPage.qml
+UserPage 1.0 pages/UserPage.qml
