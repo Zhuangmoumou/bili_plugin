@@ -151,8 +151,16 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.bvid = obj.value("bvid").toString();
     item.title = obj.value("title").toString();
     item.pic = obj.value("pic").toString();
+    if (item.pic.isEmpty()) item.pic = obj.value("cover").toString();
     item.desc = obj.value("desc").toString();
-    item.duration = obj.value("duration").toInt();
+
+    // duration 可能是字符串
+    if (obj.value("duration").isString()) {
+        item.duration = obj.value("duration").toString().toInt();
+    } else {
+        item.duration = obj.value("duration").toInt();
+    }
+
     item.cid = obj.value("cid").toVariant().toLongLong();
     item.pubdate = obj.value("pubdate").toVariant().toLongLong();
 
@@ -173,6 +181,7 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
 
     QJsonObject owner = obj.value("owner").toObject();
     item.ownerName = owner.value("name").toString();
+    if (item.ownerName.isEmpty()) item.ownerName = obj.value("author").toString();
     item.ownerFace = owner.value("face").toString();
     item.ownerMid = owner.value("mid").toVariant().toLongLong();
 
@@ -183,6 +192,39 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.coins = stat.value("coin").toVariant().toLongLong();
     item.favorites = stat.value("favorite").toVariant().toLongLong();
     item.replies = stat.value("reply").toVariant().toLongLong();
+
+    auto parseCountString = [](const QString &s) -> qint64 {
+        QString t = s;
+        t.remove(',');
+        if (t.contains("万")) {
+            bool ok = false;
+            double v = t.left(t.indexOf("万")).toDouble(&ok);
+            return ok ? static_cast<qint64>(v * 10000) : 0;
+        }
+        if (t.contains("亿")) {
+            bool ok = false;
+            double v = t.left(t.indexOf("亿")).toDouble(&ok);
+            return ok ? static_cast<qint64>(v * 100000000) : 0;
+        }
+        bool ok = false;
+        qint64 v = t.toLongLong(&ok);
+        return ok ? v : 0;
+    };
+
+    // 搜索结果常用字段: play / video_review / view
+    if (item.views <= 0) {
+        if (obj.value("play").isString()) {
+            item.views = parseCountString(obj.value("play").toString());
+        } else {
+            item.views = obj.value("play").toVariant().toLongLong();
+        }
+    }
+    if (item.views <= 0) {
+        item.views = obj.value("view").toVariant().toLongLong();
+    }
+    if (item.danmaku <= 0) {
+        item.danmaku = obj.value("video_review").toVariant().toLongLong();
+    }
 
     QJsonObject rcmd = obj.value("rcmd_reason").toObject();
     item.rcmdReason = rcmd.value("content").toString();

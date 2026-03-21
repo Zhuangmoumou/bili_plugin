@@ -50,15 +50,6 @@ BiliController::BiliController(QObject *parent)
               setGlobalError(msg);
           });
 
-  // 后台会话验证定时器：每 5 分钟检查一次登录状态（用户无感知）
-  QTimer *sessionCheckTimer = new QTimer(this);
-  connect(sessionCheckTimer, &QTimer::timeout, this, [this]() {
-    if (m_loggedIn) {
-      checkLoginStatus();
-    }
-  });
-  sessionCheckTimer->start(5 * 60 * 1000); // 5 分钟
-
   // 默认可用清晰度
   m_acceptQualities = {16, 32, 64};
 
