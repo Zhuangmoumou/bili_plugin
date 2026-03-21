@@ -24,22 +24,26 @@ static QQmlEngine *s_engine = nullptr;
 BiliController::BiliController(QObject *parent)
     : QObject(parent), m_network(BiliNetwork::instance()),
       m_currentPage("home"), m_playQuality(64), m_isDownloading(false),
-      m_downloadProgress(0), m_loggedIn(false), m_userId(0), m_userLevel(0),
-      m_userCoins(0), m_userFans(0), m_userFollowing(0), m_userIsVip(false),
-      m_popularPage(1), m_searchPage(1), m_commentPage(1), m_isLoading(false),
-      m_loadingCount(0), m_popularModel(new VideoListModel(this)),
+      m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false),
+      m_userName(""), m_userFace(""), m_qrcodeUrl(""), m_qrcodeKey(""),
+      m_userId(0), m_userLevel(0), m_userCoins(0), m_userFans(0),
+      m_userFollowing(0), m_userSign(""), m_userVipLabel(""),
+      m_userIsVip(false), m_popularPage(1), m_searchPage(1),
+      m_commentPage(1), m_searchKeyword(""), m_globalError(""),
+      m_isLoading(false), m_loadingCount(0),
+      m_popularModel(new VideoListModel(this)),
       m_rankingModel(new VideoListModel(this)),
       m_searchModel(new SearchResultModel(this)),
       m_commentModel(new CommentListModel(this)),
       m_hotSearchModel(new HotSearchModel(this)),
-      m_videoPartModel(new VideoPartListModel(this)), 
+      m_videoPartModel(new VideoPartListModel(this)),
       m_searchHistoryModel(new QStringListModel(this)),
+      m_searchHistory(),
       m_favoriteFolderModel(new FavoriteFolderModel(this)),
       m_favoriteItemModel(new VideoListModel(this)),
       m_favoritePage(1),
       m_currentFavoriteId(0),
-      m_destroying(false),
-      m_isFavorited(false) {
+      m_destroying(false) {
   connect(m_network, &BiliNetwork::networkError, this,
           [this](const QString &msg) {
             if (!m_destroying)
