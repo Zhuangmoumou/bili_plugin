@@ -60,6 +60,8 @@ class BiliController : public QObject {
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
+  // 收藏状态
+  Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
   Q_PROPERTY(QString userName READ userName NOTIFY loginStateChanged)
   Q_PROPERTY(QString userFace READ userFace NOTIFY loginStateChanged)
   Q_PROPERTY(QString qrcodeUrl READ qrcodeUrl NOTIFY qrcodeChanged)
@@ -110,6 +112,7 @@ public:
   QString tempVideoPath() const { return m_tempVideoPath; }
 
   bool loggedIn() const;
+  bool isFavorited() const { return m_isFavorited; }
   QString userName() const;
   QString userFace() const;
   QString qrcodeUrl() const;
@@ -142,6 +145,9 @@ public:
   Q_INVOKABLE void fetchFavoriteFolders();
   Q_INVOKABLE void fetchFavoriteItems(qint64 mediaId, int page = 1, int pageSize = 20);
   Q_INVOKABLE void fetchMoreFavoriteItems();
+  // 收藏状态
+  Q_INVOKABLE void fetchFavoriteStatus();
+  Q_INVOKABLE void toggleFavorite();
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -188,6 +194,7 @@ signals:
   void qrcodeNeedRefresh();
   void playbackReady(const QString &url);
   void downloadStateChanged();
+  void favoriteStatusChanged();
 
 private:
   void fetchUserInfo(qint64 mid);
@@ -221,6 +228,7 @@ private:
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;
+  bool m_isFavorited;
   QString m_userName;
   QString m_userFace;
   QString m_qrcodeUrl;

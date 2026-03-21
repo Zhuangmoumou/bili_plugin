@@ -633,11 +633,66 @@ Rectangle {
                             iconColor: "#fbbf24"
                         }
 
-                        // 收藏
-                        BadgeItem {
-                            iconType: "star"
-                            value: controller ? controller.videoFavorites : "0"
-                            iconColor: "#a78bfa"
+                        // 收藏（可点击）
+                        Rectangle {
+                            width: badgeContent.width + 14
+                            height: 24
+                            radius: 12
+                            color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.2) : Qt.rgba(1, 1, 1, 0.07)
+                            border.color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.6) : Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Row {
+                                id: badgeContent
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Canvas {
+                                    width: 12
+                                    height: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    property bool fav: controller ? controller.isFavorited : false
+                                    onFavChanged: requestPaint()
+
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        var col = controller && controller.isFavorited ? "#fb7299" : "#a78bfa"
+                                        ctx.fillStyle = col
+                                        ctx.beginPath()
+                                        var cx = 6, cy = 6, outerR = 5.5, innerR = 2.2
+                                        for (var i = 0; i < 5; i++) {
+                                            var outerAngle = (i * 72 - 90) * Math.PI / 180
+                                            var innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180
+                                            if (i === 0) {
+                                                ctx.moveTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
+                                            } else {
+                                                ctx.lineTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
+                                            }
+                                            ctx.lineTo(cx + innerR * Math.cos(innerAngle), cy + innerR * Math.sin(innerAngle))
+                                        }
+                                        ctx.closePath()
+                                        ctx.fill()
+                                    }
+                                }
+
+                                Text {
+                                    text: controller ? controller.videoFavorites : "0"
+                                    color: controller && controller.isFavorited ? "#fb7299" : "#d1d5db"
+                                    font.family: fontFamily
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (controller) controller.toggleFavorite()
+                                }
+                            }
                         }
 
                         // 弹幕
@@ -1091,6 +1146,7 @@ Rectangle {
         // 尝试获取可用清晰度
         if (controller && controller.videoCid > 0) {
             controller.fetchAcceptQualities(selectedQuality)
+            if (controller.loggedIn) controller.fetchFavoriteStatus()
         }
 
         enterAnimation.start()
@@ -1102,6 +1158,7 @@ Rectangle {
         function onVideoDetailChanged() {
             if (controller && controller.videoCid > 0) {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
+                if (controller.loggedIn) controller.fetchFavoriteStatus()
             }
         }
     }

@@ -889,6 +889,36 @@ func (c *BilibiliClient) GetFavoriteResources(mediaId, pn, ps int) (json.RawMess
 	}, "GET")
 }
 
+func (c *BilibiliClient) GetFavoriteStatus(aid int) (json.RawMessage, error) {
+	logInfo("获取收藏状态 aid=%d", aid)
+	return c.request("https://api.bilibili.com/x/v2/fav/video/favoured", map[string]string{
+		"aid": strconv.Itoa(aid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+
+	addMedia := ""
+	delMedia := ""
+	if add {
+		addMedia = strconv.Itoa(mediaId)
+	} else {
+		delMedia = strconv.Itoa(mediaId)
+	}
+
+	return c.request("https://api.bilibili.com/x/v3/fav/resource/deal", map[string]string{
+		"rid":           strconv.Itoa(aid),
+		"type":          "2",
+		"add_media_ids": addMedia,
+		"del_media_ids": delMedia,
+		"csrf":          biliJct,
+	}, "POST")
+}
+
 // ==================== HTTP 辅助函数 ====================
 
 func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
@@ -1058,6 +1088,8 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/recommend - 首页推荐",
 			"/fav/folder/list - 收藏夹列表",
 			"/fav/resource/list - 收藏夹内容",
+			"/fav/status - 收藏状态",
+			"/fav/toggle - 收藏切换",
 			},
 		},
 	})
@@ -1421,6 +1453,99 @@ func handleFavResourceList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleFavStatus(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	client := getClient()
+	result, err := client.GetFavoriteStatus(aid)
+	if err != nil {
+		logError("处理 /fav/status 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleFavToggle(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	action := r.URL.Query().Get("action")
+	add := action != "0"
+
+	client := getClient()
+	// 获取默认收藏夹 ID
+	loginRaw, err := client.GetLoginInfo()
+	if err != nil {
+		logError("获取登录信息失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	var loginResp map[string]interface{}
+	if err := json.Unmarshal(loginRaw, &loginResp); err != nil {
+		writeError(w, 500, "登录信息解析失败")
+		return
+	}
+	data, _ := loginResp["data"].(map[string]interface{})
+	midF, _ := data["mid"].(float64)
+	mid := int(midF)
+	if mid <= 0 {
+		writeError(w, 401, "未登录")
+		return
+	}
+
+	foldersRaw, err := client.GetFavoriteFolders(mid)
+	if err != nil {
+		logError("获取收藏夹失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	var favResp map[string]interface{}
+	if err := json.Unmarshal(foldersRaw, &favResp); err != nil {
+		writeError(w, 500, "收藏夹解析失败")
+		return
+	}
+	favData, _ := favResp["data"].(map[string]interface{})
+	list, _ := favData["list"].([]interface{})
+	if len(list) == 0 {
+		writeError(w, 500, "未找到收藏夹")
+		return
+	}
+	first, _ := list[0].(map[string]interface{})
+	fidF, _ := first["id"].(float64)
+	if fidF == 0 {
+		fidF, _ = first["fid"].(float64)
+	}
+	mediaId := int(fidF)
+	if mediaId <= 0 {
+		writeError(w, 500, "收藏夹ID无效")
+		return
+	}
+
+	result, err := client.ToggleFavorite(aid, add, mediaId)
+	if err != nil {
+		logError("处理 /fav/toggle 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
 func handleQrcodeGenerate(w http.ResponseWriter, r *http.Request) {
 	logInfo("生成登录二维码")
 
@@ -1599,6 +1724,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/recommend", handleRecommend)
 	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
 	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
+	mux.HandleFunc("/fav/status", handleFavStatus)
+	mux.HandleFunc("/fav/toggle", handleFavToggle)
 	mux.HandleFunc("/qrcode/generate", handleQrcodeGenerate)
 	mux.HandleFunc("/qrcode/poll", handleQrcodePoll)
 }
@@ -1671,6 +1798,8 @@ func main() {
 	fmt.Println("  GET  /recommend        - 首页推荐")
 	fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
 	fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
+	fmt.Println("  GET  /fav/status       - 收藏状态")
+	fmt.Println("  GET  /fav/toggle       - 收藏切换")
 	fmt.Println("  GET  /qrcode/generate  - 生成登录二维码")
 	fmt.Println("  GET  /qrcode/poll      - 轮询二维码状态")
 	fmt.Println(strings.Repeat("=", 60))

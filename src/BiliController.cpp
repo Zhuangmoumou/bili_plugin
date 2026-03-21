@@ -38,7 +38,8 @@ BiliController::BiliController(QObject *parent)
       m_favoriteItemModel(new VideoListModel(this)),
       m_favoritePage(1),
       m_currentFavoriteId(0),
-      m_destroying(false) {
+      m_destroying(false),
+      m_isFavorited(false) {
   connect(m_network, &BiliNetwork::networkError, this,
           [this](const QString &msg) {
             if (!m_destroying)
@@ -490,6 +491,12 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
   if (bvid.isEmpty()) {
     emit toastMessage("视频 ID 为空");
     return;
+  }
+
+  // 切换视频时重置收藏状态
+  if (m_isFavorited) {
+    m_isFavorited = false;
+    emit favoriteStatusChanged();
   }
 
   // BV号格式校验
@@ -1271,6 +1278,73 @@ void BiliController::fetchMoreFavoriteItems() {
   fetchFavoriteItems(m_currentFavoriteId, m_favoritePage);
 }
 
+// ====== API: 收藏状态 ======
+
+void BiliController::fetchFavoriteStatus() {
+  if (!m_loggedIn) {
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/fav/status", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        bool fav = data.value("favoured").toInt(0) == 1;
+        if (self->m_isFavorited != fav) {
+          self->m_isFavorited = fav;
+          emit self->favoriteStatusChanged();
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
+      });
+}
+
+void BiliController::toggleFavorite() {
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后再收藏");
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    emit toastMessage("视频信息不完整");
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  params["action"] = m_isFavorited ? "0" : "1";
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/fav/toggle", params,
+      [self](const QJsonObject &) {
+        if (!self)
+          return;
+
+        self->m_isFavorited = !self->m_isFavorited;
+        emit self->favoriteStatusChanged();
+        emit self->toastMessage(self->m_isFavorited ? "已收藏" : "已取消收藏");
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("收藏操作失败：%1").arg(msg));
+      });
+}
+
 // ====== API: 登录 ======
 
 void BiliController::generateQrcode() {
@@ -1482,6 +1556,10 @@ void BiliController::logout() {
   m_userSign = "";
   m_userVipLabel = "";
   m_userIsVip = false;
+  if (m_isFavorited) {
+    m_isFavorited = false;
+    emit favoriteStatusChanged();
+  }
   emit loginStateChanged();
   emit toastMessage("已退出登录");
 }
