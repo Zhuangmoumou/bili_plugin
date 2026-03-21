@@ -1,0 +1,4 @@
+module FFmpegPlayer
+plugin ffmpegplayerplugin
+classname FFmpegPlayerPlugin
+typeinfo plugins.qmltypes
