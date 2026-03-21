@@ -1,9 +1,13 @@
 #!/bin/bash
 
+pwd=$(pwd)
+echo '当前目录：'
+echo $pwd
+
 echo '编译Go服务器'
-cd go_server
+cd $pwd/go_server
 CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o server
-cd ..
+cd $pwd
 echo '----------------'
 
 # 临时文件
@@ -16,7 +20,7 @@ cp icon.png ./bili_plugin
 cp -r FFmpegPlayer ./bili_plugin
 
 # 打包
-zip -r bili_plugin.zip bili_plugin/
+zip -r bili_plugin.zip bili_plugin/*
 
 # 清除
 
