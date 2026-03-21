@@ -18,6 +18,7 @@ class CommentListModel;
 class HotSearchModel;
 class SearchResultModel;
 class QStringListModel;
+class FavoriteFolderModel;
 class BiliNetwork;
 
 class BiliController : public QObject {
@@ -137,6 +138,10 @@ public:
   // 仅获取可用清晰度列表（不触发播放）
   Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
   Q_INVOKABLE void fetchComments(int page = 1);
+  // 收藏夹
+  Q_INVOKABLE void fetchFavoriteFolders();
+  Q_INVOKABLE void fetchFavoriteItems(qint64 mediaId, int page = 1, int pageSize = 20);
+  Q_INVOKABLE void fetchMoreFavoriteItems();
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -165,6 +170,8 @@ public:
   Q_INVOKABLE QObject *hotSearchModel();
   Q_INVOKABLE QObject *videoPartModel();
   Q_INVOKABLE QObject *searchHistoryModel();
+  Q_INVOKABLE QObject *favoriteFolderModel();
+  Q_INVOKABLE QObject *favoriteItemModel();
 
 signals:
   void currentPageChanged();
@@ -248,6 +255,11 @@ private:
   VideoPartListModel *m_videoPartModel;
   QStringListModel *m_searchHistoryModel;
   QStringList m_searchHistory;
+
+  FavoriteFolderModel *m_favoriteFolderModel;
+  VideoListModel *m_favoriteItemModel;
+  int m_favoritePage;
+  qint64 m_currentFavoriteId;
 
   // 标记对象是否正在销毁
   bool m_destroying;

@@ -521,6 +521,7 @@ func (c *BilibiliClient) startCookieRefreshLoop() {
 
 func (c *BilibiliClient) refreshCookies() {
 	sessdata, _, biliJct, refreshToken := c.getAuth()
+	logInfo("Cookie 刷新检查: sessdata=%t bili_jct=%t refresh_token=%t", sessdata != "", biliJct != "", refreshToken != "")
 	if sessdata == "" || biliJct == "" || refreshToken == "" {
 		logInfo("Cookie 刷新条件不足: sessdata=%t bili_jct=%t refresh_token=%t", sessdata != "", biliJct != "", refreshToken != "")
 		return
@@ -560,6 +561,7 @@ func (c *BilibiliClient) refreshCookies() {
 		refreshToken = rt
 	}
 
+	logInfo("Cookie 刷新状态: refresh=%t refresh_token=%t", refreshNeeded, refreshToken != "")
 	if !refreshNeeded {
 		logInfo("Cookie 无需刷新")
 		return
@@ -869,6 +871,24 @@ func (c *BilibiliClient) GetRecommend(freshType int) (json.RawMessage, error) {
 	}, "GET")
 }
 
+func (c *BilibiliClient) GetFavoriteFolders(mid int) (json.RawMessage, error) {
+	logInfo("获取收藏夹列表 mid=%d", mid)
+	return c.request("https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
+		"up_mid": strconv.Itoa(mid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) GetFavoriteResources(mediaId, pn, ps int) (json.RawMessage, error) {
+	logInfo("获取收藏夹内容 media_id=%d pn=%d ps=%d", mediaId, pn, ps)
+	return c.request("https://api.bilibili.com/x/v3/fav/resource/list", map[string]string{
+		"media_id": strconv.Itoa(mediaId),
+		"pn":       strconv.Itoa(pn),
+		"ps":       strconv.Itoa(ps),
+		"order":    "mtime",
+		"type":     "0",
+	}, "GET")
+}
+
 // ==================== HTTP 辅助函数 ====================
 
 func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
@@ -1036,6 +1056,8 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/login/info - 登录信息",
 				"/hot/search - 热搜",
 				"/recommend - 首页推荐",
+			"/fav/folder/list - 收藏夹列表",
+			"/fav/resource/list - 收藏夹内容",
 			},
 		},
 	})
@@ -1347,6 +1369,58 @@ func handleRecommend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
+	mid, err := intParam(r.URL.Query().Get("mid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if mid == 0 {
+		logWarn("mid 缺失")
+		writeError(w, 400, "mid 为必填参数")
+		return
+	}
+	client := getClient()
+	result, err := client.GetFavoriteFolders(mid)
+	if err != nil {
+		logError("处理 /fav/folder/list 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleFavResourceList(w http.ResponseWriter, r *http.Request) {
+	mediaId, err := intParam(r.URL.Query().Get("media_id"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if mediaId == 0 {
+		logWarn("media_id 缺失")
+		writeError(w, 400, "media_id 为必填参数")
+		return
+	}
+	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	client := getClient()
+	result, err := client.GetFavoriteResources(mediaId, pn, ps)
+	if err != nil {
+		logError("处理 /fav/resource/list 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
 func handleQrcodeGenerate(w http.ResponseWriter, r *http.Request) {
 	logInfo("生成登录二维码")
 
@@ -1523,6 +1597,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/login/info", handleLoginInfo)
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
+	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
+	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
 	mux.HandleFunc("/qrcode/generate", handleQrcodeGenerate)
 	mux.HandleFunc("/qrcode/poll", handleQrcodePoll)
 }
@@ -1593,6 +1669,8 @@ func main() {
 	fmt.Println("  GET  /login/info       - 登录信息")
 	fmt.Println("  GET  /hot/search       - 热搜榜")
 	fmt.Println("  GET  /recommend        - 首页推荐")
+	fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
+	fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
 	fmt.Println("  GET  /qrcode/generate  - 生成登录二维码")
 	fmt.Println("  GET  /qrcode/poll      - 轮询二维码状态")
 	fmt.Println(strings.Repeat("=", 60))

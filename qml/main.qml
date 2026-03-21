@@ -252,6 +252,12 @@ Rectangle {
                 Pages.UserPage {
                     controller: root.rootController
                     onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
                 }
             }
         }

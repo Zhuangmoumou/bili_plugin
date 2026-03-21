@@ -34,6 +34,10 @@ BiliController::BiliController(QObject *parent)
       m_hotSearchModel(new HotSearchModel(this)),
       m_videoPartModel(new VideoPartListModel(this)), 
       m_searchHistoryModel(new QStringListModel(this)),
+      m_favoriteFolderModel(new FavoriteFolderModel(this)),
+      m_favoriteItemModel(new VideoListModel(this)),
+      m_favoritePage(1),
+      m_currentFavoriteId(0),
       m_destroying(false) {
   connect(m_network, &BiliNetwork::networkError, this,
           [this](const QString &msg) {
@@ -171,6 +175,8 @@ QObject *BiliController::hotSearchModel() { return m_hotSearchModel; }
 QObject *BiliController::videoPartModel() { return m_videoPartModel; }
 
 QObject *BiliController::searchHistoryModel() { return m_searchHistoryModel; }
+QObject *BiliController::favoriteFolderModel() { return m_favoriteFolderModel; }
+QObject *BiliController::favoriteItemModel() { return m_favoriteItemModel; }
 
 // ====== Navigation ======
 
@@ -1117,6 +1123,154 @@ void BiliController::fetchMoreComments() {
   fetchComments(m_commentPage);
 }
 
+// ====== API: 收藏夹 ======
+
+void BiliController::fetchFavoriteFolders() {
+  if (!m_loggedIn || m_userId <= 0) {
+    emit toastMessage("请先登录后查看收藏夹");
+    return;
+  }
+  if (m_favoriteFolderModel->loading())
+    return;
+
+  m_favoriteFolderModel->setLoading(true);
+  setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(m_userId);
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/fav/folder/list", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        QJsonArray list = data.value("list").toArray();
+        QVector<FavoriteFolderItem> items;
+        items.reserve(list.size());
+        for (const QJsonValue &v : list) {
+          if (v.isObject()) {
+            items.append(FavoriteFolderModel::parseFavoriteFolderItem(v.toObject()));
+          }
+        }
+
+        self->m_favoriteFolderModel->setItems(items);
+        self->m_favoriteFolderModel->setLoading(false);
+        self->setIsLoading(false);
+
+        if (items.isEmpty()) {
+          emit self->toastMessage("暂无收藏夹");
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+
+        self->m_favoriteFolderModel->setLoading(false);
+        self->setIsLoading(false);
+        emit self->toastMessage(QString("收藏夹加载失败：%1").arg(msg));
+      });
+}
+
+void BiliController::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) {
+  if (mediaId <= 0) {
+    emit toastMessage("收藏夹 ID 无效");
+    return;
+  }
+  if (m_favoriteItemModel->loading())
+    return;
+
+  page = qBound(1, page, 2000);
+  pageSize = qBound(1, pageSize, 20);
+
+  m_currentFavoriteId = mediaId;
+  m_favoritePage = page;
+
+  if (page == 1) {
+    m_favoriteItemModel->clear();
+  }
+  m_favoriteItemModel->setLoading(true);
+  m_favoriteItemModel->setErrorMessage("");
+  setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["media_id"] = QString::number(mediaId);
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+  params["order"] = "mtime";
+  params["type"] = "0";
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/fav/resource/list", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        QJsonArray list = data.value("medias").toArray();
+        QVector<VideoItem> items;
+        items.reserve(list.size());
+        for (const QJsonValue &v : list) {
+          if (!v.isObject())
+            continue;
+
+          QJsonObject obj = v.toObject();
+          VideoItem item;
+          item.bvid = obj.value("bvid").toString();
+          item.title = obj.value("title").toString();
+          item.pic = obj.value("cover").toString();
+          item.duration = obj.value("duration").toInt();
+
+          QJsonObject upper = obj.value("upper").toObject();
+          item.ownerName = upper.value("name").toString();
+          item.ownerMid = upper.value("mid").toVariant().toLongLong();
+          item.ownerFace = upper.value("face").toString();
+
+          QJsonObject cntInfo = obj.value("cnt_info").toObject();
+          item.views = cntInfo.value("play").toVariant().toLongLong();
+          if (item.views <= 0) {
+            item.views = cntInfo.value("view").toVariant().toLongLong();
+          }
+          item.danmaku = cntInfo.value("danmaku").toVariant().toLongLong();
+          item.likes = cntInfo.value("like").toVariant().toLongLong();
+          item.favorites = cntInfo.value("favorite").toVariant().toLongLong();
+
+          items.append(item);
+        }
+
+        self->m_favoriteItemModel->appendItems(items);
+        bool hasMore = data.value("has_more").toBool(false);
+        self->m_favoriteItemModel->setHasMore(hasMore ? true : !items.isEmpty());
+        self->m_favoriteItemModel->setLoading(false);
+        self->setIsLoading(false);
+
+        if (items.isEmpty() && self->m_favoritePage == 1) {
+          self->m_favoriteItemModel->setErrorMessage("收藏夹为空");
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+
+        self->m_favoriteItemModel->setLoading(false);
+        self->m_favoriteItemModel->setErrorMessage(msg);
+        self->setIsLoading(false);
+        emit self->toastMessage(QString("收藏夹加载失败：%1").arg(msg));
+      });
+}
+
+void BiliController::fetchMoreFavoriteItems() {
+  if (!m_favoriteItemModel->hasMore() || m_favoriteItemModel->loading())
+    return;
+  if (m_favoriteItemModel->count() <= 0)
+    return;
+  m_favoritePage++;
+  fetchFavoriteItems(m_currentFavoriteId, m_favoritePage);
+}
+
 // ====== API: 登录 ======
 
 void BiliController::generateQrcode() {
@@ -1563,6 +1717,7 @@ void init_plugin() {
   qmlRegisterType<HotSearchModel>("BiliPlugin", 1, 0, "HotSearchModel");
   qmlRegisterType<SearchResultModel>("BiliPlugin", 1, 0, "SearchResultModel");
   qmlRegisterType<VideoPartListModel>("BiliPlugin", 1, 0, "VideoPartListModel");
+  qmlRegisterType<FavoriteFolderModel>("BiliPlugin", 1, 0, "FavoriteFolderModel");
 
   // 启动 API 服务器
   if (!startApiServer()) {

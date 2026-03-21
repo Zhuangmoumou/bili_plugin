@@ -487,3 +487,92 @@ VideoPartItem VideoPartListModel::parseVideoPartItem(const QJsonObject &obj)
     item.duration = obj.value("duration").toInt();
     return item;
 }
+
+// ============ FavoriteFolderModel ============
+
+FavoriteFolderModel::FavoriteFolderModel(QObject *parent)
+    : QAbstractListModel(parent)
+    , m_loading(false)
+{
+}
+
+int FavoriteFolderModel::rowCount(const QModelIndex &parent) const
+{
+    Q_UNUSED(parent)
+    return m_items.count();
+}
+
+QVariant FavoriteFolderModel::data(const QModelIndex &index, int role) const
+{
+    if (index.row() < 0 || index.row() >= m_items.count())
+        return QVariant();
+
+    const FavoriteFolderItem &item = m_items[index.row()];
+
+    switch (role) {
+    case IdRole: return item.id;
+    case FidRole: return item.fid;
+    case TitleRole: return item.title;
+    case CoverRole: return item.cover;
+    case MediaCountRole: return item.mediaCount;
+    case IntroRole: return item.intro;
+    case AttrRole: return item.attr;
+    default: return QVariant();
+    }
+}
+
+QHash<int, QByteArray> FavoriteFolderModel::roleNames() const
+{
+    return {
+        {IdRole, "id"},
+        {FidRole, "fid"},
+        {TitleRole, "title"},
+        {CoverRole, "cover"},
+        {MediaCountRole, "mediaCount"},
+        {IntroRole, "intro"},
+        {AttrRole, "attr"}
+    };
+}
+
+int FavoriteFolderModel::count() const { return m_items.count(); }
+
+bool FavoriteFolderModel::loading() const { return m_loading; }
+
+void FavoriteFolderModel::clear()
+{
+    beginResetModel();
+    m_items.clear();
+    endResetModel();
+    emit countChanged();
+}
+
+void FavoriteFolderModel::setItems(const QVector<FavoriteFolderItem> &items)
+{
+    beginResetModel();
+    m_items = items;
+    endResetModel();
+    emit countChanged();
+}
+
+void FavoriteFolderModel::setLoading(bool loading)
+{
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit loadingChanged();
+    }
+}
+
+FavoriteFolderItem FavoriteFolderModel::parseFavoriteFolderItem(const QJsonObject &obj)
+{
+    FavoriteFolderItem item;
+    item.id = obj.value("id").toVariant().toLongLong();
+    item.fid = obj.value("fid").toVariant().toLongLong();
+    if (item.id == 0) item.id = item.fid;
+    if (item.fid == 0) item.fid = item.id;
+    item.title = obj.value("title").toString();
+    item.cover = obj.value("cover").toString();
+    item.mediaCount = obj.value("media_count").toInt();
+    item.intro = obj.value("intro").toString();
+    item.attr = obj.value("attr").toInt();
+    return item;
+}

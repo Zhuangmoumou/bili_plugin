@@ -11,6 +11,36 @@ Rectangle {
 
     property var controller: null
     signal backClicked()
+    signal videoSelected(string bvid)
+
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情
+    property int favView: 0
+    property string currentFavTitle: ""
+    property int currentFavId: 0
+
+    function openFavorites() {
+        favView = 1
+        if (controller) controller.fetchFavoriteFolders()
+    }
+
+    function openFavoriteDetail(fid, title) {
+        currentFavId = fid
+        currentFavTitle = title
+        favView = 2
+        if (controller) controller.fetchFavoriteItems(fid, 1, 20)
+    }
+
+    function backInternal() {
+        if (favView === 2) {
+            favView = 1
+            return
+        }
+        if (favView === 1) {
+            favView = 0
+            return
+        }
+        backClicked()
+    }
 
     Component.onCompleted: {
         console.log("[UserPage] Created");
@@ -31,10 +61,15 @@ Rectangle {
 
     Components.TitleBar {
         id: titleBar
-        title: controller && controller.loggedIn ? "个人中心" : "扫码登录"
+        title: {
+            if (!controller || !controller.loggedIn) return "扫码登录"
+            if (favView === 1) return "我的收藏夹"
+            if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
+            return "个人中心"
+        }
         showBack: true
         anchors.top: parent.top
-        onBackClicked: userPage.backClicked()
+        onBackClicked: userPage.backInternal()
     }
 
     // ====== 未登录：二维码登录 ======
@@ -297,7 +332,7 @@ Rectangle {
         }
     }
 
-    // ====== 已登录：用户信息 ======
+    // ====== 已登录：用户信息 / 收藏夹 ======
     Item {
         visible: controller ? controller.loggedIn : false
         anchors.top: titleBar.bottom
@@ -305,226 +340,385 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
 
-        Flickable {
+        // ── 个人中心 ──
+        Item {
+            id: profileView
             anchors.fill: parent
-            anchors.margins: Theme.spacingLarge
-            contentHeight: contentColumn.height
-            clip: true
+            visible: favView === 0
 
-            Column {
-                id: contentColumn
-                width: parent.width - Theme.spacingLarge * 2
-                spacing: Theme.spacingLarge
-                anchors.horizontalCenter: parent.horizontalCenter
+            Flickable {
+                anchors.fill: parent
+                anchors.margins: Theme.spacingLarge
+                contentHeight: contentColumn.height
+                clip: true
 
-                // 头像和用户名
-                Row {
-                    width: parent.width
+                Column {
+                    id: contentColumn
+                    width: parent.width - Theme.spacingLarge * 2
                     spacing: Theme.spacingLarge
                     anchors.horizontalCenter: parent.horizontalCenter
 
-                    // 头像
-                    Rectangle {
-                        width: 60; height: 60
-                        radius: Theme.radiusRound
-                        color: Theme.bgTertiary
-                        border.color: Theme.primary
-                        border.width: 2
-                        clip: true
+                    // 头像和用户名
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingLarge
+                        anchors.horizontalCenter: parent.horizontalCenter
 
-                        Image {
-                            anchors.fill: parent
-                            anchors.margins: 2
-                            source: controller && controller.userFace
-                            ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                        }
-                    }
+                        // 头像
+                        Rectangle {
+                            width: 60; height: 60
+                            radius: Theme.radiusRound
+                            color: Theme.bgTertiary
+                            border.color: Theme.primary
+                            border.width: 2
+                            clip: true
 
-                    Column {
-                        spacing: Theme.spacingSmall
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        Text {
-                            text: controller ? controller.userName : ""
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                        }
-
-                        Row {
-                            spacing: Theme.spacingSmall
-
-                            Rectangle {
-                                width: 10; height: 10
-                                radius: 5
-                                color: Theme.success
-                                anchors.verticalCenter: parent.verticalCenter
+                            Image {
+                                anchors.fill: parent
+                                anchors.margins: 2
+                                source: controller && controller.userFace
+                                ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
                             }
+                        }
+
+                        Column {
+                            spacing: Theme.spacingSmall
+                            anchors.verticalCenter: parent.verticalCenter
+
                             Text {
-                                text: "已登录"
-                                color: Theme.success
+                                text: controller ? controller.userName : ""
+                                color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontBody
-                                anchors.verticalCenter: parent.verticalCenter
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
                             }
-                        }
 
-                        // 等级和 VIP
-                        Row {
-                            spacing: Theme.spacingSmall
+                            Row {
+                                spacing: Theme.spacingSmall
 
-                            Rectangle {
-                                width: 40; height: 20
-                                radius: Theme.radiusRound
-                                color: Theme.primary
-                                anchors.verticalCenter: parent.verticalCenter
-
+                                Rectangle {
+                                    width: 10; height: 10
+                                    radius: 5
+                                    color: Theme.success
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                                 Text {
-                                    anchors.centerIn: parent
-                                    text: "LV" + (controller ? controller.userLevel : 0)
-                                    color: Theme.textOnPrimary
+                                    text: "已登录"
+                                    color: Theme.success
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSmall
-                                    font.bold: true
+                                    font.pixelSize: Theme.fontBody
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
-                            Rectangle {
-                                width: 60; height: 20
-                                radius: Theme.radiusRound
-                                color: controller && controller.userIsVip ? "#FB7299" : Theme.bgTertiary
-                                anchors.verticalCenter: parent.verticalCenter
-                                visible: controller && (controller.userIsVip || controller.userVipLabel !== "")
+                            // 等级和 VIP
+                            Row {
+                                spacing: Theme.spacingSmall
 
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: controller && controller.userVipLabel !== "" ? controller.userVipLabel : "大会员"
-                                    color: controller && controller.userIsVip ? Theme.textOnPrimary : Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSmall
+                                Rectangle {
+                                    width: 40; height: 20
+                                    radius: Theme.radiusRound
+                                    color: Theme.primary
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "LV" + (controller ? controller.userLevel : 0)
+                                        color: Theme.textOnPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSmall
+                                        font.bold: true
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 60; height: 20
+                                    radius: Theme.radiusRound
+                                    color: controller && controller.userIsVip ? "#FB7299" : Theme.bgTertiary
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: controller && (controller.userIsVip || controller.userVipLabel !== "")
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: controller && controller.userVipLabel !== "" ? controller.userVipLabel : "大会员"
+                                        color: controller && controller.userIsVip ? Theme.textOnPrimary : Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSmall
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // 签名
-                Text {
-                    text: controller && controller.userSign !== "" ? controller.userSign : "这个人很懒，什么都没写~"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                    wrapMode: Text.WordWrap
-                    width: parent.width
-                }
-
-                // 统计数据
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingLarge
-                    anchors.horizontalCenter: parent.horizontalCenter
-
-                    // 粉丝
-                    Column {
-                        width: 80
-                        spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
-
-                        Text {
-                            text: controller ? String(controller.userFans) : "0"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: "粉丝"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                    }
-
-                    // 关注
-                    Column {
-                        width: 80
-                        spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
-
-                        Text {
-                            text: controller ? String(controller.userFollowing) : "0"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: "关注"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                    }
-
-                    // 硬币
-                    Column {
-                        width: 80
-                        spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
-
-                        Text {
-                            text: controller ? String(controller.userCoins) : "0"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: "硬币"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                    }
-                }
-
-                // 退出登录按钮
-                Rectangle {
-                    width: 120; height: Theme.buttonHeight
-                    radius: Theme.radiusRound
-                    color: "transparent"
-                    border.color: Theme.withAlpha(Theme.error, 0.5)
-                    border.width: 1
-                    anchors.horizontalCenter: parent.horizontalCenter
-
-                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
-
+                    // 签名
                     Text {
-                        anchors.centerIn: parent
-                        text: "退出登录"
-                        color: Theme.withAlpha(Theme.error, 0.8)
+                        text: controller && controller.userSign !== "" ? controller.userSign : "这个人很懒，什么都没写~"
+                        color: Theme.textSecondary
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        width: parent.width
+                    }
+
+                    // 统计数据
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingLarge
+                        anchors.horizontalCenter: parent.horizontalCenter
+
+                        // 粉丝
+                        Column {
+                            width: 80
+                            spacing: 4
+                            anchors.horizontalCenter: parent.horizontalCenter
+
+                            Text {
+                                text: controller ? String(controller.userFans) : "0"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                            Text {
+                                text: "粉丝"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        // 关注
+                        Column {
+                            width: 80
+                            spacing: 4
+                            anchors.horizontalCenter: parent.horizontalCenter
+
+                            Text {
+                                text: controller ? String(controller.userFollowing) : "0"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                            Text {
+                                text: "关注"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        // 硬币
+                        Column {
+                            width: 80
+                            spacing: 4
+                            anchors.horizontalCenter: parent.horizontalCenter
+
+                            Text {
+                                text: controller ? String(controller.userCoins) : "0"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                            Text {
+                                text: "硬币"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+                    }
+
+                    // 收藏夹入口
+                    Rectangle {
+                        width: 140; height: Theme.buttonHeight
+                        radius: Theme.radiusRound
+                        color: Theme.primary
+                        anchors.horizontalCenter: parent.horizontalCenter
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "打开收藏夹"
+                            color: Theme.textOnPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontBody
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: userPage.openFavorites()
+                        }
+                    }
+
+                    // 退出登录按钮
+                    Rectangle {
+                        width: 120; height: Theme.buttonHeight
+                        radius: Theme.radiusRound
+                        color: "transparent"
+                        border.color: Theme.withAlpha(Theme.error, 0.5)
+                        border.width: 1
+                        anchors.horizontalCenter: parent.horizontalCenter
+
+                        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "退出登录"
+                            color: Theme.withAlpha(Theme.error, 0.8)
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontBody
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller) controller.logout();
+                            }
+                            onPressed: parent.color = Theme.withAlpha(Theme.error, 0.1)
+                            onReleased: parent.color = "transparent"
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 收藏夹列表 ──
+        Item {
+            id: favListView
+            anchors.fill: parent
+            visible: favView === 1
+
+            ListView {
+                id: favList
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.favoriteFolderModel() : null
+                spacing: Theme.spacingSmall
+                clip: true
+
+                delegate: Rectangle {
+                    width: parent.width
+                    height: 54
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.15)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
+                        Rectangle {
+                            width: 72
+                            height: parent.height - 2
+                            radius: Theme.radiusSmall
+                            color: Theme.bgTertiary
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: model.cover ? "image://bili/" + encodeURIComponent(model.cover) : ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                            }
+                        }
+
+                        Column {
+                            width: parent.width - 90
+                            spacing: 4
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                text: model.title || ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                text: "共" + (model.mediaCount || 0) + "个视频"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                            }
+                        }
                     }
 
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: {
-                            if (controller) controller.logout();
-                        }
-                        onPressed: parent.color = Theme.withAlpha(Theme.error, 0.1)
-                        onReleased: parent.color = "transparent"
+                        onClicked: userPage.openFavoriteDetail(model.fid, model.title)
                     }
                 }
+            }
+
+            Text {
+                visible: favList.count === 0 && controller && !controller.isLoading
+                text: "暂无收藏夹"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
+            }
+
+            Components.LoadingIndicator {
+                anchors.centerIn: parent
+                running: controller ? controller.isLoading : false
+            }
+        }
+
+        // ── 收藏夹详情 ──
+        Item {
+            id: favDetailView
+            anchors.fill: parent
+            visible: favView === 2
+
+            ListView {
+                id: favItems
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.favoriteItemModel() : null
+                orientation: ListView.Horizontal
+                spacing: Theme.spacingMedium
+                clip: true
+
+                delegate: Components.VideoCard {
+                    height: favItems.height
+                    videoTitle: model.title || ""
+                    coverUrl: model.pic || ""
+                    upName: model.ownerName || ""
+                    viewCount: model.views || ""
+                    durationText: model.durationText || ""
+                    bvid: model.bvid || ""
+                    showCollection: model.partCount > 1
+                    onClicked: userPage.videoSelected(bvid)
+                }
+
+                onAtXEndChanged: {
+                    if (atXEnd && controller) controller.fetchMoreFavoriteItems()
+                }
+            }
+
+            Text {
+                visible: favItems.count === 0 && controller && !controller.isLoading
+                text: "收藏夹为空"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
+            }
+
+            Components.LoadingIndicator {
+                anchors.centerIn: parent
+                running: controller ? controller.isLoading : false
             }
         }
     }
