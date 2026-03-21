@@ -465,75 +465,83 @@ Rectangle {
                     // 统计数据
                     Row {
                         width: parent.width
-                        spacing: Theme.spacingLarge
+                        spacing: Theme.spacingSmall
                         anchors.horizontalCenter: parent.horizontalCenter
+
+                        readonly property real colW: (width - Theme.spacingSmall * 2) / 3
 
                         // 粉丝
                         Column {
-                            width: 80
+                            width: parent.colW
                             spacing: 4
-                            anchors.horizontalCenter: parent.horizontalCenter
 
                             Text {
+                                width: parent.width
                                 text: controller ? String(controller.userFans) : "0"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontMedium
                                 font.bold: true
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
                             }
                             Text {
+                                width: parent.width
                                 text: "粉丝"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                horizontalAlignment: Text.AlignHCenter
                             }
                         }
 
                         // 关注
                         Column {
-                            width: 80
+                            width: parent.colW
                             spacing: 4
-                            anchors.horizontalCenter: parent.horizontalCenter
 
                             Text {
+                                width: parent.width
                                 text: controller ? String(controller.userFollowing) : "0"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontMedium
                                 font.bold: true
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
                             }
                             Text {
+                                width: parent.width
                                 text: "关注"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                horizontalAlignment: Text.AlignHCenter
                             }
                         }
 
                         // 硬币
                         Column {
-                            width: 80
+                            width: parent.colW
                             spacing: 4
-                            anchors.horizontalCenter: parent.horizontalCenter
 
                             Text {
+                                width: parent.width
                                 text: controller ? String(controller.userCoins) : "0"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontMedium
                                 font.bold: true
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
                             }
                             Text {
+                                width: parent.width
                                 text: "硬币"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                horizontalAlignment: Text.AlignHCenter
                             }
                         }
                     }

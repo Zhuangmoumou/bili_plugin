@@ -246,7 +246,9 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "user"
+            // 仅在用户页或从用户页进入详情时保持实例
+            active: currentPage === "user" || (currentPage === "detail" && lastPage === "user")
+            visible: currentPage === "user"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.UserPage {
