@@ -68,7 +68,7 @@ Rectangle {
                         return "正在下载视频...";
                     if (controller.tempVideoPath && controller.tempVideoPath.length > 0)
                         return "已启动外部播放器";
-                    return "正在获取播放地址...";
+                    return "点击播放按钮以开始";
                 }
                 return "正在初始化...";
             }
@@ -236,6 +236,7 @@ Rectangle {
                     id: playBtnArea
                     anchors.fill: parent
                     onClicked: {
+                        if (controller) controller.toastMessage("正在启动播放器，不要多次点击，请稍等...");
                         if (controller && controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                             controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
                             launchRequested = false;
