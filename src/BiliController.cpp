@@ -687,6 +687,10 @@ void BiliController::fetchPlayUrl(int quality) {
           }
         }
 
+        // 保存 DASH 直链，供外部播放器流式播放
+        self->m_dashVideoUrl = videoUrl;
+        self->m_dashAudioUrl = audioUrl;
+
         if (videoUrl.isEmpty()) {
           emit self->toastMessage("未获取到播放地址");
           self->setIsLoading(false);
@@ -1449,6 +1453,29 @@ void BiliController::launchExternalPlayerWithAudio(const QString &videoPath, con
 
   QStringList args;
   args << v << ("--audio-file=" + a);
+  bool ok = QProcess::startDetached(player, args);
+  if (!ok) {
+    emit toastMessage("启动外部播放器失败");
+  }
+}
+
+void BiliController::launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl) {
+  if (videoUrl.isEmpty() || audioUrl.isEmpty()) {
+    emit toastMessage("播放地址不完整");
+    return;
+  }
+
+  QString player = "/userdisk/VideoPlayer";
+  if (!QFile::exists(player)) {
+    emit toastMessage("外部播放器不存在");
+    return;
+  }
+
+  QStringList args;
+  args << videoUrl << ("--audio-file=" + audioUrl)
+       << "--referrer=https://www.bilibili.com"
+       << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
   bool ok = QProcess::startDetached(player, args);
   if (!ok) {
     emit toastMessage("启动外部播放器失败");

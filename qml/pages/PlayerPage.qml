@@ -48,13 +48,10 @@ Rectangle {
 
             function onDownloadStateChanged() {
                 // 下载完成且有临时文件路径时，启动外部播放器
-                if (controller && !controller.isDownloading &&
-                    controller.tempVideoPath && controller.tempVideoPath.length > 0) {
-                    if (controller.tempAudioPath && controller.tempAudioPath.length > 0) {
-                        controller.launchExternalPlayerWithAudio(controller.tempVideoPath, controller.tempAudioPath);
-                    } else {
-                        var path = controller.tempVideoPath;
-                        launchExternalPlayer(path);
+                if (controller && !controller.isDownloading) {
+                    if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
+                        controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
+                        controller.launchExternalPlayerWithAudioUrl(controller.dashVideoUrl, controller.dashAudioUrl);
                     }
                 }
             }
@@ -239,16 +236,12 @@ Rectangle {
                     id: playBtnArea
                     anchors.fill: parent
                     onClicked: {
-                        if (controller && controller.tempVideoPath && controller.tempVideoPath.length > 0) {
-                            // 手动点击允许重复启动
+                        if (controller && controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
+                            controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
                             launchRequested = false;
-                            if (controller.tempAudioPath && controller.tempAudioPath.length > 0) {
-                                controller.launchExternalPlayerWithAudio(controller.tempVideoPath, controller.tempAudioPath);
-                            } else {
-                                controller.launchExternalPlayer(controller.tempVideoPath);
-                            }
+                            controller.launchExternalPlayerWithAudioUrl(controller.dashVideoUrl, controller.dashAudioUrl);
                         } else {
-                            if (controller) controller.downloadAndPlay(playQuality);
+                            if (controller) controller.fetchPlayUrl(playQuality);
                         }
                         hideControlsTimer.restart();
                     }
@@ -343,7 +336,7 @@ Rectangle {
 
 
     Component.onCompleted: {
-        if (controller) controller.downloadAndPlay(playQuality);
+        if (controller) controller.fetchPlayUrl(playQuality);
         hideControlsTimer.start();
     }
 

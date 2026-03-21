@@ -58,6 +58,8 @@ class BiliController : public QObject {
   Q_PROPERTY(QString downloadStatus READ downloadStatus NOTIFY downloadStateChanged)
   Q_PROPERTY(QString tempVideoPath READ tempVideoPath NOTIFY downloadStateChanged)
   Q_PROPERTY(QString tempAudioPath READ tempAudioPath NOTIFY downloadStateChanged)
+  Q_PROPERTY(QString dashVideoUrl READ dashVideoUrl NOTIFY playUrlChanged)
+  Q_PROPERTY(QString dashAudioUrl READ dashAudioUrl NOTIFY playUrlChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -112,6 +114,8 @@ public:
   QString downloadStatus() const { return m_downloadStatus; }
   QString tempVideoPath() const { return m_tempVideoPath; }
   QString tempAudioPath() const { return m_tempAudioPath; }
+  QString dashVideoUrl() const { return m_dashVideoUrl; }
+  QString dashAudioUrl() const { return m_dashAudioUrl; }
 
   bool loggedIn() const;
   bool isFavorited() const { return m_isFavorited; }
@@ -153,6 +157,7 @@ public:
   // 外部播放器
   Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
+  Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -231,6 +236,8 @@ private:
   QString m_downloadStatus;
   QString m_tempVideoPath;
   QString m_tempAudioPath;
+  QString m_dashVideoUrl;
+  QString m_dashAudioUrl;
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;
