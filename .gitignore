@@ -1,3 +1,4 @@
 .xmake
 build
 go_server/server
+bili_plugin.zip
