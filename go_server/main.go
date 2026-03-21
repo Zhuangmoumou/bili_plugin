@@ -802,27 +802,33 @@ func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
 	return c.request("https://api.bilibili.com/x/web-interface/nav", map[string]string{}, "GET")
 }
 
-func (c *BilibiliClient) GetPlayUrl(aid, cid, qn int) (json.RawMessage, error) {
-if qn <= 0 {
-qn = 32
-}
+func (c *BilibiliClient) GetPlayUrl(aid, cid, qn, fnval int, platform string) (json.RawMessage, error) {
+	if qn <= 0 {
+		qn = 32
+	}
+	if fnval <= 0 {
+		fnval = 4048
+	}
+	if platform == "" {
+		platform = "pc"
+	}
 
-allowedQn := map[int]bool{
-16:  true,
-32:  true,
-64:  true,
-80:  true,
-112: true,
-116: true,
-120: true,
-125: true,
-}
-if !allowedQn[qn] {
+	allowedQn := map[int]bool{
+		16:  true,
+		32:  true,
+		64:  true,
+		80:  true,
+		112: true,
+		116: true,
+		120: true,
+		125: true,
+	}
+	if !allowedQn[qn] {
 		logWarn("不支持的清晰度 qn=%d，回退到 32", qn)
 		qn = 32
 	}
 
-	logInfo("获取播放地址 aid=%d cid=%d qn=%d", aid, cid, qn)
+	logInfo("获取播放地址 aid=%d cid=%d qn=%d fnval=%d platform=%s", aid, cid, qn, fnval, platform)
 	return c.wbiRequest("https://api.bilibili.com/x/player/wbi/playurl", map[string]string{
 		"avid":     strconv.Itoa(aid),
 		"cid":      strconv.Itoa(cid),
@@ -831,8 +837,8 @@ if !allowedQn[qn] {
 		"otype":    "json",
 		"fourk":    "1",
 		"fnver":    "0",
-		"fnval":    "4048",
-		"platform": "pc",
+		"fnval":    strconv.Itoa(fnval),
+		"platform": platform,
 	}, "GET")
 }
 
@@ -1206,46 +1212,68 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
+	fnval, err := intParam(r.URL.Query().Get("fnval"), 0, 1, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	platform := r.URL.Query().Get("platform")
 	client := getClient()
-	result, err := client.GetPlayUrl(aid, cid, qn)
+	result, err := client.GetPlayUrl(aid, cid, qn, fnval, platform)
 	if err != nil {
 		logError("处理 /video/playurl 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
 		return
 	}
 
-	// 过滤不可观看的清晰度（根据 support_formats 的 can_watch/limit 标志）
+	// 过滤不可观看的清晰度（以 accept_quality 为主，结合 support_formats 限制）
 	var resp map[string]interface{}
 	if err := json.Unmarshal(result, &resp); err == nil {
 		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
 			if data, ok := resp["data"].(map[string]interface{}); ok {
+				allowed := make(map[int]bool)
+
+				// 先以 accept_quality 为主
+				if aq, ok := data["accept_quality"].([]interface{}); ok {
+					for _, v := range aq {
+						qf, _ := v.(float64)
+						if int(qf) > 0 {
+							allowed[int(qf)] = true
+						}
+					}
+				}
+
+				// 再用 support_formats 的限制条件剔除不可观看清晰度
 				if sf, ok := data["support_formats"].([]interface{}); ok {
-					allowed := make(map[int]bool)
 					filtered := make([]interface{}, 0)
 					for _, v := range sf {
 						obj, _ := v.(map[string]interface{})
 						q, _ := obj["quality"].(float64)
 						canWatch, _ := obj["can_watch_qn_reason"].(float64)
 						limit, _ := obj["limit_watch_reason"].(float64)
-						if int(canWatch) == 0 && int(limit) == 0 && int(q) > 0 {
-							allowed[int(q)] = true
-							filtered = append(filtered, obj)
+						if int(q) <= 0 {
+							continue
 						}
+						if int(canWatch) != 0 || int(limit) != 0 {
+							delete(allowed, int(q))
+							continue
+						}
+						filtered = append(filtered, obj)
 					}
 					data["support_formats"] = filtered
+				}
 
-					// 过滤 accept_quality
-					if aq, ok := data["accept_quality"].([]interface{}); ok {
-						newAq := make([]interface{}, 0)
-						for _, v := range aq {
-							qf, _ := v.(float64)
-							if allowed[int(qf)] {
-								newAq = append(newAq, v)
-							}
+				// 重建 accept_quality（保持原顺序）
+				if aq, ok := data["accept_quality"].([]interface{}); ok {
+					newAq := make([]interface{}, 0)
+					for _, v := range aq {
+						qf, _ := v.(float64)
+						if allowed[int(qf)] {
+							newAq = append(newAq, v)
 						}
-						if len(newAq) > 0 {
-							data["accept_quality"] = newAq
-						}
+					}
+					if len(newAq) > 0 {
+						data["accept_quality"] = newAq
 					}
 				}
 			}

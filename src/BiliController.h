@@ -148,6 +148,8 @@ public:
   // 收藏状态
   Q_INVOKABLE void fetchFavoriteStatus();
   Q_INVOKABLE void toggleFavorite();
+  // 外部播放器
+  Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();

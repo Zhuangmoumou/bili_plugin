@@ -13,6 +13,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QStringListModel>
+#include <QProcess>
 #include <iostream>
 
 static QQmlEngine *s_engine = nullptr;
@@ -1345,6 +1346,29 @@ void BiliController::toggleFavorite() {
           return;
         emit self->toastMessage(QString("收藏操作失败：%1").arg(msg));
       });
+}
+
+void BiliController::launchExternalPlayer(const QString &path) {
+  if (path.isEmpty()) {
+    emit toastMessage("播放路径为空");
+    return;
+  }
+
+  QString filePath = path;
+  if (filePath.startsWith("file://")) {
+    filePath = filePath.mid(7);
+  }
+
+  QString player = "/userdisk/VideoPlayer";
+  if (!QFile::exists(player)) {
+    emit toastMessage("外部播放器不存在");
+    return;
+  }
+
+  bool ok = QProcess::startDetached(player, QStringList() << filePath);
+  if (!ok) {
+    emit toastMessage("启动外部播放器失败");
+  }
 }
 
 // ====== API: 登录 ======
