@@ -1171,6 +1171,34 @@ void BiliController::fetchFavoriteFolders() {
         self->m_favoriteFolderModel->setLoading(false);
         self->setIsLoading(false);
 
+        // 更新封面为每个收藏夹的首个视频封面
+        for (const FavoriteFolderItem &folder : items) {
+          QMap<QString, QString> p;
+          qint64 mediaId = folder.id > 0 ? folder.id : folder.fid;
+          if (mediaId <= 0) continue;
+          p["media_id"] = QString::number(mediaId);
+          p["pn"] = "1";
+          p["ps"] = "1";
+          p["order"] = "mtime";
+          p["type"] = "0";
+
+          QPointer<BiliController> self2(self);
+          self->m_network->get(
+              "/fav/resource/list", p,
+              [self2, mediaId](const QJsonObject &data2) {
+                if (!self2) return;
+                QJsonArray medias = data2.value("medias").toArray();
+                if (!medias.isEmpty()) {
+                  QJsonObject first = medias.first().toObject();
+                  QString cover = first.value("cover").toString();
+                  if (!cover.isEmpty()) {
+                    self2->m_favoriteFolderModel->updateCover(mediaId, cover);
+                  }
+                }
+              },
+              nullptr);
+        }
+
         if (items.isEmpty()) {
           emit self->toastMessage("暂无收藏夹");
         }

@@ -562,6 +562,20 @@ void FavoriteFolderModel::setLoading(bool loading)
     }
 }
 
+void FavoriteFolderModel::updateCover(qint64 id, const QString &cover)
+{
+    if (cover.isEmpty()) return;
+    for (int i = 0; i < m_items.size(); ++i) {
+        if (m_items[i].id == id || m_items[i].fid == id) {
+            if (m_items[i].cover == cover) return;
+            m_items[i].cover = cover;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {CoverRole});
+            return;
+        }
+    }
+}
+
 FavoriteFolderItem FavoriteFolderModel::parseFavoriteFolderItem(const QJsonObject &obj)
 {
     FavoriteFolderItem item;

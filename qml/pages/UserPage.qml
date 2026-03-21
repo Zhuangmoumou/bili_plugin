@@ -659,7 +659,7 @@ Rectangle {
 
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: userPage.openFavoriteDetail(model.fid, model.title)
+                        onClicked: userPage.openFavoriteDetail(model.id, model.title)
                     }
                 }
             }

@@ -317,6 +317,7 @@ public:
     Q_INVOKABLE void clear();
     void setItems(const QVector<FavoriteFolderItem> &items);
     void setLoading(bool loading);
+    void updateCover(qint64 id, const QString &cover);
 
     static FavoriteFolderItem parseFavoriteFolderItem(const QJsonObject &obj);
 
