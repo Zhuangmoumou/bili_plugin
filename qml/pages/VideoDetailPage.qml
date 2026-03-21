@@ -1146,7 +1146,7 @@ Rectangle {
         // 尝试获取可用清晰度
         if (controller && controller.videoCid > 0) {
             controller.fetchAcceptQualities(selectedQuality)
-            if (controller.loggedIn) controller.fetchFavoriteStatus()
+            controller.fetchFavoriteStatus()
         }
 
         enterAnimation.start()
@@ -1158,7 +1158,12 @@ Rectangle {
         function onVideoDetailChanged() {
             if (controller && controller.videoCid > 0) {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
-                if (controller.loggedIn) controller.fetchFavoriteStatus()
+                controller.fetchFavoriteStatus()
+            }
+        }
+        function onLoginStateChanged() {
+            if (controller && controller.loggedIn && controller.videoCid > 0) {
+                controller.fetchFavoriteStatus()
             }
         }
     }

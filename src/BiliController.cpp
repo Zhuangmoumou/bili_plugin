@@ -1322,7 +1322,12 @@ void BiliController::fetchFavoriteStatus() {
         if (!self)
           return;
 
-        bool fav = data.value("favoured").toInt(0) == 1;
+        bool fav = false;
+        if (data.value("favoured").isBool()) {
+          fav = data.value("favoured").toBool(false);
+        } else {
+          fav = data.value("favoured").toInt(0) == 1;
+        }
         if (self->m_isFavorited != fav) {
           self->m_isFavorited = fav;
           emit self->favoriteStatusChanged();
