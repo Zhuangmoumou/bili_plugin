@@ -50,8 +50,12 @@ Rectangle {
                 // 下载完成且有临时文件路径时，启动外部播放器
                 if (controller && !controller.isDownloading &&
                     controller.tempVideoPath && controller.tempVideoPath.length > 0) {
-                    var path = controller.tempVideoPath;
-                    launchExternalPlayer(path);
+                    if (controller.tempAudioPath && controller.tempAudioPath.length > 0) {
+                        controller.launchExternalPlayerWithAudio(controller.tempVideoPath, controller.tempAudioPath);
+                    } else {
+                        var path = controller.tempVideoPath;
+                        launchExternalPlayer(path);
+                    }
                 }
             }
         }
@@ -238,7 +242,11 @@ Rectangle {
                         if (controller && controller.tempVideoPath && controller.tempVideoPath.length > 0) {
                             // 手动点击允许重复启动
                             launchRequested = false;
-                            controller.launchExternalPlayer(controller.tempVideoPath);
+                            if (controller.tempAudioPath && controller.tempAudioPath.length > 0) {
+                                controller.launchExternalPlayerWithAudio(controller.tempVideoPath, controller.tempAudioPath);
+                            } else {
+                                controller.launchExternalPlayer(controller.tempVideoPath);
+                            }
                         } else {
                             if (controller) controller.downloadAndPlay(playQuality);
                         }

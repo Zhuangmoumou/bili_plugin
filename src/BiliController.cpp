@@ -570,7 +570,7 @@ void BiliController::fetchPlayUrl(int quality) {
   params["bvid"] = m_currentVideo.bvid;
   // fnval=1: 优先请求 MP4 格式，fnval=16: DASH 格式（音视频分离）
   // 优先使用 MP4 格式以获得更好的兼容性
-  params["fnval"] = "1";
+  params["fnval"] = "4048";
 
   QPointer<BiliController> self(this);
 
@@ -745,7 +745,7 @@ void BiliController::fetchAcceptQualities(int quality) {
   params["cid"] = QString::number(m_currentVideo.cid);
   params["qn"] = QString::number(quality);
   params["bvid"] = m_currentVideo.bvid;
-  params["fnval"] = "1";
+  params["fnval"] = "4048";
 
   QPointer<BiliController> self(this);
 
@@ -812,17 +812,18 @@ void BiliController::downloadAndPlay(int quality) {
   // 生成临时文件路径
   QString tempDir =
       QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-  QString fileName = QString("bili_%1_%2.mp4")
+  QString baseName = QString("bili_%1_%2")
                          .arg(m_currentVideo.bvid)
                          .arg(QDateTime::currentMSecsSinceEpoch());
-  m_tempVideoPath = QDir(tempDir).filePath(fileName);
+  m_tempVideoPath = QDir(tempDir).filePath(baseName + ".m4s");
+  m_tempAudioPath = QDir(tempDir).filePath(baseName + "_audio.m4s");
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(videoAid());
   params["cid"] = QString::number(m_currentVideo.cid);
   params["qn"] = QString::number(quality);
   params["bvid"] = m_currentVideo.bvid;
-  params["fnval"] = "1"; // MP4 格式
+  params["fnval"] = "1"; // MP4 合并流
 
   QPointer<BiliController> self(this);
 
@@ -833,6 +834,7 @@ void BiliController::downloadAndPlay(int quality) {
           return;
 
         QString videoUrl;
+        QString audioUrl;
         int requestedQuality = quality;
         int finalQuality = requestedQuality;
         int apiQuality = data.value("quality").toInt(0);
@@ -865,51 +867,71 @@ void BiliController::downloadAndPlay(int quality) {
           emit self->acceptQualitiesChanged();
         }
 
-        // 优先 durl 格式（MP4）
-        QJsonArray durl = data.value("durl").toArray();
-        if (!durl.isEmpty()) {
-          QJsonObject first = durl.first().toObject();
-          videoUrl = first.value("url").toString();
+        // DASH：优先选择视频流与音频流
+        QJsonObject dash = data.value("dash").toObject();
+        if (!dash.isEmpty()) {
+          QJsonArray videoArray = dash.value("video").toArray();
+          QJsonArray audioArray = dash.value("audio").toArray();
+
+          auto pickVideoByQn = [&](int qn) -> bool {
+            for (const QJsonValue &v : videoArray) {
+              QJsonObject videoObj = v.toObject();
+              if (videoObj.value("id").toInt(0) == qn) {
+                videoUrl = videoObj.value("base_url").toString();
+                if (videoUrl.isEmpty())
+                  videoUrl = videoObj.value("baseUrl").toString();
+                if (!videoUrl.isEmpty()) {
+                  finalQuality = qn;
+                  return true;
+                }
+              }
+            }
+            return false;
+          };
+
+          // 先尝试用户选择的清晰度
+          pickVideoByQn(requestedQuality);
+
           if (videoUrl.isEmpty()) {
-            QJsonArray backup = first.value("backup_url").toArray();
-            if (!backup.isEmpty()) {
-              videoUrl = backup.first().toString();
+            QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
+            for (int qn : qualityOrder) {
+              if (qn == requestedQuality)
+                continue;
+              if (pickVideoByQn(qn))
+                break;
+            }
+          }
+
+          // 获取音频流（优先高码率）
+          if (!audioArray.isEmpty()) {
+            QVector<int> audioOrder = {30280, 30232, 30216};
+            for (int audioQn : audioOrder) {
+              for (const QJsonValue &a : audioArray) {
+                QJsonObject audioObj = a.toObject();
+                if (audioObj.value("id").toInt(0) == audioQn) {
+                  audioUrl = audioObj.value("base_url").toString();
+                  if (audioUrl.isEmpty())
+                    audioUrl = audioObj.value("baseUrl").toString();
+                  if (!audioUrl.isEmpty())
+                    break;
+                }
+              }
+              if (!audioUrl.isEmpty())
+                break;
             }
           }
         }
 
-        // 回退到 dash 格式（仅视频轨）
+        // 回退到 MP4（durl）
         if (videoUrl.isEmpty()) {
-          QJsonObject dash = data.value("dash").toObject();
-          if (!dash.isEmpty()) {
-            QJsonArray videoArray = dash.value("video").toArray();
-
-            auto pickVideoByQn = [&](int qn) -> bool {
-              for (const QJsonValue &v : videoArray) {
-                QJsonObject videoObj = v.toObject();
-                if (videoObj.value("id").toInt(0) == qn) {
-                  videoUrl = videoObj.value("base_url").toString();
-                  if (videoUrl.isEmpty())
-                    videoUrl = videoObj.value("baseUrl").toString();
-                  if (!videoUrl.isEmpty()) {
-                    finalQuality = qn;
-                    return true;
-                  }
-                }
-              }
-              return false;
-            };
-
-            // 先尝试用户选择的清晰度
-            pickVideoByQn(requestedQuality);
-
+          QJsonArray durl = data.value("durl").toArray();
+          if (!durl.isEmpty()) {
+            QJsonObject first = durl.first().toObject();
+            videoUrl = first.value("url").toString();
             if (videoUrl.isEmpty()) {
-              QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
-              for (int qn : qualityOrder) {
-                if (qn == requestedQuality)
-                  continue;
-                if (pickVideoByQn(qn))
-                  break;
+              QJsonArray backup = first.value("backup_url").toArray();
+              if (!backup.isEmpty()) {
+                videoUrl = backup.first().toString();
               }
             }
           }
@@ -921,30 +943,58 @@ void BiliController::downloadAndPlay(int quality) {
           return;
         }
 
-        // 开始下载
+        // 开始下载视频
         self->m_isDownloading = true;
         self->m_downloadProgress = 0;
-        self->m_downloadStatus = "正在下载...";
+        self->m_downloadStatus = "正在下载视频...";
         emit self->downloadStateChanged();
 
         self->m_network->downloadVideo(
             videoUrl, self->m_tempVideoPath,
-            // 成功回调
-            [self, finalQuality](const QString &path) {
+            // 视频成功回调
+            [self, audioUrl, finalQuality](const QString &path) {
               if (!self)
                 return;
 
-              self->m_isDownloading = false;
-              self->m_downloadProgress = 1.0;
-              self->m_downloadStatus = "下载完成";
-              self->m_playUrl = path;
-              self->m_playQuality = finalQuality;
-              emit self->downloadStateChanged();
-              emit self->playUrlChanged();
-              self->setIsLoading(false);
+              // 如果有音频流，继续下载音频
+              if (!audioUrl.isEmpty()) {
+                self->m_downloadStatus = "正在下载音频...";
+                emit self->downloadStateChanged();
 
-              if (!self->m_playUrl.isEmpty()) {
-                emit self->playbackReady(self->m_playUrl);
+                self->m_network->downloadVideo(
+                    audioUrl, self->m_tempAudioPath,
+                    [self, finalQuality](const QString &) {
+                      if (!self)
+                        return;
+
+                      self->m_isDownloading = false;
+                      self->m_downloadProgress = 1.0;
+                      self->m_downloadStatus = "下载完成";
+                      self->m_playUrl = self->m_tempVideoPath;
+                      self->m_playQuality = finalQuality;
+                      emit self->downloadStateChanged();
+                      emit self->playUrlChanged();
+                      self->setIsLoading(false);
+                    },
+                    [self](int, const QString &msg) {
+                      if (!self)
+                        return;
+                      self->m_isDownloading = false;
+                      self->m_downloadProgress = 0;
+                      self->m_downloadStatus.clear();
+                      emit self->downloadStateChanged();
+                      self->setIsLoading(false);
+                      emit self->toastMessage(QString("音频下载失败：%1").arg(msg));
+                    });
+              } else {
+                self->m_isDownloading = false;
+                self->m_downloadProgress = 1.0;
+                self->m_downloadStatus = "下载完成";
+                self->m_playUrl = path;
+                self->m_playQuality = finalQuality;
+                emit self->downloadStateChanged();
+                emit self->playUrlChanged();
+                self->setIsLoading(false);
               }
             },
             // 错误回调
@@ -1020,6 +1070,15 @@ void BiliController::cleanupTempVideo() {
                 << m_tempVideoPath.toStdString() << std::endl;
     }
     m_tempVideoPath.clear();
+  }
+  if (!m_tempAudioPath.isEmpty()) {
+    QFile file(m_tempAudioPath);
+    if (file.exists()) {
+      file.remove();
+      std::cout << "[BiliController] Cleaned up temp audio: "
+                << m_tempAudioPath.toStdString() << std::endl;
+    }
+    m_tempAudioPath.clear();
   }
 }
 
@@ -1366,6 +1425,31 @@ void BiliController::launchExternalPlayer(const QString &path) {
   }
 
   bool ok = QProcess::startDetached(player, QStringList() << filePath);
+  if (!ok) {
+    emit toastMessage("启动外部播放器失败");
+  }
+}
+
+void BiliController::launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath) {
+  if (videoPath.isEmpty() || audioPath.isEmpty()) {
+    emit toastMessage("播放路径不完整");
+    return;
+  }
+
+  QString v = videoPath;
+  QString a = audioPath;
+  if (v.startsWith("file://")) v = v.mid(7);
+  if (a.startsWith("file://")) a = a.mid(7);
+
+  QString player = "/userdisk/VideoPlayer";
+  if (!QFile::exists(player)) {
+    emit toastMessage("外部播放器不存在");
+    return;
+  }
+
+  QStringList args;
+  args << v << ("--audio-file=" + a);
+  bool ok = QProcess::startDetached(player, args);
   if (!ok) {
     emit toastMessage("启动外部播放器失败");
   }
