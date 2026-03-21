@@ -832,7 +832,7 @@ if !allowedQn[qn] {
 		"fourk":    "1",
 		"fnver":    "0",
 		"fnval":    "4048",
-		"platform": "html5",
+		"platform": "pc",
 	}, "GET")
 }
 
@@ -1211,6 +1211,49 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logError("处理 /video/playurl 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
+		return
+	}
+
+	// 过滤不可观看的清晰度（根据 support_formats 的 can_watch/limit 标志）
+	var resp map[string]interface{}
+	if err := json.Unmarshal(result, &resp); err == nil {
+		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
+			if data, ok := resp["data"].(map[string]interface{}); ok {
+				if sf, ok := data["support_formats"].([]interface{}); ok {
+					allowed := make(map[int]bool)
+					filtered := make([]interface{}, 0)
+					for _, v := range sf {
+						obj, _ := v.(map[string]interface{})
+						q, _ := obj["quality"].(float64)
+						canWatch, _ := obj["can_watch_qn_reason"].(float64)
+						limit, _ := obj["limit_watch_reason"].(float64)
+						if int(canWatch) == 0 && int(limit) == 0 && int(q) > 0 {
+							allowed[int(q)] = true
+							filtered = append(filtered, obj)
+						}
+					}
+					data["support_formats"] = filtered
+
+					// 过滤 accept_quality
+					if aq, ok := data["accept_quality"].([]interface{}); ok {
+						newAq := make([]interface{}, 0)
+						for _, v := range aq {
+							qf, _ := v.(float64)
+							if allowed[int(qf)] {
+								newAq = append(newAq, v)
+							}
+						}
+						if len(newAq) > 0 {
+							data["accept_quality"] = newAq
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(resp) > 0 {
+		writeJSON(w, 200, resp)
 		return
 	}
 	writeJSON(w, 200, wrapResult(result))

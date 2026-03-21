@@ -588,23 +588,14 @@ void BiliController::fetchPlayUrl(int quality) {
           finalQuality = apiQuality;
         }
 
-        // 解析可用清晰度
+        // 解析可用清晰度（以 accept_quality 为准）
         QVector<int> newAccepts;
         QJsonArray accept = data.value("accept_quality").toArray();
         for (const QJsonValue &v : accept) {
           int q = v.toInt(0);
           if (q > 0) newAccepts.append(q);
         }
-        // 兼容 high_format（如 1080P/60帧）
-        QJsonObject highFormat = data.value("high_format").toObject();
-        int highQn = highFormat.value("quality").toInt(0);
-        int highCanWatch = highFormat.value("can_watch_qn_reason").toInt(0);
-        int highLimit = highFormat.value("limit_watch_reason").toInt(0);
-        if (highQn > 0 && highCanWatch == 0 && highLimit == 0 &&
-            !newAccepts.contains(highQn)) {
-          newAccepts.append(highQn);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度）
+        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
         QJsonArray supportFormats = data.value("support_formats").toArray();
         for (const QJsonValue &v : supportFormats) {
           QJsonObject obj = v.toObject();
@@ -763,22 +754,14 @@ void BiliController::fetchAcceptQualities(int quality) {
         if (!self)
           return;
 
+        // 解析可用清晰度（以 accept_quality 为准）
         QVector<int> newAccepts;
         QJsonArray accept = data.value("accept_quality").toArray();
         for (const QJsonValue &v : accept) {
           int q = v.toInt(0);
           if (q > 0) newAccepts.append(q);
         }
-        // 兼容 high_format（如 1080P/60帧）
-        QJsonObject highFormat = data.value("high_format").toObject();
-        int highQn = highFormat.value("quality").toInt(0);
-        int highCanWatch = highFormat.value("can_watch_qn_reason").toInt(0);
-        int highLimit = highFormat.value("limit_watch_reason").toInt(0);
-        if (highQn > 0 && highCanWatch == 0 && highLimit == 0 &&
-            !newAccepts.contains(highQn)) {
-          newAccepts.append(highQn);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度）
+        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
         QJsonArray supportFormats = data.value("support_formats").toArray();
         for (const QJsonValue &v : supportFormats) {
           QJsonObject obj = v.toObject();
@@ -856,23 +839,14 @@ void BiliController::downloadAndPlay(int quality) {
           finalQuality = apiQuality;
         }
 
-        // 解析可用清晰度
+        // 解析可用清晰度（以 accept_quality 为准）
         QVector<int> newAccepts;
         QJsonArray accept = data.value("accept_quality").toArray();
         for (const QJsonValue &v : accept) {
           int q = v.toInt(0);
           if (q > 0) newAccepts.append(q);
         }
-        // 兼容 high_format（如 1080P/60帧）
-        QJsonObject highFormat = data.value("high_format").toObject();
-        int highQn = highFormat.value("quality").toInt(0);
-        int highCanWatch = highFormat.value("can_watch_qn_reason").toInt(0);
-        int highLimit = highFormat.value("limit_watch_reason").toInt(0);
-        if (highQn > 0 && highCanWatch == 0 && highLimit == 0 &&
-            !newAccepts.contains(highQn)) {
-          newAccepts.append(highQn);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度）
+        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
         QJsonArray supportFormats = data.value("support_formats").toArray();
         for (const QJsonValue &v : supportFormats) {
           QJsonObject obj = v.toObject();
@@ -1957,12 +1931,24 @@ void BiliController::downloadVideoToDisk(int quality) {
       [self, targetPath](const QJsonObject &data) {
         if (!self) return;
 
-        // 解析可用清晰度
+        // 解析可用清晰度（以 accept_quality 为准）
         QVector<int> newAccepts;
         QJsonArray accept = data.value("accept_quality").toArray();
         for (const QJsonValue &v : accept) {
           int q = v.toInt(0);
           if (q > 0) newAccepts.append(q);
+        }
+        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
+        QJsonArray supportFormats = data.value("support_formats").toArray();
+        for (const QJsonValue &v : supportFormats) {
+          QJsonObject obj = v.toObject();
+          int q = obj.value("quality").toInt(0);
+          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
+          int limit = obj.value("limit_watch_reason").toInt(0);
+          if (q > 0 && canWatch == 0 && limit == 0 &&
+              !newAccepts.contains(q)) {
+            newAccepts.append(q);
+          }
         }
         if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
           self->m_acceptQualities = newAccepts;

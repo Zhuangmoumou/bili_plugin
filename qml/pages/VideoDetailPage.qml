@@ -509,83 +509,96 @@ Rectangle {
                 // ─────────────────────────────────────
                 // 清晰度选择器
                 // ─────────────────────────────────────
-                Row {
-                    id: qualityRow
-                    spacing: 6
+                Flickable {
+                    id: qualityFlick
                     anchors.left: parent.left
                     anchors.leftMargin: 16
                     anchors.right: parent.right
                     anchors.rightMargin: 16
+                    height: 22
+                    contentWidth: qualityRow.implicitWidth
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    clip: true
+                    boundsBehavior: Flickable.DragOverBounds
 
-                    Text {
-                        text: "清晰度: " + qualityLabel(detailPage.selectedQuality)
-                        color: primaryLight
-                        font.family: fontFamily
-                        font.pixelSize: 10
+                    Row {
+                        id: qualityRow
+                        spacing: 6
+                        height: parent.height
                         anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Rectangle {
-                        height: 18
-                        width: 38
-                        radius: 9
-                        color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.08)
-                        border.width: 1
-                        border.color: Qt.rgba(1, 1, 1, 0.12)
+                        anchors.verticalCenterOffset: 2
 
                         Text {
-                            anchors.centerIn: parent
-                            text: "刷新"
-                            color: "#cbd5e1"
+                            text: "清晰度: " + qualityLabel(detailPage.selectedQuality)
+                            color: primaryLight
                             font.family: fontFamily
-                            font.pixelSize: 9
-                            font.bold: true
+                            font.pixelSize: 10
+                            anchors.verticalCenter: parent.verticalCenter
                         }
-
-                        MouseArea {
-                            id: refreshArea
-                            anchors.fill: parent
-                            onClicked: {
-                                if (controller) {
-                                    controller.fetchAcceptQualities(detailPage.selectedQuality)
-                                }
-                            }
-                        }
-                    }
-
-                    Repeater {
-                        model: detailPage.availableQualities
 
                         Rectangle {
                             height: 18
-                            width: Math.max(38, qualityText.implicitWidth + 10)
+                            width: 38
                             radius: 9
-                            color: detailPage.selectedQuality === modelData
-                                   ? primaryColor
-                                   : Qt.rgba(1, 1, 1, 0.08)
+                            color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.08)
                             border.width: 1
-                            border.color: detailPage.selectedQuality === modelData
-                                           ? primaryLight
-                                           : Qt.rgba(1, 1, 1, 0.12)
+                            border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             Text {
-                                id: qualityText
                                 anchors.centerIn: parent
-                                text: qualityLabel(modelData) + (detailPage.selectedQuality === modelData ? " ✓" : "")
-                                color: detailPage.selectedQuality === modelData
-                                       ? "white"
-                                       : "#cbd5e1"
+                                text: "刷新"
+                                color: "#cbd5e1"
                                 font.family: fontFamily
                                 font.pixelSize: 9
-                                font.bold: detailPage.selectedQuality === modelData
+                                font.bold: true
                             }
 
                             MouseArea {
+                                id: refreshArea
                                 anchors.fill: parent
                                 onClicked: {
-                                    detailPage.selectedQuality = modelData
-                                    if (detailPage.rootRef) {
-                                        detailPage.rootRef.playQualitySelected = modelData
+                                    if (controller) {
+                                        controller.fetchAcceptQualities(detailPage.selectedQuality)
+                                    }
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: detailPage.availableQualities
+
+                            Rectangle {
+                                height: 18
+                                width: Math.max(38, qualityText.implicitWidth + 10)
+                                radius: 9
+                                color: detailPage.selectedQuality === modelData
+                                       ? primaryColor
+                                       : Qt.rgba(1, 1, 1, 0.08)
+                                border.width: 1
+                                border.color: detailPage.selectedQuality === modelData
+                                               ? primaryLight
+                                               : Qt.rgba(1, 1, 1, 0.12)
+
+                                Text {
+                                    id: qualityText
+                                    anchors.centerIn: parent
+                                    text: qualityLabel(modelData) + (detailPage.selectedQuality === modelData ? " ✓" : "")
+                                    color: detailPage.selectedQuality === modelData
+                                           ? "white"
+                                           : "#cbd5e1"
+                                    font.family: fontFamily
+                                    font.pixelSize: 9
+                                    font.bold: detailPage.selectedQuality === modelData
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        detailPage.selectedQuality = modelData
+                                        if (detailPage.rootRef) {
+                                            detailPage.rootRef.playQualitySelected = modelData
+                                        }
                                     }
                                 }
                             }
