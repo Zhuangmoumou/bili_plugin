@@ -525,6 +525,34 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
+                    Rectangle {
+                        height: 18
+                        width: 38
+                        radius: 9
+                        color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.08)
+                        border.width: 1
+                        border.color: Qt.rgba(1, 1, 1, 0.12)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "刷新"
+                            color: "#cbd5e1"
+                            font.family: fontFamily
+                            font.pixelSize: 9
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: refreshArea
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller) {
+                                    controller.fetchAcceptQualities(detailPage.selectedQuality)
+                                }
+                            }
+                        }
+                    }
+
                     Repeater {
                         model: detailPage.availableQualities
 
@@ -1062,7 +1090,7 @@ Rectangle {
 
         // 尝试获取可用清晰度
         if (controller && controller.videoCid > 0) {
-            controller.fetchPlayUrl(selectedQuality)
+            controller.fetchAcceptQualities(selectedQuality)
         }
 
         enterAnimation.start()
@@ -1073,7 +1101,7 @@ Rectangle {
         function onAcceptQualitiesChanged() { detailPage.updateQualities(); }
         function onVideoDetailChanged() {
             if (controller && controller.videoCid > 0) {
-                controller.fetchPlayUrl(detailPage.selectedQuality)
+                controller.fetchAcceptQualities(detailPage.selectedQuality)
             }
         }
     }

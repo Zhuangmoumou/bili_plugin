@@ -134,6 +134,8 @@ public:
   Q_INVOKABLE void searchMore();
   Q_INVOKABLE void fetchVideoDetail(const QString &bvid);
   Q_INVOKABLE void fetchPlayUrl(int quality = 64);
+  // 仅获取可用清晰度列表（不触发播放）
+  Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
   Q_INVOKABLE void fetchComments(int page = 1);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();

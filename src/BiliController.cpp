@@ -567,13 +567,18 @@ void BiliController::fetchPlayUrl(int quality) {
 
   m_network->get(
       "/video/playurl", params,
-      [self](const QJsonObject &data) {
+      [self, quality](const QJsonObject &data) {
         if (!self)
           return;
 
         QString videoUrl;
         QString audioUrl;
-        int finalQuality = 32;
+        int requestedQuality = quality;
+        int finalQuality = requestedQuality;
+        int apiQuality = data.value("quality").toInt(0);
+        if (apiQuality > 0) {
+          finalQuality = apiQuality;
+        }
 
         // 解析可用清晰度
         QVector<int> newAccepts;
@@ -582,6 +587,28 @@ void BiliController::fetchPlayUrl(int quality) {
           int q = v.toInt(0);
           if (q > 0) newAccepts.append(q);
         }
+        // 兼容 high_format（如 1080P/60帧）
+        QJsonObject highFormat = data.value("high_format").toObject();
+        int highQn = highFormat.value("quality").toInt(0);
+        int highCanWatch = highFormat.value("can_watch_qn_reason").toInt(0);
+        int highLimit = highFormat.value("limit_watch_reason").toInt(0);
+        if (highQn > 0 && highCanWatch == 0 && highLimit == 0 &&
+            !newAccepts.contains(highQn)) {
+          newAccepts.append(highQn);
+        }
+        // 兼容 support_formats（仅保留可观看清晰度）
+        QJsonArray supportFormats = data.value("support_formats").toArray();
+        for (const QJsonValue &v : supportFormats) {
+          QJsonObject obj = v.toObject();
+          int q = obj.value("quality").toInt(0);
+          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
+          int limit = obj.value("limit_watch_reason").toInt(0);
+          if (q > 0 && canWatch == 0 && limit == 0 &&
+              !newAccepts.contains(q)) {
+            newAccepts.append(q);
+          }
+        }
+
         if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
           self->m_acceptQualities = newAccepts;
           emit self->acceptQualitiesChanged();
@@ -607,39 +634,34 @@ void BiliController::fetchPlayUrl(int quality) {
             QJsonArray videoArray = dash.value("video").toArray();
             QJsonArray audioArray = dash.value("audio").toArray();
 
-            // 按画质优先级选择
-            QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
-
-            // 先尝试 480P
-            for (const QJsonValue &v : videoArray) {
-              QJsonObject videoObj = v.toObject();
-              if (videoObj.value("id").toInt(0) == 32) {
-                videoUrl = videoObj.value("base_url").toString();
-                if (videoUrl.isEmpty())
-                  videoUrl = videoObj.value("baseUrl").toString();
-                if (!videoUrl.isEmpty()) {
-                  finalQuality = 32;
-                  break;
+            // 按画质优先级选择（优先用户选择）
+            auto pickVideoByQn = [&](int qn) -> bool {
+              for (const QJsonValue &v : videoArray) {
+                QJsonObject videoObj = v.toObject();
+                if (videoObj.value("id").toInt(0) == qn) {
+                  QString url = videoObj.value("base_url").toString();
+                  if (url.isEmpty())
+                    url = videoObj.value("baseUrl").toString();
+                  if (!url.isEmpty()) {
+                    videoUrl = url;
+                    finalQuality = qn;
+                    return true;
+                  }
                 }
               }
-            }
+              return false;
+            };
+
+            // 先尝试用户选择的清晰度
+            pickVideoByQn(requestedQuality);
 
             // 回退到其他画质
             if (videoUrl.isEmpty()) {
+              QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
               for (int qn : qualityOrder) {
-                for (const QJsonValue &v : videoArray) {
-                  QJsonObject videoObj = v.toObject();
-                  if (videoObj.value("id").toInt(0) == qn) {
-                    videoUrl = videoObj.value("base_url").toString();
-                    if (videoUrl.isEmpty())
-                      videoUrl = videoObj.value("baseUrl").toString();
-                    if (!videoUrl.isEmpty()) {
-                      finalQuality = qn;
-                      break;
-                    }
-                  }
-                }
-                if (!videoUrl.isEmpty())
+                if (qn == requestedQuality)
+                  continue;
+                if (pickVideoByQn(qn))
                   break;
               }
             }
@@ -707,6 +729,75 @@ void BiliController::fetchPlayUrl(int quality) {
       });
 }
 
+// ====== 仅获取可用清晰度 ======
+
+void BiliController::fetchAcceptQualities(int quality) {
+  if (m_currentVideo.bvid.isEmpty() || m_currentVideo.cid == 0) {
+    emit toastMessage("视频信息不完整，无法获取清晰度");
+    return;
+  }
+
+  quality = qBound(16, quality, 127);
+  setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(videoAid());
+  params["cid"] = QString::number(m_currentVideo.cid);
+  params["qn"] = QString::number(quality);
+  params["bvid"] = m_currentVideo.bvid;
+  params["fnval"] = "1";
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/video/playurl", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        QVector<int> newAccepts;
+        QJsonArray accept = data.value("accept_quality").toArray();
+        for (const QJsonValue &v : accept) {
+          int q = v.toInt(0);
+          if (q > 0) newAccepts.append(q);
+        }
+        // 兼容 high_format（如 1080P/60帧）
+        QJsonObject highFormat = data.value("high_format").toObject();
+        int highQn = highFormat.value("quality").toInt(0);
+        int highCanWatch = highFormat.value("can_watch_qn_reason").toInt(0);
+        int highLimit = highFormat.value("limit_watch_reason").toInt(0);
+        if (highQn > 0 && highCanWatch == 0 && highLimit == 0 &&
+            !newAccepts.contains(highQn)) {
+          newAccepts.append(highQn);
+        }
+        // 兼容 support_formats（仅保留可观看清晰度）
+        QJsonArray supportFormats = data.value("support_formats").toArray();
+        for (const QJsonValue &v : supportFormats) {
+          QJsonObject obj = v.toObject();
+          int q = obj.value("quality").toInt(0);
+          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
+          int limit = obj.value("limit_watch_reason").toInt(0);
+          if (q > 0 && canWatch == 0 && limit == 0 &&
+              !newAccepts.contains(q)) {
+            newAccepts.append(q);
+          }
+        }
+
+        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
+          self->m_acceptQualities = newAccepts;
+          emit self->acceptQualitiesChanged();
+        }
+
+        self->setIsLoading(false);
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        self->setIsLoading(false);
+        emit self->toastMessage(QString("获取清晰度失败：%1").arg(msg));
+      });
+}
+
 // ====== 下载并播放视频 ======
 
 void BiliController::downloadAndPlay(int quality) {
@@ -745,12 +836,51 @@ void BiliController::downloadAndPlay(int quality) {
 
   m_network->get(
       "/video/playurl", params,
-      [self](const QJsonObject &data) {
+      [self, quality](const QJsonObject &data) {
         if (!self)
           return;
 
         QString videoUrl;
-        // int finalQuality = 32;
+        int requestedQuality = quality;
+        int finalQuality = requestedQuality;
+        int apiQuality = data.value("quality").toInt(0);
+        if (apiQuality > 0) {
+          finalQuality = apiQuality;
+        }
+
+        // 解析可用清晰度
+        QVector<int> newAccepts;
+        QJsonArray accept = data.value("accept_quality").toArray();
+        for (const QJsonValue &v : accept) {
+          int q = v.toInt(0);
+          if (q > 0) newAccepts.append(q);
+        }
+        // 兼容 high_format（如 1080P/60帧）
+        QJsonObject highFormat = data.value("high_format").toObject();
+        int highQn = highFormat.value("quality").toInt(0);
+        int highCanWatch = highFormat.value("can_watch_qn_reason").toInt(0);
+        int highLimit = highFormat.value("limit_watch_reason").toInt(0);
+        if (highQn > 0 && highCanWatch == 0 && highLimit == 0 &&
+            !newAccepts.contains(highQn)) {
+          newAccepts.append(highQn);
+        }
+        // 兼容 support_formats（仅保留可观看清晰度）
+        QJsonArray supportFormats = data.value("support_formats").toArray();
+        for (const QJsonValue &v : supportFormats) {
+          QJsonObject obj = v.toObject();
+          int q = obj.value("quality").toInt(0);
+          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
+          int limit = obj.value("limit_watch_reason").toInt(0);
+          if (q > 0 && canWatch == 0 && limit == 0 &&
+              !newAccepts.contains(q)) {
+            newAccepts.append(q);
+          }
+        }
+
+        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
+          self->m_acceptQualities = newAccepts;
+          emit self->acceptQualitiesChanged();
+        }
 
         // 优先 durl 格式（MP4）
         QJsonArray durl = data.value("durl").toArray();
@@ -770,8 +900,8 @@ void BiliController::downloadAndPlay(int quality) {
           QJsonObject dash = data.value("dash").toObject();
           if (!dash.isEmpty()) {
             QJsonArray videoArray = dash.value("video").toArray();
-            QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
-            for (int qn : qualityOrder) {
+
+            auto pickVideoByQn = [&](int qn) -> bool {
               for (const QJsonValue &v : videoArray) {
                 QJsonObject videoObj = v.toObject();
                 if (videoObj.value("id").toInt(0) == qn) {
@@ -779,13 +909,25 @@ void BiliController::downloadAndPlay(int quality) {
                   if (videoUrl.isEmpty())
                     videoUrl = videoObj.value("baseUrl").toString();
                   if (!videoUrl.isEmpty()) {
-                    // finalQuality = qn;
-                    break;
+                    finalQuality = qn;
+                    return true;
                   }
                 }
               }
-              if (!videoUrl.isEmpty())
-                break;
+              return false;
+            };
+
+            // 先尝试用户选择的清晰度
+            pickVideoByQn(requestedQuality);
+
+            if (videoUrl.isEmpty()) {
+              QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
+              for (int qn : qualityOrder) {
+                if (qn == requestedQuality)
+                  continue;
+                if (pickVideoByQn(qn))
+                  break;
+              }
             }
           }
         }
@@ -805,7 +947,7 @@ void BiliController::downloadAndPlay(int quality) {
         self->m_network->downloadVideo(
             videoUrl, self->m_tempVideoPath,
             // 成功回调
-            [self](const QString &path) {
+            [self, finalQuality](const QString &path) {
               if (!self)
                 return;
 
@@ -813,7 +955,7 @@ void BiliController::downloadAndPlay(int quality) {
               self->m_downloadProgress = 1.0;
               self->m_downloadStatus = "下载完成";
               self->m_playUrl = path;
-              self->m_playQuality = 32;
+              self->m_playQuality = finalQuality;
               emit self->downloadStateChanged();
               emit self->playUrlChanged();
               self->setIsLoading(false);
@@ -1553,6 +1695,18 @@ void BiliController::downloadVideoToDisk(int quality) {
       "/video/playurl", params,
       [self, targetPath](const QJsonObject &data) {
         if (!self) return;
+
+        // 解析可用清晰度
+        QVector<int> newAccepts;
+        QJsonArray accept = data.value("accept_quality").toArray();
+        for (const QJsonValue &v : accept) {
+          int q = v.toInt(0);
+          if (q > 0) newAccepts.append(q);
+        }
+        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
+          self->m_acceptQualities = newAccepts;
+          emit self->acceptQualitiesChanged();
+        }
 
         QString videoUrl;
         QJsonArray durl = data.value("durl").toArray();

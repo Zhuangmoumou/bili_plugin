@@ -12,6 +12,7 @@ Rectangle {
     property var controller: null
     property string fontFamily: "Microsoft YaHei, 微软雅黑, sans-serif"
     property var rootRef: null
+    property int initialTabIndex: 0
 
     signal videoSelected(string bvid)
     signal searchRequested()
@@ -53,6 +54,7 @@ Rectangle {
 
         if (tabIndex === index) return
         tabIndex = index
+        if (rootRef) rootRef.homeTabIndex = tabIndex
 
         if (index === 1 && controller) {
             var rm = controller.rankingModel()
@@ -419,6 +421,11 @@ Rectangle {
     }
 
     Component.onCompleted: {
+        if (initialTabIndex >= 0) {
+            tabIndex = initialTabIndex
+        }
+        if (rootRef) rootRef.homeTabIndex = tabIndex
+
         if (rootRef && rootRef.restoreHomePopularOnShow && tabIndex === 0) {
             restorePopularContentX(rootRef.homePopularX)
             rootRef.restoreHomePopularOnShow = false
