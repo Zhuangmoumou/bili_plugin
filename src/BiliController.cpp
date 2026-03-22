@@ -1682,23 +1682,36 @@ void BiliController::fetchUserInfo(qint64 mid) {
 
 void BiliController::logout() {
   std::cout << "[BiliCtrl] Logout" << std::endl;
-  m_loggedIn = false;
-  m_userName = "";
-  m_userFace = "";
-  m_userId = 0;
-  m_userLevel = 0;
-  m_userCoins = 0;
-  m_userFans = 0;
-  m_userFollowing = 0;
-  m_userSign = "";
-  m_userVipLabel = "";
-  m_userIsVip = false;
-  if (m_isFavorited) {
-    m_isFavorited = false;
-    emit favoriteStatusChanged();
+
+  auto doLocalLogout = [this]() {
+    m_loggedIn = false;
+    m_userName = "";
+    m_userFace = "";
+    m_userId = 0;
+    m_userLevel = 0;
+    m_userCoins = 0;
+    m_userFans = 0;
+    m_userFollowing = 0;
+    m_userSign = "";
+    m_userVipLabel = "";
+    m_userIsVip = false;
+    if (m_isFavorited) {
+      m_isFavorited = false;
+      emit favoriteStatusChanged();
+    }
+    emit loginStateChanged();
+    emit toastMessage("已退出登录");
+  };
+
+  // 通知服务器清理登录态
+  if (m_network) {
+    m_network->get(
+        "/logout", {},
+        [this, doLocalLogout](const QJsonObject &) { doLocalLogout(); },
+        [this, doLocalLogout](int, const QString &) { doLocalLogout(); });
+  } else {
+    doLocalLogout();
   }
-  emit loginStateChanged();
-  emit toastMessage("已退出登录");
 }
 
 void BiliController::clearSearchHistory() {

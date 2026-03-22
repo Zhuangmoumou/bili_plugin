@@ -1440,6 +1440,16 @@ func handleLoginInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	client := getClient()
+	client.ClearAuth()
+	writeJSON(w, 200, map[string]interface{}{
+		"code":    0,
+		"message": "logout",
+		"data":    nil,
+	})
+}
+
 func handleHotSearch(w http.ResponseWriter, r *http.Request) {
 	limit, err := intParam(r.URL.Query().Get("limit"), 1, 10, true)
 	if err != nil {
@@ -1791,6 +1801,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/comments", handleVideoComments)
 	mux.HandleFunc("/user/info", handleUserInfo)
 	mux.HandleFunc("/login/info", handleLoginInfo)
+	mux.HandleFunc("/logout", handleLogout)
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
 	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
