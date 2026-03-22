@@ -28,9 +28,11 @@ Rectangle {
     // 播放清晰度（由详情页选择）
     property int playQualitySelected: 16
 
-    // 首页推荐列表滚动位置缓存（仅从详情页返回时恢复）
+    // 首页列表滚动位置缓存（仅从详情页返回时恢复）
     property real homePopularX: 0
+    property real homeRankingX: 0
     property bool restoreHomePopularOnShow: false
+    property bool restoreHomeRankingOnShow: false
 
     // 首页 Tab 记录（0=推荐,1=排行,3=我的）
     property int homeTabIndex: 0
@@ -68,9 +70,13 @@ Rectangle {
             _animating = true;
             currentPage = prev;
 
-            // 从详情页返回首页时恢复推荐列表滚动位置
+            // 从详情页返回首页时，按当前首页 tab 恢复对应列表滚动位置
             if (fromPage === "detail" && prev === "home") {
-                restoreHomePopularOnShow = true;
+                if (root.homeTabIndex === 0) {
+                    restoreHomePopularOnShow = true;
+                } else if (root.homeTabIndex === 1) {
+                    restoreHomeRankingOnShow = true;
+                }
             }
 
             pageTransitionBack.restart();
@@ -153,6 +159,7 @@ Rectangle {
                         if (!bvid || bvid.length < 2) return;
                         if (homeLoader.item) {
                             root.homePopularX = homeLoader.item.popularContentX();
+                            root.homeRankingX = homeLoader.item.rankingContentX();
                         }
                         Qt.callLater(function() {
                             root.navigateTo("detail", { bvid: bvid })

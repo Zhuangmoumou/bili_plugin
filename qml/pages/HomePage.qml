@@ -414,9 +414,19 @@ Rectangle {
         return popularList ? popularList.contentX : 0
     }
 
+    function rankingContentX() {
+        return rankingList ? rankingList.contentX : 0
+    }
+
     function restorePopularContentX(x) {
         if (popularList) {
             Qt.callLater(function() { popularList.contentX = x; })
+        }
+    }
+
+    function restoreRankingContentX(x) {
+        if (rankingList) {
+            Qt.callLater(function() { rankingList.contentX = x; })
         }
     }
 
@@ -429,6 +439,10 @@ Rectangle {
         if (rootRef && rootRef.restoreHomePopularOnShow && tabIndex === 0) {
             restorePopularContentX(rootRef.homePopularX)
             rootRef.restoreHomePopularOnShow = false
+        }
+        if (rootRef && rootRef.restoreHomeRankingOnShow && tabIndex === 1) {
+            restoreRankingContentX(rootRef.homeRankingX)
+            rootRef.restoreHomeRankingOnShow = false
         }
     }
 }
