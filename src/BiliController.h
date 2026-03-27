@@ -208,6 +208,7 @@ signals:
 
 private:
   void fetchUserInfo(qint64 mid);
+  void clearLocalLoginState();
   void setGlobalError(const QString &error);
   void setIsLoading(bool loading);
   void loadLoginStatus();

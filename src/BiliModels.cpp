@@ -154,9 +154,21 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     if (item.pic.isEmpty()) item.pic = obj.value("cover").toString();
     item.desc = obj.value("desc").toString();
 
-    // duration 可能是字符串
+    // duration 可能是数字字符串，或 mm:ss / hh:mm:ss
     if (obj.value("duration").isString()) {
-        item.duration = obj.value("duration").toString().toInt();
+        QString durationStr = obj.value("duration").toString().trimmed();
+        if (durationStr.contains(':')) {
+            QStringList parts = durationStr.split(':');
+            if (parts.size() == 2) {
+                item.duration = parts[0].toInt() * 60 + parts[1].toInt();
+            } else if (parts.size() == 3) {
+                item.duration = parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt();
+            } else {
+                item.duration = 0;
+            }
+        } else {
+            item.duration = durationStr.toInt();
+        }
     } else {
         item.duration = obj.value("duration").toInt();
     }

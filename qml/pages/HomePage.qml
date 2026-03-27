@@ -39,10 +39,8 @@ Rectangle {
 
         // 已登录时，点击“我的”直接进入 UserPage
         if (index === 3) {
-            if (controller && controller.loggedIn) {
-                loginRequested()
-                return
-            }
+            loginRequested()
+            return
         }
 
         // 只有在“推荐”页内再次点击时才刷新
@@ -204,7 +202,8 @@ Rectangle {
                             anchors.fill: parent
                             anchors.margins: 2
                             visible: controller && controller.loggedIn && source != ""
-                            source: controller && controller.userAvatar ? controller.userAvatar : ""
+                            source: controller && controller.userFace
+                            ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
                             sourceSize: Qt.size(112, 112)
                             cache: true
                             asynchronous: true
@@ -265,7 +264,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Lv" + (controller ? controller.level : 0)
+                        text: "Lv" + (controller ? controller.userLevel : 0)
                         color: Theme.primary
                         font.family: homePage.fontFamily
                         font.pixelSize: 14
@@ -273,7 +272,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "硬币: " + (controller ? controller.coins : 0)
+                        text: "硬币: " + (controller ? controller.userCoins : 0)
                         color: Theme.textSecondary
                         font.family: homePage.fontFamily
                         font.pixelSize: 10

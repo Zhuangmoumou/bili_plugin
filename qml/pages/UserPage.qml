@@ -54,9 +54,6 @@ Rectangle {
         if (qrcodePollTimer) qrcodePollTimer.running = false;
         // 注意：如果已登录成功，不要取消 checkLoginStatus() 请求
         // 让用户信息能够正常加载并保存
-        if (controller && !controller.loggedIn) {
-            controller.cancelAll();
-        }
     }
 
     Components.TitleBar {

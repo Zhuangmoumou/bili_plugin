@@ -227,7 +227,8 @@ void BiliController::fetchPopular(int page, int pageSize) {
   m_popularModel->setErrorMessage("");
   setIsLoading(true);
 
-  std::cout << "[BiliCtrl] fetchPopular use /recommend" << std::endl;
+  QString apiPath = "/recommend";
+  std::cout << "[BiliCtrl] fetchPopular use " << apiPath.toStdString() << std::endl;
 
   QMap<QString, QString> paramsRecommend;
   // fresh_type: 3 表示换一换推荐，4 用于后续刷新
@@ -269,9 +270,12 @@ void BiliController::fetchPopular(int page, int pageSize) {
   };
 
   auto onErrorFinal = [self](int code, const QString &msg) {
-    Q_UNUSED(code)
     if (!self)
       return;
+
+    if (code == -101 || code == -401 || code == 401) {
+      self->clearLocalLoginState();
+    }
 
     self->m_popularModel->setLoading(false);
     self->m_popularModel->setErrorMessage(msg);
@@ -279,7 +283,7 @@ void BiliController::fetchPopular(int page, int pageSize) {
     emit self->toastMessage(QString("加载失败：%1").arg(msg));
   };
 
-  m_network->get("/recommend", paramsRecommend, onSuccess, onErrorFinal);
+  m_network->get(apiPath, paramsRecommend, onSuccess, onErrorFinal);
 }
 
 void BiliController::fetchMorePopular() {
@@ -1581,6 +1585,13 @@ void BiliController::checkLoginStatus() {
         qDebug() << "[BiliController] checkLoginStatus response:"
                  << QJsonDocument(data).toJson();
 
+        qint64 mid = data.value("mid").toVariant().toLongLong();
+        if (mid <= 0) {
+          self->clearLocalLoginState();
+          emit self->toastMessage("未登录，请先扫码登录");
+          return;
+        }
+
         self->m_loggedIn = true;
         // nav API 返回的字段名是 name 而不是 uname
         self->m_userName = data.value("name").toString();
@@ -1588,7 +1599,7 @@ void BiliController::checkLoginStatus() {
           self->m_userName = data.value("uname").toString();
         }
         self->m_userFace = data.value("face").toString();
-        self->m_userId = data.value("mid").toVariant().toLongLong();
+        self->m_userId = mid;
 
         // 等级信息
         QJsonObject levelInfo = data.value("level_info").toObject();
@@ -1601,6 +1612,8 @@ void BiliController::checkLoginStatus() {
         self->m_userIsVip = data.value("vipStatus").toInt(0) == 1;
         QJsonObject vipLabel = data.value("vip_label").toObject();
         self->m_userVipLabel = vipLabel.value("text").toString();
+
+        emit self->loginStateChanged();
 
         // 立即发射登录成功信号，不等待 fetchUserInfo
         // 这样即使 fetchUserInfo 因风控失败，页面也能正常返回
@@ -1624,15 +1637,15 @@ void BiliController::checkLoginStatus() {
         // 只有 401/-101 等认证错误才表示未登录
         if (code == 401 || code == -101 || code == -401) {
           qDebug() << "[BiliController] Session expired (code=" << code << ")";
-          self->logout();
+          self->clearLocalLoginState();
           emit self->toastMessage("登录已过期，请重新登录");
         } else {
-          // 网络错误等其他失败保持现有登录状态，让用户无感知
+          // 不再在网络错误时伪造登录成功，改为清空本地状态
           qDebug() << "[BiliController] checkLoginStatus failed (network), "
-                      "keeping session:"
+                      "clearing local session:"
                    << msg;
-          emit self->qrcodeLoginSuccess();
-          emit self->toastMessage("登录成功！");
+          self->clearLocalLoginState();
+          emit self->toastMessage("无法验证登录状态，请重新登录");
         }
       });
 }
@@ -1647,8 +1660,10 @@ void BiliController::fetchUserInfo(qint64 mid) {
 
   m_network->get(
       "/user/info", params,
-      [self](const QJsonObject &data) {
+      [self, mid](const QJsonObject &data) {
         if (!self)
+          return;
+        if (!self->m_loggedIn || self->m_userId != mid)
           return;
 
         // 从 data 字段中获取用户信息（兼容嵌套格式）
@@ -1671,9 +1686,14 @@ void BiliController::fetchUserInfo(qint64 mid) {
                  << "following=" << self->m_userFollowing;
       },
       [self](int code, const QString &msg) {
-        Q_UNUSED(code)
         if (!self)
           return;
+        if (code == -101 || code == -401 || code == 401) {
+          self->clearLocalLoginState();
+          self->fetchPopular(1, 10);
+          emit self->toastMessage("登录已过期，请重新登录");
+          return;
+        }
         // 用户信息获取失败不影响登录状态
         // 不发射 qrcodeLoginSuccess，因为 checkLoginStatus 成功后已经发射过了
         qDebug() << "[BiliController] fetchUserInfo failed:" << msg;
@@ -1683,23 +1703,12 @@ void BiliController::fetchUserInfo(qint64 mid) {
 void BiliController::logout() {
   std::cout << "[BiliCtrl] Logout" << std::endl;
 
+  if (m_network) {
+    m_network->cancelAllRequests();
+  }
+
   auto doLocalLogout = [this]() {
-    m_loggedIn = false;
-    m_userName = "";
-    m_userFace = "";
-    m_userId = 0;
-    m_userLevel = 0;
-    m_userCoins = 0;
-    m_userFans = 0;
-    m_userFollowing = 0;
-    m_userSign = "";
-    m_userVipLabel = "";
-    m_userIsVip = false;
-    if (m_isFavorited) {
-      m_isFavorited = false;
-      emit favoriteStatusChanged();
-    }
-    emit loginStateChanged();
+    clearLocalLoginState();
     emit toastMessage("已退出登录");
   };
 
@@ -1712,6 +1721,28 @@ void BiliController::logout() {
   } else {
     doLocalLogout();
   }
+}
+
+void BiliController::clearLocalLoginState() {
+  m_loggedIn = false;
+  m_userName = "";
+  m_userFace = "";
+  m_userId = 0;
+  m_userLevel = 0;
+  m_userCoins = 0;
+  m_userFans = 0;
+  m_userFollowing = 0;
+  m_userSign = "";
+  m_userVipLabel = "";
+  m_userIsVip = false;
+  m_qrcodeUrl = "";
+  m_qrcodeKey = "";
+  emit qrcodeChanged();
+  if (m_isFavorited) {
+    m_isFavorited = false;
+    emit favoriteStatusChanged();
+  }
+  emit loginStateChanged();
 }
 
 void BiliController::clearSearchHistory() {

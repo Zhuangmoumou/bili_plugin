@@ -56,14 +56,6 @@ Rectangle {
     function goBack() {
         if (_animating) return;
 
-        // 优先处理从评论页返回到详情页，避免误触发退出
-        if (currentPage === "comments" && detailBvid.length > 0) {
-            _animating = true;
-            currentPage = "detail";
-            pageTransitionBack.restart();
-            return;
-        }
-
         if (pageStack.length > 0) {
             var newStack = pageStack.slice(0); // Create a copy
             var prev = newStack.pop();
@@ -87,12 +79,6 @@ Rectangle {
 
             pageTransitionBack.restart();
         } else {
-            if (currentPage === "comments" && detailBvid.length > 0) {
-                _animating = true;
-                currentPage = "detail";
-                pageTransitionBack.restart();
-                return;
-            }
             if (currentPage !== "home") {
                 _animating = true;
                 currentPage = lastPage && lastPage !== currentPage ? lastPage : "home";
