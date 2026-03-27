@@ -24,6 +24,8 @@ Rectangle {
     property string detailBvid: ""
     property string lastPage: "home"
     property bool _animating: false
+    property real rankingPageX: 0
+    property bool restoreRankingPageOnShow: false
 
     // 播放清晰度（由详情页选择）
     property int playQualitySelected: 16
@@ -70,12 +72,16 @@ Rectangle {
             _animating = true;
             currentPage = prev;
 
-            // 从详情页返回首页时，按当前首页 tab 恢复对应列表滚动位置
-            if (fromPage === "detail" && prev === "home") {
-                if (root.homeTabIndex === 0) {
-                    restoreHomePopularOnShow = true;
-                } else if (root.homeTabIndex === 1) {
-                    restoreHomeRankingOnShow = true;
+            // 从详情页返回时恢复对应页面滚动位置
+            if (fromPage === "detail") {
+                if (prev === "home") {
+                    if (root.homeTabIndex === 0) {
+                        restoreHomePopularOnShow = true;
+                    } else if (root.homeTabIndex === 1) {
+                        restoreHomeRankingOnShow = true;
+                    }
+                } else if (prev === "ranking") {
+                    restoreRankingPageOnShow = true;
                 }
             }
 
@@ -167,6 +173,7 @@ Rectangle {
                     }
                     onSearchRequested: root.navigateTo("search")
                     onLoginRequested: root.navigateTo("user")
+                    onRankingRequested: root.navigateTo("ranking")
                 }
             }
         }
@@ -236,14 +243,21 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "ranking"
+            id: rankingLoader
+            // 在排行榜页或从排行榜进入详情页时保持实例
+            active: currentPage === "ranking" || (currentPage === "detail" && lastPage === "ranking")
+            visible: currentPage === "ranking"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.RankingPage {
                     controller: root.rootController
+                    rootRef: root
                     onBackClicked: root.goBack()
                     onVideoSelected: {
                         if (!bvid || bvid.length < 2) return;
+                        if (rankingLoader.item) {
+                            root.rankingPageX = rankingLoader.item.contentXValue();
+                        }
                         Qt.callLater(function() {
                             root.navigateTo("detail", { bvid: bvid })
                         });

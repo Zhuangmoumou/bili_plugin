@@ -17,6 +17,7 @@ Rectangle {
     signal videoSelected(string bvid)
     signal searchRequested()
     signal loginRequested()
+    signal rankingRequested()
 
     // ── 内容区状态 ──
     property int tabIndex: 0
@@ -26,6 +27,11 @@ Rectangle {
 
     function switchTab(index) {
         // index: 0=推荐, 1=排行, 2=搜索, 3=我的
+        if (index === 1) {
+            rankingRequested()
+            return
+        }
+
         if (index === 2) {
             searchRequested()
             return
@@ -56,10 +62,6 @@ Rectangle {
         tabIndex = index
         if (rootRef) rootRef.homeTabIndex = tabIndex
 
-        if (index === 1 && controller) {
-            var rm = controller.rankingModel()
-            if (rm && rm.count === 0) controller.fetchRanking()
-        }
     }
 
     // ── 内容区 (无标题栏，高度 = 170 - 26 = 144px) ──

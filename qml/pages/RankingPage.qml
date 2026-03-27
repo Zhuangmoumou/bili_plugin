@@ -10,9 +10,20 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
+    property var rootRef: null
 
     signal backClicked()
     signal videoSelected(string bvid)
+
+    function contentXValue() {
+        return rankList ? rankList.contentX : 0
+    }
+
+    function restoreContentX(x) {
+        if (rankList) {
+            Qt.callLater(function() { rankList.contentX = x; })
+        }
+    }
 
     Components.TitleBar {
         id: titleBar
@@ -139,6 +150,17 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        if (controller) controller.fetchRanking(0);
+        if (controller) controller.fetchRanking(categoryBar.selectedRid);
+        if (rootRef && rootRef.restoreRankingPageOnShow) {
+            restoreContentX(rootRef.rankingPageX)
+            rootRef.restoreRankingPageOnShow = false
+        }
+    }
+
+    onVisibleChanged: {
+        if (visible && rootRef && rootRef.restoreRankingPageOnShow) {
+            restoreContentX(rootRef.rankingPageX)
+            rootRef.restoreRankingPageOnShow = false
+        }
     }
 }
