@@ -139,7 +139,8 @@ Rectangle {
         // ── 页面加载器 ──
         Loader {
             id: homeLoader
-            active: currentPage === "home"
+            active: true
+            visible: currentPage === "home"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.HomePage {
@@ -152,6 +153,7 @@ Rectangle {
                         if (homeLoader.item) {
                             root.homePopularX = homeLoader.item.popularContentX();
                             root.homeRankingX = homeLoader.item.rankingContentX();
+                            root.homeTabIndex = homeLoader.item.tabIndex;
                         }
                         Qt.callLater(function() {
                             root.navigateTo("detail", { bvid: bvid })

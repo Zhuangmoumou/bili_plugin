@@ -421,13 +421,37 @@ Rectangle {
 
     function restorePopularContentX(x) {
         if (popularList) {
-            Qt.callLater(function() { popularList.contentX = x; })
+            popularList.positionViewAtIndex(0, ListView.Beginning)
+            popularList.contentX = x
         }
     }
 
     function restoreRankingContentX(x) {
         if (rankingList) {
-            Qt.callLater(function() { rankingList.contentX = x; })
+            rankingList.positionViewAtIndex(0, ListView.Beginning)
+            rankingList.contentX = x
+        }
+    }
+
+    function tryRestoreHomePosition() {
+        if (!rootRef) return
+        if (rootRef.restoreHomePopularOnShow && tabIndex === 0) {
+            Qt.callLater(function() {
+                restorePopularContentX(rootRef.homePopularX)
+                Qt.callLater(function() {
+                    restorePopularContentX(rootRef.homePopularX)
+                    rootRef.restoreHomePopularOnShow = false
+                })
+            })
+        }
+        if (rootRef.restoreHomeRankingOnShow && tabIndex === 1) {
+            Qt.callLater(function() {
+                restoreRankingContentX(rootRef.homeRankingX)
+                Qt.callLater(function() {
+                    restoreRankingContentX(rootRef.homeRankingX)
+                    rootRef.restoreHomeRankingOnShow = false
+                })
+            })
         }
     }
 
@@ -436,14 +460,12 @@ Rectangle {
             tabIndex = initialTabIndex
         }
         if (rootRef) rootRef.homeTabIndex = tabIndex
+        tryRestoreHomePosition()
+    }
 
-        if (rootRef && rootRef.restoreHomePopularOnShow && tabIndex === 0) {
-            restorePopularContentX(rootRef.homePopularX)
-            rootRef.restoreHomePopularOnShow = false
-        }
-        if (rootRef && rootRef.restoreHomeRankingOnShow && tabIndex === 1) {
-            restoreRankingContentX(rootRef.homeRankingX)
-            rootRef.restoreHomeRankingOnShow = false
+    onVisibleChanged: {
+        if (visible) {
+            tryRestoreHomePosition()
         }
     }
 }
