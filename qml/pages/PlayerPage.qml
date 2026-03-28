@@ -26,11 +26,14 @@ Rectangle {
     readonly property string fontFamily: "Microsoft YaHei"
 
     property bool launchRequested: false
+    property bool launchLocked: false
 
     function launchExternalPlayer(path) {
         if (!path || path.length === 0) return;
-        if (launchRequested) return;
+        if (launchRequested || launchLocked) return;
         launchRequested = true;
+        launchLocked = true;
+        launchLockTimer.restart();
         if (controller) controller.launchExternalPlayer(path);
     }
 
@@ -236,6 +239,14 @@ Rectangle {
                     id: playBtnArea
                     anchors.fill: parent
                     onClicked: {
+                        if (launchLocked) {
+                            if (controller) controller.toastMessage("请勿重复点击，5秒后可再次启动");
+                            return;
+                        }
+
+                        launchLocked = true;
+                        launchLockTimer.restart();
+
                         if (controller) controller.toastMessage("正在启动播放器，不要多次点击，请稍等...");
                         if (controller && controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                             controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
@@ -333,6 +344,13 @@ Rectangle {
         id: hideControlsTimer
         interval: 3500
         onTriggered: controlsVisible = false
+    }
+
+    Timer {
+        id: launchLockTimer
+        interval: 5000
+        repeat: false
+        onTriggered: launchLocked = false
     }
 
 
