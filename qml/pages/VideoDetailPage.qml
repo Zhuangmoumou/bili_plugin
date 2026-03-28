@@ -50,6 +50,19 @@ Rectangle {
     signal playRequested(int quality)
     signal commentsRequested()
 
+    property real savedPartListX: 0
+
+    function restorePartListPosition() {
+        if (!videoPartList || !videoPartList.visible) return;
+        if (savedPartListX <= 0) return;
+        Qt.callLater(function() {
+            videoPartList.contentX = savedPartListX;
+            Qt.callLater(function() {
+                videoPartList.contentX = savedPartListX;
+            })
+        })
+    }
+
     readonly property string fontFamily: "Microsoft YaHei"
     readonly property color primaryColor: "#3b82f6"
     readonly property color primaryLight: "#60a5fa"
@@ -899,7 +912,9 @@ Rectangle {
 
                             onClicked: {
                                 if (controller) {
+                                    detailPage.savedPartListX = videoPartList.contentX
                                     controller.playVideoPart(index)
+                                    detailPage.restorePartListPosition()
                                 }
                             }
                         }
@@ -1173,6 +1188,7 @@ Rectangle {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
                 controller.fetchFavoriteStatus()
             }
+            detailPage.restorePartListPosition()
         }
         function onLoginStateChanged() {
             if (controller && controller.loggedIn && controller.videoCid > 0) {

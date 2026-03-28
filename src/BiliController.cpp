@@ -27,7 +27,7 @@ BiliController::BiliController(QObject *parent)
       m_currentPage("home"), m_playQuality(64), m_isDownloading(false),
       m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false),
       m_userName(""), m_userFace(""), m_qrcodeUrl(""), m_qrcodeKey(""),
-      m_userId(0), m_userLevel(0), m_userCoins(0), m_userFans(0),
+      m_userId(0), m_userLevel(0), m_userExp(0), m_userExpMin(0), m_userExpNext(0), m_userCoins(0), m_userFans(0),
       m_userFollowing(0), m_userSign(""), m_userVipLabel(""),
       m_userIsVip(false), m_popularPage(1), m_searchPage(1),
       m_commentPage(1), m_searchKeyword(""), m_globalError(""),
@@ -144,6 +144,16 @@ QString BiliController::userFace() const { return m_userFace; }
 QString BiliController::qrcodeUrl() const { return m_qrcodeUrl; }
 qint64 BiliController::userId() const { return m_userId; }
 int BiliController::userLevel() const { return m_userLevel; }
+int BiliController::userExp() const { return m_userExp; }
+int BiliController::userExpMin() const { return m_userExpMin; }
+int BiliController::userExpNext() const { return m_userExpNext; }
+double BiliController::userExpProgress() const {
+  if (m_userExpNext > 0 && m_userExp >= 0) {
+    double progress = m_userExp * 1.0 / m_userExpNext;
+    return qBound(0.0, progress, 1.0);
+  }
+  return 0.0;
+}
 double BiliController::userCoins() const { return m_userCoins; }
 int BiliController::userFans() const { return m_userFans; }
 int BiliController::userFollowing() const { return m_userFollowing; }
@@ -1604,6 +1614,9 @@ void BiliController::checkLoginStatus() {
         // 等级信息
         QJsonObject levelInfo = data.value("level_info").toObject();
         self->m_userLevel = levelInfo.value("current_level").toInt(0);
+        self->m_userExp = levelInfo.value("current_exp").toInt(0);
+        self->m_userExpMin = levelInfo.value("current_min").toInt(0);
+        self->m_userExpNext = levelInfo.value("next_exp").toInt(0);
 
         // 硬币数
         self->m_userCoins = data.value("money").toDouble(0);
@@ -1675,8 +1688,27 @@ void BiliController::fetchUserInfo(qint64 mid) {
         qDebug() << "[BiliController] fetchUserInfo response:"
                  << QJsonDocument(dataObj).toJson();
 
-        self->m_userFans = dataObj.value("fans").toInt(0);
-        self->m_userFollowing = dataObj.value("following").toInt(0);
+        auto toIntSafe = [](const QJsonValue &v) -> int {
+          if (v.isDouble()) return v.toInt();
+          if (v.isString()) return v.toString().toInt();
+          return 0;
+        };
+
+        int fans = toIntSafe(dataObj.value("fans"));
+        if (fans <= 0) fans = toIntSafe(dataObj.value("follower"));
+        if (fans <= 0) {
+          QJsonObject statObj = dataObj.value("stat").toObject();
+          fans = toIntSafe(statObj.value("follower"));
+        }
+
+        int following = toIntSafe(dataObj.value("following"));
+        if (following <= 0) {
+          QJsonObject statObj = dataObj.value("stat").toObject();
+          following = toIntSafe(statObj.value("following"));
+        }
+
+        self->m_userFans = fans;
+        self->m_userFollowing = following;
         self->m_userSign = dataObj.value("sign").toString();
 
         // 更新登录状态信号
@@ -1729,6 +1761,9 @@ void BiliController::clearLocalLoginState() {
   m_userFace = "";
   m_userId = 0;
   m_userLevel = 0;
+  m_userExp = 0;
+  m_userExpMin = 0;
+  m_userExpNext = 0;
   m_userCoins = 0;
   m_userFans = 0;
   m_userFollowing = 0;

@@ -792,9 +792,54 @@ func (c *BilibiliClient) GetVideoComments(oid, typ, sortVal, ps, pn int) (json.R
 
 func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 	logInfo("获取用户信息 mid=%d", mid)
-	return c.wbiRequest("https://api.bilibili.com/x/space/wbi/acc/info", map[string]string{
+
+	baseRaw, err := c.wbiRequest("https://api.bilibili.com/x/space/wbi/acc/info", map[string]string{
 		"mid": strconv.Itoa(mid),
 	}, "GET")
+	if err != nil {
+		return nil, err
+	}
+
+	var baseResp map[string]interface{}
+	if err := json.Unmarshal(baseRaw, &baseResp); err != nil {
+		return nil, err
+	}
+
+	if code, ok := baseResp["code"].(float64); ok && int(code) != 0 {
+		return baseRaw, nil
+	}
+
+	dataObj, _ := baseResp["data"].(map[string]interface{})
+	if dataObj == nil {
+		dataObj = map[string]interface{}{}
+		baseResp["data"] = dataObj
+	}
+
+	// 补充粉丝/关注统计
+	relRaw, err := c.request("https://api.bilibili.com/x/relation/stat", map[string]string{
+		"vmid": strconv.Itoa(mid),
+	}, "GET")
+	if err == nil {
+		var relResp map[string]interface{}
+		if json.Unmarshal(relRaw, &relResp) == nil {
+			if relCode, ok := relResp["code"].(float64); ok && int(relCode) == 0 {
+				if relData, ok := relResp["data"].(map[string]interface{}); ok {
+					if follower, ok := relData["follower"]; ok {
+						dataObj["follower"] = follower
+					}
+					if following, ok := relData["following"]; ok {
+						dataObj["following"] = following
+					}
+				}
+			}
+		}
+	}
+
+	merged, err := json.Marshal(baseResp)
+	if err != nil {
+		return nil, err
+	}
+	return merged, nil
 }
 
 func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {

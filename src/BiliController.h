@@ -70,6 +70,10 @@ class BiliController : public QObject {
   Q_PROPERTY(QString qrcodeUrl READ qrcodeUrl NOTIFY qrcodeChanged)
   Q_PROPERTY(qint64 userId READ userId NOTIFY loginStateChanged)
   Q_PROPERTY(int userLevel READ userLevel NOTIFY loginStateChanged)
+  Q_PROPERTY(int userExp READ userExp NOTIFY loginStateChanged)
+  Q_PROPERTY(int userExpMin READ userExpMin NOTIFY loginStateChanged)
+  Q_PROPERTY(int userExpNext READ userExpNext NOTIFY loginStateChanged)
+  Q_PROPERTY(double userExpProgress READ userExpProgress NOTIFY loginStateChanged)
   Q_PROPERTY(double userCoins READ userCoins NOTIFY loginStateChanged)
   Q_PROPERTY(int userFans READ userFans NOTIFY loginStateChanged)
   Q_PROPERTY(int userFollowing READ userFollowing NOTIFY loginStateChanged)
@@ -124,6 +128,10 @@ public:
   QString qrcodeUrl() const;
   qint64 userId() const;
   int userLevel() const;
+  int userExp() const;
+  int userExpMin() const;
+  int userExpNext() const;
+  double userExpProgress() const;
   double userCoins() const;
   int userFans() const;
   int userFollowing() const;
@@ -251,6 +259,9 @@ private:
   // 用户详细信息
   qint64 m_userId;
   int m_userLevel;
+  int m_userExp;
+  int m_userExpMin;
+  int m_userExpNext;
   double m_userCoins;
   int m_userFans;
   int m_userFollowing;

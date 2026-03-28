@@ -410,7 +410,7 @@ Rectangle {
                                 }
                             }
 
-                            // 等级和 VIP
+                            // 等级和经验
                             Row {
                                 spacing: Theme.spacingSmall
 
@@ -430,20 +430,52 @@ Rectangle {
                                     }
                                 }
 
-                                Rectangle {
-                                    width: 60; height: 20
-                                    radius: Theme.radiusRound
-                                    color: controller && controller.userIsVip ? "#FB7299" : Theme.bgTertiary
+                                Item {
+                                    width: 108; height: 20
                                     anchors.verticalCenter: parent.verticalCenter
-                                    visible: controller && (controller.userIsVip || controller.userVipLabel !== "")
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 8
+                                        radius: 4
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: Theme.withAlpha(Theme.bgTertiary, 0.9)
+                                        clip: true
+
+                                        Rectangle {
+                                            width: parent.width * (controller ? controller.userExpProgress : 0)
+                                            height: parent.height
+                                            radius: parent.radius
+                                            color: Theme.primary
+                                        }
+                                    }
 
                                     Text {
-                                        anchors.centerIn: parent
-                                        text: controller && controller.userVipLabel !== "" ? controller.userVipLabel : "大会员"
-                                        color: controller && controller.userIsVip ? Theme.textOnPrimary : Theme.textSecondary
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.bottom: parent.top
+                                        anchors.bottomMargin: 2
+                                        text: controller ? (String(controller.userExp) + "/" + String(controller.userExpNext)) : "0/0"
+                                        color: Theme.textSecondary
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSmall
+                                        font.pixelSize: Theme.fontTiny
+                                        font.bold: true
                                     }
+                                }
+                            }
+
+                            // VIP 标签
+                            Rectangle {
+                                width: 60; height: 20
+                                radius: Theme.radiusRound
+                                color: controller && controller.userIsVip ? "#FB7299" : Theme.bgTertiary
+                                visible: controller && (controller.userIsVip || controller.userVipLabel !== "")
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: controller && controller.userVipLabel !== "" ? controller.userVipLabel : "大会员"
+                                    color: controller && controller.userIsVip ? Theme.textOnPrimary : Theme.textSecondary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSmall
                                 }
                             }
                         }
