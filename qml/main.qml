@@ -43,6 +43,7 @@ Rectangle {
         if (_animating) return;
         var newStack = pageStack.slice(0); // Create a copy
         newStack.push(currentPage);
+        console.log("[navigateTo] from=", currentPage, "to=", page, "stack=", JSON.stringify(newStack));
         pageStack = newStack; // Assign the new array
         lastPage = currentPage;
         if (props) {
@@ -56,10 +57,16 @@ Rectangle {
     function goBack() {
         if (_animating) return;
 
+        console.log("[goBack] currentPage=", currentPage,
+                    "stack=", JSON.stringify(pageStack),
+                    "lastPage=", lastPage,
+                    "animating=", _animating);
+
         if (pageStack.length > 0) {
             var newStack = pageStack.slice(0); // Create a copy
             var prev = newStack.pop();
             var fromPage = currentPage;
+            console.log("[goBack] pop prev=", prev, "newStack=", JSON.stringify(newStack));
             pageStack = newStack; // Assign the new array
             _animating = true;
             currentPage = prev;
@@ -79,12 +86,14 @@ Rectangle {
 
             pageTransitionBack.restart();
         } else {
+            console.log("[goBack] stack empty, currentPage=", currentPage);
             if (currentPage !== "home") {
                 _animating = true;
-                currentPage = lastPage && lastPage !== currentPage ? lastPage : "home";
+                currentPage = "home";
                 pageTransitionBack.restart();
                 return;
             }
+            console.log("[goBack] triggering plugin exit");
             backButtonClicked();
         }
     }
@@ -190,7 +199,8 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "detail"
+            active: currentPage === "detail" || currentPage === "player" || currentPage === "comments"
+            visible: currentPage === "detail"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.VideoDetailPage {
