@@ -1532,7 +1532,10 @@ void BiliController::launchExternalPlayerWithAudioUrl(const QString &videoUrl, c
   QStringList args;
   args << videoUrl << ("--audio-file=" + audioUrl)
        << "--referrer=https://www.bilibili.com"
-       << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+       << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+       << ("--script-opts=bili-aid=" + QString::number(videoAid())
+           + ",bili-cid=" + QString::number(m_currentVideo.cid)
+           + ",bili-bvid=" + m_currentVideo.bvid);
 
   bool ok = QProcess::startDetached(player, args);
   if (!ok) {

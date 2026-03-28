@@ -13,8 +13,6 @@ Item {
 
     signal clicked()
 
-    property bool showFullTitle: false
-
     Rectangle {
         id: background
         anchors.fill: parent
@@ -71,31 +69,6 @@ Item {
             id: mouseArea
             anchors.fill: parent
             onClicked: card.clicked()
-            onPressAndHold: card.showFullTitle = true
-            onReleased: card.showFullTitle = false
-            onCanceled: card.showFullTitle = false
-        }
-    }
-
-    Rectangle {
-        id: fullTitleOverlay
-        visible: card.showFullTitle
-        anchors.fill: parent
-        radius: 8
-        color: Qt.rgba(0, 0, 0, 0.85)
-        z: 5
-
-        Text {
-            anchors.centerIn: parent
-            width: parent.width - 10
-            text: card.partTitle
-            color: "white"
-            font.family: card.fontFamily
-            font.pixelSize: 11
-            wrapMode: Text.Wrap
-            horizontalAlignment: Text.AlignHCenter
-            maximumLineCount: 4
-            elide: Text.ElideRight
         }
     }
 }

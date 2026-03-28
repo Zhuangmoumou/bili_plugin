@@ -983,6 +983,23 @@ func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.Ra
 	}, "POST")
 }
 
+func (c *BilibiliClient) ReportHeartbeat(aid, cid int, bvid string, playedTime int) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+	params := map[string]string{
+		"aid":         strconv.Itoa(aid),
+		"cid":         strconv.Itoa(cid),
+		"bvid":        bvid,
+		"played_time": strconv.Itoa(playedTime),
+		"real_played_time": strconv.Itoa(playedTime),
+		"start_ts":    strconv.FormatInt(time.Now().Unix(), 10),
+		"csrf":        biliJct,
+	}
+	return c.request("https://api.bilibili.com/x/click-interface/web/heartbeat", params, "POST")
+}
+
 // ==================== HTTP 辅助函数 ====================
 
 func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
@@ -1151,6 +1168,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/hot/search - 热搜",
 				"/recommend - 首页推荐",
 				"/history/recent - 最近观看",
+                "/player/heartbeat - 回调心跳",
 			    "/fav/folder/list - 收藏夹列表",
     			"/fav/resource/list - 收藏夹内容",
 	    		"/fav/status - 收藏状态",
@@ -1562,6 +1580,38 @@ func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	playedTime, err := intParam(r.URL.Query().Get("played_time"), 0, 0, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+	if bvid == "" {
+		writeError(w, 400, "bvid 为必填参数")
+		return
+	}
+
+	client := getClient()
+	result, err := client.ReportHeartbeat(aid, cid, bvid, playedTime)
+	if err != nil {
+		logError("处理 /player/heartbeat 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
 func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
 	mid, err := intParam(r.URL.Query().Get("mid"), 1, 0, true)
 	if err != nil {
@@ -1892,6 +1942,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
 	mux.HandleFunc("/history/recent", handleRecentHistory)
+	mux.HandleFunc("/player/heartbeat", handlePlayerHeartbeat)
 	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
 	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
 	mux.HandleFunc("/fav/status", handleFavStatus)
@@ -1967,6 +2018,7 @@ func main() {
 	fmt.Println("  GET  /hot/search       - 热搜榜")
 	fmt.Println("  GET  /recommend        - 首页推荐")
 	fmt.Println("  GET  /history/recent   - 最近观看")
+    fmt.Println("  GET  /player/heartbeat - 回调心跳")
 	fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
 	fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
 	fmt.Println("  GET  /fav/status       - 收藏状态")

@@ -13,6 +13,8 @@ Rectangle {
     property string bvid: ""
     property bool fullTitleVisible: false
     property var rootRef: null
+    property bool fullPartTitleVisible: false
+    property string fullPartTitleText: ""
 
     // 清晰度选择（默认16）
     property int selectedQuality: 16
@@ -96,6 +98,33 @@ Rectangle {
         MouseArea {
             anchors.fill: parent
             onClicked: detailPage.fullTitleVisible = false
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.8)
+        z: 201
+        visible: detailPage.fullPartTitleVisible
+
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+        Text {
+            anchors.centerIn: parent
+            width: parent.width - 40
+            text: detailPage.fullPartTitleText
+            color: "white"
+            font.family: fontFamily
+            font.pixelSize: 14
+            font.bold: true
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: detailPage.fullPartTitleVisible = false
         }
     }
 
@@ -922,8 +951,12 @@ Rectangle {
                             isCurrent: controller && controller.videoCid === model.cid
 
                             onClicked: {
-                                if (controller) {
-                                    detailPage.savedPartListX = videoPartList.contentX
+                                if (!controller) return
+                                detailPage.savedPartListX = videoPartList.contentX
+                                if (controller.videoCid === model.cid) {
+                                    detailPage.fullPartTitleText = model.part || ""
+                                    detailPage.fullPartTitleVisible = true
+                                } else {
                                     controller.playVideoPart(index)
                                     detailPage.restorePartListPosition()
                                 }
