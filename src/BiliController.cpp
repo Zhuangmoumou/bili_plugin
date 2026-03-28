@@ -1402,9 +1402,51 @@ void BiliController::toggleFavorite() {
     return;
   }
 
+  if (m_isFavorited) {
+    QMap<QString, QString> params;
+    params["aid"] = QString::number(m_currentVideo.aid);
+    params["action"] = "0";
+
+    QPointer<BiliController> self(this);
+    m_network->get(
+        "/fav/toggle", params,
+        [self](const QJsonObject &) {
+          if (!self)
+            return;
+          self->m_isFavorited = false;
+          emit self->favoriteStatusChanged();
+          emit self->toastMessage("已取消收藏");
+        },
+        [self](int, const QString &msg) {
+          if (!self)
+            return;
+          emit self->toastMessage(QString("取消收藏失败：%1").arg(msg));
+        });
+    return;
+  }
+
+  fetchFavoriteFolders();
+  emit toastMessage("请选择收藏夹");
+}
+
+void BiliController::toggleFavoriteTo(qint64 mediaId) {
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后再收藏");
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    emit toastMessage("视频信息不完整");
+    return;
+  }
+  if (mediaId <= 0) {
+    emit toastMessage("收藏夹无效");
+    return;
+  }
+
   QMap<QString, QString> params;
   params["aid"] = QString::number(m_currentVideo.aid);
-  params["action"] = m_isFavorited ? "0" : "1";
+  params["action"] = "1";
+  params["media_id"] = QString::number(mediaId);
 
   QPointer<BiliController> self(this);
 
@@ -1414,9 +1456,9 @@ void BiliController::toggleFavorite() {
         if (!self)
           return;
 
-        self->m_isFavorited = !self->m_isFavorited;
+        self->m_isFavorited = true;
         emit self->favoriteStatusChanged();
-        emit self->toastMessage(self->m_isFavorited ? "已收藏" : "已取消收藏");
+        emit self->toastMessage("已收藏到收藏夹");
       },
       [self](int, const QString &msg) {
         if (!self)

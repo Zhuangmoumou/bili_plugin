@@ -162,6 +162,7 @@ public:
   // 收藏状态
   Q_INVOKABLE void fetchFavoriteStatus();
   Q_INVOKABLE void toggleFavorite();
+  Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
   // 外部播放器
   Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);

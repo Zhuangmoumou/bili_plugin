@@ -51,6 +51,7 @@ Rectangle {
     signal commentsRequested()
 
     property real savedPartListX: 0
+    property bool favoritePickerVisible: false
 
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
@@ -716,9 +717,19 @@ Rectangle {
                             MouseArea {
                                 anchors.fill: parent
                                 onClicked: {
-                                    if (controller) controller.toggleFavorite()
+                                    if (!controller) return
+                                    if (controller.isFavorited) {
+                                        controller.toggleFavorite()
+                                    } else {
+                                        controller.fetchFavoriteFolders()
+                                        detailPage.favoritePickerVisible = true
+                                    }
                                 }
                             }
+                        }
+
+                        Rectangle {
+                            visible: false
                         }
 
                         // 弹幕
@@ -1026,6 +1037,95 @@ Rectangle {
                 font.pixelSize: 10
                 font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 收藏夹选择弹窗
+    // ═══════════════════════════════════════════════════════════
+    Item {
+        id: favoritePickerOverlay
+        anchors.fill: parent
+        visible: detailPage.favoritePickerVisible
+        z: 95
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.55)
+        }
+
+        Rectangle {
+            id: favoritePickerDialog
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 40, 220)
+            height: Math.min(parent.height - 20, 145)
+            radius: 10
+            color: Qt.rgba(0.08, 0.1, 0.14, 0.98)
+            border.color: Qt.rgba(1, 1, 1, 0.12)
+            border.width: 1
+            z: 2
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 6
+
+                Text {
+                    text: "选择收藏夹"
+                    color: "white"
+                    font.family: fontFamily
+                    font.pixelSize: 11
+                    font.bold: true
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                ListView {
+                    id: favoriteFolderListDialog
+                    width: parent.width
+                    height: parent.height - 30
+                    model: controller ? controller.favoriteFolderModel() : null
+                    clip: true
+                    spacing: 4
+                    z: 3
+
+                    delegate: Rectangle {
+                        width: favoriteFolderListDialog.width
+                        height: 34
+                        radius: 6
+                        color: favChooseArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 12
+                            text: model.title || "未命名收藏夹"
+                            color: "white"
+                            font.family: fontFamily
+                            font.pixelSize: 10
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        MouseArea {
+                            id: favChooseArea
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller) controller.toggleFavoriteTo(model.id)
+                                detailPage.favoritePickerVisible = false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            z: 1
+            onClicked: {
+                if (!favoritePickerDialog.contains(mapToItem(favoritePickerDialog, mouse.x, mouse.y))) {
+                    detailPage.favoritePickerVisible = false
+                }
             }
         }
     }
