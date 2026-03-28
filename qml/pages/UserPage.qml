@@ -13,11 +13,12 @@ Rectangle {
     signal backClicked()
     signal videoSelected(string bvid)
 
-    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置
     property int favView: 0
     property string currentFavTitle: ""
     property int currentFavId: 0
     property real recentHistoryContentX: 0
+    property bool restartConfirmVisible: false
 
     function openFavorites() {
         favView = 1
@@ -41,6 +42,10 @@ Rectangle {
             return
         }
         if (favView === 3) {
+            favView = 0
+            return
+        }
+        if (favView === 4) {
             favView = 0
             return
         }
@@ -68,6 +73,7 @@ Rectangle {
             if (favView === 1) return "我的收藏夹"
             if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
             if (favView === 3) return "最近观看"
+            if (favView === 4) return "设置"
             return "个人中心"
         }
         showBack: true
@@ -582,7 +588,7 @@ Rectangle {
                         }
                     }
 
-                    // 快捷入口：收藏夹 / 最近观看
+                    // 快捷入口：收藏夹 / 最近观看 / 设置
                     Row {
                         anchors.horizontalCenter: parent.horizontalCenter
                         spacing: Theme.spacingLarge
@@ -690,6 +696,61 @@ Rectangle {
 
                             Text {
                                 text: "最近观看"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: settingsEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = Theme.primary
+                                        ctx.lineWidth = 1.6
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(8, 8, 2.2, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        for (var i = 0; i < 8; i++) {
+                                            var a = i * Math.PI / 4
+                                            var x1 = 8 + Math.cos(a) * 4.2
+                                            var y1 = 8 + Math.sin(a) * 4.2
+                                            var x2 = 8 + Math.cos(a) * 6.8
+                                            var y2 = 8 + Math.sin(a) * 6.8
+                                            ctx.beginPath()
+                                            ctx.moveTo(x1, y1)
+                                            ctx.lineTo(x2, y2)
+                                            ctx.stroke()
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: settingsEntryArea
+                                    anchors.fill: parent
+                                    onClicked: favView = 4
+                                }
+                            }
+
+                            Text {
+                                text: "设置"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
@@ -866,6 +927,46 @@ Rectangle {
             }
         }
 
+        // ── 设置页 ──
+        Item {
+            id: settingsView
+            anchors.fill: parent
+            visible: favView === 4
+
+            ListView {
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: ListModel {
+                    ListElement { title: "重启 Go 服务器" }
+                }
+                spacing: Theme.spacingSmall
+                clip: true
+
+                delegate: Rectangle {
+                    width: parent.width
+                    height: 34
+                    radius: Theme.radiusMedium
+                    color: settingsItemArea.pressed ? Theme.withAlpha(Theme.primary, 0.12) : Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: model.title
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontBody
+                    }
+
+                    MouseArea {
+                        id: settingsItemArea
+                        anchors.fill: parent
+                        onClicked: userPage.restartConfirmVisible = true
+                    }
+                }
+            }
+        }
+
         // ── 收藏夹详情 ──
         Item {
             id: favDetailView
@@ -908,6 +1009,89 @@ Rectangle {
             Components.LoadingIndicator {
                 anchors.centerIn: parent
                 running: controller ? controller.isLoading : false
+            }
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: restartConfirmVisible
+        color: Qt.rgba(0, 0, 0, 0.55)
+        z: 92
+
+        Rectangle {
+            width: 170
+            height: 88
+            radius: 10
+            color: Theme.bgSecondary
+            border.color: Theme.withAlpha(Theme.primary, 0.2)
+            border.width: 1
+            anchors.centerIn: parent
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 10
+
+                Text {
+                    text: "确认重启 Go 服务器？"
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    width: parent.width
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 10
+
+                    Rectangle {
+                        width: 56
+                        height: 24
+                        radius: 6
+                        color: cancelRestartArea.pressed ? Theme.withAlpha(Theme.primary, 0.12) : Theme.bgTertiary
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "取消"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
+
+                        MouseArea {
+                            id: cancelRestartArea
+                            anchors.fill: parent
+                            onClicked: userPage.restartConfirmVisible = false
+                        }
+                    }
+
+                    Rectangle {
+                        width: 56
+                        height: 24
+                        radius: 6
+                        color: confirmRestartArea.pressed ? Theme.primaryDark : Theme.primary
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "确认"
+                            color: Theme.textOnPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
+
+                        MouseArea {
+                            id: confirmRestartArea
+                            anchors.fill: parent
+                            onClicked: {
+                                userPage.restartConfirmVisible = false
+                                if (controller) controller.restartGoServer()
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -18,6 +18,10 @@
 
 static QQmlEngine *s_engine = nullptr;
 
+// 前向声明：插件级 Go 服务控制函数
+static bool startApiServer();
+static void stopApiServer();
+
 // 安全回调包装宏 - 在回调执行前检查对象是否仍存在
 #define SAFE_CALLBACK(controller, ...)                                         \
   [ guard = QPointer<BiliController>(controller), __VA_ARGS__ ]
@@ -2011,6 +2015,16 @@ void BiliController::playVideoPart(int index) {
         // downloadAndPlay(m_playQuality); 
         // 或者只获取URL
         fetchPlayUrl(m_playQuality);
+    }
+}
+
+void BiliController::restartGoServer() {
+    emit toastMessage("正在重启 Go 服务...");
+    stopApiServer();
+    if (startApiServer()) {
+        emit toastMessage("Go 服务已重启");
+    } else {
+        emit toastMessage("Go 服务重启失败");
     }
 }
 

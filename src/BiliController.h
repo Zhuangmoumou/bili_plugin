@@ -186,6 +186,7 @@ public:
   Q_INVOKABLE void cleanupTempVideo();
   Q_INVOKABLE void downloadVideoToDisk(int quality);
   Q_INVOKABLE void playVideoPart(int index);
+  Q_INVOKABLE void restartGoServer();
 
   // 获取模型（供 QML 使用）
   Q_INVOKABLE QObject *popularModel();
