@@ -42,6 +42,7 @@ BiliController::BiliController(QObject *parent)
       m_searchHistory(),
       m_favoriteFolderModel(new FavoriteFolderModel(this)),
       m_favoriteItemModel(new VideoListModel(this)),
+      m_recentHistoryModel(new VideoListModel(this)),
       m_favoritePage(1),
       m_currentFavoriteId(0),
       m_destroying(false) {
@@ -184,6 +185,7 @@ QObject *BiliController::videoPartModel() { return m_videoPartModel; }
 QObject *BiliController::searchHistoryModel() { return m_searchHistoryModel; }
 QObject *BiliController::favoriteFolderModel() { return m_favoriteFolderModel; }
 QObject *BiliController::favoriteItemModel() { return m_favoriteItemModel; }
+QObject *BiliController::recentHistoryModel() { return m_recentHistoryModel; }
 
 // ====== Navigation ======
 
@@ -1849,6 +1851,77 @@ void BiliController::saveSearchHistory() {
     QSettings settings("BiliPocket", "BiliPlugin");
     settings.setValue("searchHistory", m_searchHistory);
     settings.sync();
+}
+
+void BiliController::fetchRecentHistory() {
+    if (!m_loggedIn) {
+        emit toastMessage("请先登录后查看最近观看");
+        return;
+    }
+
+    if (m_recentHistoryModel->loading())
+        return;
+
+    m_recentHistoryModel->clear();
+    m_recentHistoryModel->setLoading(true);
+    setIsLoading(true);
+
+    QPointer<BiliController> self(this);
+    m_network->get(
+        "/history/recent", {},
+        [self](const QJsonObject &data) {
+            if (!self) return;
+
+            QJsonArray list = data.value("list").toArray();
+            if (list.isEmpty()) {
+                list = data.value("items").toArray();
+            }
+
+            QVector<VideoItem> items;
+            items.reserve(list.size());
+            for (const QJsonValue &v : list) {
+                if (!v.isObject()) continue;
+                QJsonObject obj = v.toObject();
+                QJsonObject history = obj.value("history").toObject();
+                QJsonObject stat = obj.value("stat").toObject();
+
+                VideoItem item;
+                item.bvid = history.value("bvid").toString();
+                item.aid = history.value("oid").toVariant().toLongLong();
+                item.title = obj.value("title").toString();
+                item.pic = obj.value("cover").toString();
+                item.duration = obj.value("duration").toInt();
+                item.ownerName = obj.value("author_name").toString();
+                if (item.ownerName.isEmpty()) {
+                    item.ownerName = obj.value("name").toString();
+                }
+                item.views = stat.value("view").toVariant().toLongLong();
+                if (item.views <= 0) {
+                    item.views = stat.value("play").toVariant().toLongLong();
+                }
+                if (item.views <= 0) {
+                    item.views = obj.value("view").toVariant().toLongLong();
+                }
+                if (item.views <= 0) {
+                    item.views = obj.value("play").toVariant().toLongLong();
+                }
+                item.danmaku = stat.value("danmaku").toVariant().toLongLong();
+
+                if (!item.bvid.isEmpty()) {
+                    items.append(item);
+                }
+            }
+
+            self->m_recentHistoryModel->appendItems(items);
+            self->m_recentHistoryModel->setLoading(false);
+            self->setIsLoading(false);
+        },
+        [self](int, const QString &msg) {
+            if (!self) return;
+            self->m_recentHistoryModel->setLoading(false);
+            self->setIsLoading(false);
+            emit self->toastMessage(QString("最近观看加载失败：%1").arg(msg));
+        });
 }
 
 void BiliController::playVideoPart(int index) {

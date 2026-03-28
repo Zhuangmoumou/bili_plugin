@@ -16,6 +16,7 @@ Rectangle {
     property string upName: ""
     property string viewCount: ""
     property string durationText: ""
+    property bool showViewCount: true
     // 稳妥显示：由外部显式控制是否显示合集
     property bool showCollection: false
 
@@ -191,6 +192,7 @@ Rectangle {
                     }
 
                     Row {
+                        visible: showViewCount && viewCount.length > 0
                         spacing: 2
                         anchors.verticalCenter: parent.verticalCenter
                         Text {

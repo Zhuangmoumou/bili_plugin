@@ -922,6 +922,19 @@ func (c *BilibiliClient) GetRecommend(freshType int) (json.RawMessage, error) {
 	}, "GET")
 }
 
+func (c *BilibiliClient) GetRecentHistory(max, viewAt int) (json.RawMessage, error) {
+	logInfo("获取最近观看 max=%d view_at=%d", max, viewAt)
+	params := map[string]string{}
+	if max > 0 {
+		params["max"] = strconv.Itoa(max)
+	}
+	if viewAt > 0 {
+		params["view_at"] = strconv.Itoa(viewAt)
+	}
+	params["business"] = "archive"
+	return c.request("https://api.bilibili.com/x/web-interface/history/cursor", params, "GET")
+}
+
 func (c *BilibiliClient) GetFavoriteFolders(mid int) (json.RawMessage, error) {
 	logInfo("获取收藏夹列表 mid=%d", mid)
 	return c.request("https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
@@ -1137,10 +1150,11 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/login/info - 登录信息",
 				"/hot/search - 热搜",
 				"/recommend - 首页推荐",
-			"/fav/folder/list - 收藏夹列表",
-			"/fav/resource/list - 收藏夹内容",
-			"/fav/status - 收藏状态",
-			"/fav/toggle - 收藏切换",
+				"/history/recent - 最近观看",
+			    "/fav/folder/list - 收藏夹列表",
+    			"/fav/resource/list - 收藏夹内容",
+	    		"/fav/status - 收藏状态",
+		    	"/fav/toggle - 收藏切换",
 			},
 		},
 	})
@@ -1527,6 +1541,27 @@ func handleRecommend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
+	maxVal, err := intParam(r.URL.Query().Get("max"), 0, 0, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	viewAt, err := intParam(r.URL.Query().Get("view_at"), 0, 0, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	client := getClient()
+	result, err := client.GetRecentHistory(maxVal, viewAt)
+	if err != nil {
+		logError("处理 /history/recent 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
 func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
 	mid, err := intParam(r.URL.Query().Get("mid"), 1, 0, true)
 	if err != nil {
@@ -1856,6 +1891,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logout", handleLogout)
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
+	mux.HandleFunc("/history/recent", handleRecentHistory)
 	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
 	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
 	mux.HandleFunc("/fav/status", handleFavStatus)
@@ -1930,6 +1966,7 @@ func main() {
 	fmt.Println("  GET  /login/info       - 登录信息")
 	fmt.Println("  GET  /hot/search       - 热搜榜")
 	fmt.Println("  GET  /recommend        - 首页推荐")
+	fmt.Println("  GET  /history/recent   - 最近观看")
 	fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
 	fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
 	fmt.Println("  GET  /fav/status       - 收藏状态")

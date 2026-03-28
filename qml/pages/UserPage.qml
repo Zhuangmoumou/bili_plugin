@@ -13,7 +13,7 @@ Rectangle {
     signal backClicked()
     signal videoSelected(string bvid)
 
-    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看
     property int favView: 0
     property string currentFavTitle: ""
     property int currentFavId: 0
@@ -36,6 +36,10 @@ Rectangle {
             return
         }
         if (favView === 1) {
+            favView = 0
+            return
+        }
+        if (favView === 3) {
             favView = 0
             return
         }
@@ -62,6 +66,7 @@ Rectangle {
             if (!controller || !controller.loggedIn) return "扫码登录"
             if (favView === 1) return "我的收藏夹"
             if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
+            if (favView === 3) return "最近观看"
             return "个人中心"
         }
         showBack: true
@@ -436,7 +441,7 @@ Rectangle {
 
                                     Rectangle {
                                         width: parent.width
-                                        height: 8
+                                        height: 5
                                         radius: 4
                                         anchors.verticalCenter: parent.verticalCenter
                                         color: Theme.withAlpha(Theme.bgTertiary, 0.9)
@@ -457,7 +462,8 @@ Rectangle {
                                         text: controller ? (String(controller.userExp) + "/" + String(controller.userExpNext)) : "0/0"
                                         color: Theme.textSecondary
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontTiny
+                                        //font.pixelSize: Theme.fontTiny
+                                        font.pixelSize: 8
                                         font.bold: true
                                     }
                                 }
@@ -575,25 +581,119 @@ Rectangle {
                         }
                     }
 
-                    // 收藏夹入口
-                    Rectangle {
-                        width: 140; height: Theme.buttonHeight
-                        radius: Theme.radiusRound
-                        color: Theme.primary
+                    // 快捷入口：收藏夹 / 最近观看
+                    Row {
                         anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.spacingLarge
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: "打开收藏夹"
-                            color: Theme.textOnPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontBody
-                            font.bold: true
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: favEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.fillStyle = Theme.primary
+                                        var cx = width / 2
+                                        var cy = height / 2
+                                        var outerR = 8
+                                        var innerR = 3.4
+                                        ctx.beginPath()
+                                        for (var i = 0; i < 5; i++) {
+                                            var outerAngle = (i * 72 - 90) * Math.PI / 180
+                                            var innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180
+                                            var ox = cx + outerR * Math.cos(outerAngle)
+                                            var oy = cy + outerR * Math.sin(outerAngle)
+                                            var ix = cx + innerR * Math.cos(innerAngle)
+                                            var iy = cy + innerR * Math.sin(innerAngle)
+                                            if (i === 0) ctx.moveTo(ox, oy)
+                                            else ctx.lineTo(ox, oy)
+                                            ctx.lineTo(ix, iy)
+                                        }
+                                        ctx.closePath()
+                                        ctx.fill()
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: favEntryArea
+                                    anchors.fill: parent
+                                    onClicked: userPage.openFavorites()
+                                }
+                            }
+
+                            Text {
+                                text: "收藏夹"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
                         }
 
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: userPage.openFavorites()
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: historyEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = Theme.primary
+                                        ctx.lineWidth = 1.8
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(9, 9, 6.5, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(9, 9)
+                                        ctx.lineTo(9, 5.5)
+                                        ctx.moveTo(9, 9)
+                                        ctx.lineTo(12, 10.5)
+                                        ctx.stroke()
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: historyEntryArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        favView = 3
+                                        if (controller) controller.fetchRecentHistory()
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "最近观看"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
                         }
                     }
 
@@ -711,6 +811,42 @@ Rectangle {
             Components.LoadingIndicator {
                 anchors.centerIn: parent
                 running: controller ? controller.isLoading : false
+            }
+        }
+
+        // ── 最近观看 ──
+        Item {
+            id: recentHistoryView
+            anchors.fill: parent
+            visible: favView === 3
+
+            ListView {
+                id: recentList
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.recentHistoryModel() : null
+                orientation: ListView.Horizontal
+                spacing: Theme.spacingMedium
+                clip: true
+
+                delegate: Components.VideoCard {
+                    height: recentList.height
+                    videoTitle: model.title || ""
+                    coverUrl: model.pic || ""
+                    upName: model.ownerName || ""
+                    viewCount: ""
+                    showViewCount: false
+                    durationText: model.durationText || ""
+                    bvid: model.bvid || ""
+                    onClicked: userPage.videoSelected(bvid)
+                }
+            }
+
+            Text {
+                visible: recentList.count === 0
+                text: "暂无最近观看"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
             }
         }
 

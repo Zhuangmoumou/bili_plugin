@@ -197,6 +197,8 @@ public:
   Q_INVOKABLE QObject *searchHistoryModel();
   Q_INVOKABLE QObject *favoriteFolderModel();
   Q_INVOKABLE QObject *favoriteItemModel();
+  Q_INVOKABLE QObject *recentHistoryModel();
+  Q_INVOKABLE void fetchRecentHistory();
 
 signals:
   void currentPageChanged();
@@ -292,6 +294,7 @@ private:
 
   FavoriteFolderModel *m_favoriteFolderModel;
   VideoListModel *m_favoriteItemModel;
+  VideoListModel *m_recentHistoryModel;
   int m_favoritePage;
   qint64 m_currentFavoriteId;
 
