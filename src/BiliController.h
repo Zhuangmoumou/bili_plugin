@@ -199,6 +199,7 @@ public:
   Q_INVOKABLE QObject *favoriteItemModel();
   Q_INVOKABLE QObject *recentHistoryModel();
   Q_INVOKABLE void fetchRecentHistory();
+  Q_INVOKABLE void fetchMoreRecentHistory();
 
 signals:
   void currentPageChanged();
@@ -297,6 +298,8 @@ private:
   VideoListModel *m_recentHistoryModel;
   int m_favoritePage;
   qint64 m_currentFavoriteId;
+  int m_recentHistoryMax = 0;
+  int m_recentHistoryViewAt = 0;
 
   // 标记对象是否正在销毁
   bool m_destroying;

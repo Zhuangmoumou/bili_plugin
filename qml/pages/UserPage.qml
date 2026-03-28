@@ -17,6 +17,7 @@ Rectangle {
     property int favView: 0
     property string currentFavTitle: ""
     property int currentFavId: 0
+    property real recentHistoryContentX: 0
 
     function openFavorites() {
         favView = 1
@@ -829,6 +830,10 @@ Rectangle {
                 spacing: Theme.spacingMedium
                 clip: true
 
+                onAtXEndChanged: {
+                    if (atXEnd && controller) controller.fetchMoreRecentHistory()
+                }
+
                 delegate: Components.VideoCard {
                     height: recentList.height
                     videoTitle: model.title || ""
@@ -838,7 +843,10 @@ Rectangle {
                     showViewCount: false
                     durationText: model.durationText || ""
                     bvid: model.bvid || ""
-                    onClicked: userPage.videoSelected(bvid)
+                    onClicked: {
+                        userPage.recentHistoryContentX = recentList.contentX
+                        userPage.videoSelected(bvid)
+                    }
                 }
             }
 
@@ -847,6 +855,14 @@ Rectangle {
                 text: "暂无最近观看"
                 color: Theme.textTertiary
                 anchors.centerIn: parent
+            }
+
+            onVisibleChanged: {
+                if (visible && recentHistoryContentX > 0) {
+                    Qt.callLater(function() {
+                        recentList.contentX = recentHistoryContentX
+                    })
+                }
             }
         }
 

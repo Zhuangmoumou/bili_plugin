@@ -1862,15 +1862,22 @@ void BiliController::fetchRecentHistory() {
     if (m_recentHistoryModel->loading())
         return;
 
+    m_recentHistoryMax = 0;
+    m_recentHistoryViewAt = 0;
     m_recentHistoryModel->clear();
     m_recentHistoryModel->setLoading(true);
     setIsLoading(true);
 
+    QMap<QString, QString> params;
     QPointer<BiliController> self(this);
     m_network->get(
-        "/history/recent", {},
+        "/history/recent", params,
         [self](const QJsonObject &data) {
             if (!self) return;
+
+            QJsonObject cursor = data.value("cursor").toObject();
+            self->m_recentHistoryMax = cursor.value("max").toVariant().toInt();
+            self->m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
 
             QJsonArray list = data.value("list").toArray();
             if (list.isEmpty()) {
@@ -1883,11 +1890,11 @@ void BiliController::fetchRecentHistory() {
                 if (!v.isObject()) continue;
                 QJsonObject obj = v.toObject();
                 QJsonObject history = obj.value("history").toObject();
-                QJsonObject stat = obj.value("stat").toObject();
 
                 VideoItem item;
                 item.bvid = history.value("bvid").toString();
                 item.aid = history.value("oid").toVariant().toLongLong();
+                item.cid = history.value("cid").toVariant().toLongLong();
                 item.title = obj.value("title").toString();
                 item.pic = obj.value("cover").toString();
                 item.duration = obj.value("duration").toInt();
@@ -1895,17 +1902,8 @@ void BiliController::fetchRecentHistory() {
                 if (item.ownerName.isEmpty()) {
                     item.ownerName = obj.value("name").toString();
                 }
-                item.views = stat.value("view").toVariant().toLongLong();
-                if (item.views <= 0) {
-                    item.views = stat.value("play").toVariant().toLongLong();
-                }
-                if (item.views <= 0) {
-                    item.views = obj.value("view").toVariant().toLongLong();
-                }
-                if (item.views <= 0) {
-                    item.views = obj.value("play").toVariant().toLongLong();
-                }
-                item.danmaku = stat.value("danmaku").toVariant().toLongLong();
+                item.views = 0;
+                item.danmaku = 0;
 
                 if (!item.bvid.isEmpty()) {
                     items.append(item);
@@ -1913,6 +1911,76 @@ void BiliController::fetchRecentHistory() {
             }
 
             self->m_recentHistoryModel->appendItems(items);
+            self->m_recentHistoryModel->setHasMore(!items.isEmpty());
+            self->m_recentHistoryModel->setLoading(false);
+            self->setIsLoading(false);
+        },
+        [self](int, const QString &msg) {
+            if (!self) return;
+            self->m_recentHistoryModel->setLoading(false);
+            self->setIsLoading(false);
+            emit self->toastMessage(QString("最近观看加载失败：%1").arg(msg));
+        });
+}
+
+void BiliController::fetchMoreRecentHistory() {
+    if (m_recentHistoryModel->loading() || !m_recentHistoryModel->hasMore())
+        return;
+
+    QMap<QString, QString> params;
+    if (m_recentHistoryMax > 0) {
+        params["max"] = QString::number(m_recentHistoryMax);
+    }
+    if (m_recentHistoryViewAt > 0) {
+        params["view_at"] = QString::number(m_recentHistoryViewAt);
+    }
+
+    m_recentHistoryModel->setLoading(true);
+    setIsLoading(true);
+
+    QPointer<BiliController> self(this);
+    m_network->get(
+        "/history/recent", params,
+        [self](const QJsonObject &data) {
+            if (!self) return;
+
+            QJsonObject cursor = data.value("cursor").toObject();
+            self->m_recentHistoryMax = cursor.value("max").toVariant().toInt();
+            self->m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
+
+            QJsonArray list = data.value("list").toArray();
+            if (list.isEmpty()) {
+                list = data.value("items").toArray();
+            }
+
+            QVector<VideoItem> items;
+            items.reserve(list.size());
+            for (const QJsonValue &v : list) {
+                if (!v.isObject()) continue;
+                QJsonObject obj = v.toObject();
+                QJsonObject history = obj.value("history").toObject();
+
+                VideoItem item;
+                item.bvid = history.value("bvid").toString();
+                item.aid = history.value("oid").toVariant().toLongLong();
+                item.cid = history.value("cid").toVariant().toLongLong();
+                item.title = obj.value("title").toString();
+                item.pic = obj.value("cover").toString();
+                item.duration = obj.value("duration").toInt();
+                item.ownerName = obj.value("author_name").toString();
+                if (item.ownerName.isEmpty()) {
+                    item.ownerName = obj.value("name").toString();
+                }
+                item.views = 0;
+                item.danmaku = 0;
+
+                if (!item.bvid.isEmpty()) {
+                    items.append(item);
+                }
+            }
+
+            self->m_recentHistoryModel->appendItems(items);
+            self->m_recentHistoryModel->setHasMore(!items.isEmpty());
             self->m_recentHistoryModel->setLoading(false);
             self->setIsLoading(false);
         },
