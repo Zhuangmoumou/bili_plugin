@@ -18,6 +18,7 @@ class CommentListModel;
 class HotSearchModel;
 class SearchResultModel;
 class QStringListModel;
+class FavoriteFolderModel;
 class BiliNetwork;
 
 class BiliController : public QObject {
@@ -56,14 +57,23 @@ class BiliController : public QObject {
   Q_PROPERTY(double downloadProgress READ downloadProgress NOTIFY downloadStateChanged)
   Q_PROPERTY(QString downloadStatus READ downloadStatus NOTIFY downloadStateChanged)
   Q_PROPERTY(QString tempVideoPath READ tempVideoPath NOTIFY downloadStateChanged)
+  Q_PROPERTY(QString tempAudioPath READ tempAudioPath NOTIFY downloadStateChanged)
+  Q_PROPERTY(QString dashVideoUrl READ dashVideoUrl NOTIFY playUrlChanged)
+  Q_PROPERTY(QString dashAudioUrl READ dashAudioUrl NOTIFY playUrlChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
+  // 收藏状态
+  Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
   Q_PROPERTY(QString userName READ userName NOTIFY loginStateChanged)
   Q_PROPERTY(QString userFace READ userFace NOTIFY loginStateChanged)
   Q_PROPERTY(QString qrcodeUrl READ qrcodeUrl NOTIFY qrcodeChanged)
   Q_PROPERTY(qint64 userId READ userId NOTIFY loginStateChanged)
   Q_PROPERTY(int userLevel READ userLevel NOTIFY loginStateChanged)
+  Q_PROPERTY(int userExp READ userExp NOTIFY loginStateChanged)
+  Q_PROPERTY(int userExpMin READ userExpMin NOTIFY loginStateChanged)
+  Q_PROPERTY(int userExpNext READ userExpNext NOTIFY loginStateChanged)
+  Q_PROPERTY(double userExpProgress READ userExpProgress NOTIFY loginStateChanged)
   Q_PROPERTY(double userCoins READ userCoins NOTIFY loginStateChanged)
   Q_PROPERTY(int userFans READ userFans NOTIFY loginStateChanged)
   Q_PROPERTY(int userFollowing READ userFollowing NOTIFY loginStateChanged)
@@ -107,13 +117,21 @@ public:
   double downloadProgress() const { return m_downloadProgress; }
   QString downloadStatus() const { return m_downloadStatus; }
   QString tempVideoPath() const { return m_tempVideoPath; }
+  QString tempAudioPath() const { return m_tempAudioPath; }
+  QString dashVideoUrl() const { return m_dashVideoUrl; }
+  QString dashAudioUrl() const { return m_dashAudioUrl; }
 
   bool loggedIn() const;
+  bool isFavorited() const { return m_isFavorited; }
   QString userName() const;
   QString userFace() const;
   QString qrcodeUrl() const;
   qint64 userId() const;
   int userLevel() const;
+  int userExp() const;
+  int userExpMin() const;
+  int userExpNext() const;
+  double userExpProgress() const;
   double userCoins() const;
   int userFans() const;
   int userFollowing() const;
@@ -137,6 +155,18 @@ public:
   // 仅获取可用清晰度列表（不触发播放）
   Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
   Q_INVOKABLE void fetchComments(int page = 1);
+  // 收藏夹
+  Q_INVOKABLE void fetchFavoriteFolders();
+  Q_INVOKABLE void fetchFavoriteItems(qint64 mediaId, int page = 1, int pageSize = 20);
+  Q_INVOKABLE void fetchMoreFavoriteItems();
+  // 收藏状态
+  Q_INVOKABLE void fetchFavoriteStatus();
+  Q_INVOKABLE void toggleFavorite();
+  Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
+  // 外部播放器
+  Q_INVOKABLE void launchExternalPlayer(const QString &path);
+  Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
+  Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -156,6 +186,7 @@ public:
   Q_INVOKABLE void cleanupTempVideo();
   Q_INVOKABLE void downloadVideoToDisk(int quality);
   Q_INVOKABLE void playVideoPart(int index);
+  Q_INVOKABLE void restartGoServer();
 
   // 获取模型（供 QML 使用）
   Q_INVOKABLE QObject *popularModel();
@@ -165,6 +196,11 @@ public:
   Q_INVOKABLE QObject *hotSearchModel();
   Q_INVOKABLE QObject *videoPartModel();
   Q_INVOKABLE QObject *searchHistoryModel();
+  Q_INVOKABLE QObject *favoriteFolderModel();
+  Q_INVOKABLE QObject *favoriteItemModel();
+  Q_INVOKABLE QObject *recentHistoryModel();
+  Q_INVOKABLE void fetchRecentHistory();
+  Q_INVOKABLE void fetchMoreRecentHistory();
 
 signals:
   void currentPageChanged();
@@ -181,9 +217,11 @@ signals:
   void qrcodeNeedRefresh();
   void playbackReady(const QString &url);
   void downloadStateChanged();
+  void favoriteStatusChanged();
 
 private:
   void fetchUserInfo(qint64 mid);
+  void clearLocalLoginState();
   void setGlobalError(const QString &error);
   void setIsLoading(bool loading);
   void loadLoginStatus();
@@ -211,9 +249,13 @@ private:
   double m_downloadProgress;
   QString m_downloadStatus;
   QString m_tempVideoPath;
+  QString m_tempAudioPath;
+  QString m_dashVideoUrl;
+  QString m_dashAudioUrl;
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;
+  bool m_isFavorited;
   QString m_userName;
   QString m_userFace;
   QString m_qrcodeUrl;
@@ -222,6 +264,9 @@ private:
   // 用户详细信息
   qint64 m_userId;
   int m_userLevel;
+  int m_userExp;
+  int m_userExpMin;
+  int m_userExpNext;
   double m_userCoins;
   int m_userFans;
   int m_userFollowing;
@@ -248,6 +293,14 @@ private:
   VideoPartListModel *m_videoPartModel;
   QStringListModel *m_searchHistoryModel;
   QStringList m_searchHistory;
+
+  FavoriteFolderModel *m_favoriteFolderModel;
+  VideoListModel *m_favoriteItemModel;
+  VideoListModel *m_recentHistoryModel;
+  int m_favoritePage;
+  qint64 m_currentFavoriteId;
+  int m_recentHistoryMax = 0;
+  int m_recentHistoryViewAt = 0;
 
   // 标记对象是否正在销毁
   bool m_destroying;

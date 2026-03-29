@@ -521,6 +521,7 @@ func (c *BilibiliClient) startCookieRefreshLoop() {
 
 func (c *BilibiliClient) refreshCookies() {
 	sessdata, _, biliJct, refreshToken := c.getAuth()
+	logInfo("Cookie 刷新检查: sessdata=%t bili_jct=%t refresh_token=%t", sessdata != "", biliJct != "", refreshToken != "")
 	if sessdata == "" || biliJct == "" || refreshToken == "" {
 		logInfo("Cookie 刷新条件不足: sessdata=%t bili_jct=%t refresh_token=%t", sessdata != "", biliJct != "", refreshToken != "")
 		return
@@ -560,6 +561,7 @@ func (c *BilibiliClient) refreshCookies() {
 		refreshToken = rt
 	}
 
+	logInfo("Cookie 刷新状态: refresh=%t refresh_token=%t", refreshNeeded, refreshToken != "")
 	if !refreshNeeded {
 		logInfo("Cookie 无需刷新")
 		return
@@ -790,9 +792,54 @@ func (c *BilibiliClient) GetVideoComments(oid, typ, sortVal, ps, pn int) (json.R
 
 func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 	logInfo("获取用户信息 mid=%d", mid)
-	return c.wbiRequest("https://api.bilibili.com/x/space/wbi/acc/info", map[string]string{
+
+	baseRaw, err := c.wbiRequest("https://api.bilibili.com/x/space/wbi/acc/info", map[string]string{
 		"mid": strconv.Itoa(mid),
 	}, "GET")
+	if err != nil {
+		return nil, err
+	}
+
+	var baseResp map[string]interface{}
+	if err := json.Unmarshal(baseRaw, &baseResp); err != nil {
+		return nil, err
+	}
+
+	if code, ok := baseResp["code"].(float64); ok && int(code) != 0 {
+		return baseRaw, nil
+	}
+
+	dataObj, _ := baseResp["data"].(map[string]interface{})
+	if dataObj == nil {
+		dataObj = map[string]interface{}{}
+		baseResp["data"] = dataObj
+	}
+
+	// 补充粉丝/关注统计
+	relRaw, err := c.request("https://api.bilibili.com/x/relation/stat", map[string]string{
+		"vmid": strconv.Itoa(mid),
+	}, "GET")
+	if err == nil {
+		var relResp map[string]interface{}
+		if json.Unmarshal(relRaw, &relResp) == nil {
+			if relCode, ok := relResp["code"].(float64); ok && int(relCode) == 0 {
+				if relData, ok := relResp["data"].(map[string]interface{}); ok {
+					if follower, ok := relData["follower"]; ok {
+						dataObj["follower"] = follower
+					}
+					if following, ok := relData["following"]; ok {
+						dataObj["following"] = following
+					}
+				}
+			}
+		}
+	}
+
+	merged, err := json.Marshal(baseResp)
+	if err != nil {
+		return nil, err
+	}
+	return merged, nil
 }
 
 func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
@@ -800,27 +847,33 @@ func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
 	return c.request("https://api.bilibili.com/x/web-interface/nav", map[string]string{}, "GET")
 }
 
-func (c *BilibiliClient) GetPlayUrl(aid, cid, qn int) (json.RawMessage, error) {
-if qn <= 0 {
-qn = 32
-}
+func (c *BilibiliClient) GetPlayUrl(aid, cid, qn, fnval int, platform string) (json.RawMessage, error) {
+	if qn <= 0 {
+		qn = 32
+	}
+	if fnval <= 0 {
+		fnval = 4048
+	}
+	if platform == "" {
+		platform = "pc"
+	}
 
-allowedQn := map[int]bool{
-16:  true,
-32:  true,
-64:  true,
-80:  true,
-112: true,
-116: true,
-120: true,
-125: true,
-}
-if !allowedQn[qn] {
+	allowedQn := map[int]bool{
+		16:  true,
+		32:  true,
+		64:  true,
+		80:  true,
+		112: true,
+		116: true,
+		120: true,
+		125: true,
+	}
+	if !allowedQn[qn] {
 		logWarn("不支持的清晰度 qn=%d，回退到 32", qn)
 		qn = 32
 	}
 
-	logInfo("获取播放地址 aid=%d cid=%d qn=%d", aid, cid, qn)
+	logInfo("获取播放地址 aid=%d cid=%d qn=%d fnval=%d platform=%s", aid, cid, qn, fnval, platform)
 	return c.wbiRequest("https://api.bilibili.com/x/player/wbi/playurl", map[string]string{
 		"avid":     strconv.Itoa(aid),
 		"cid":      strconv.Itoa(cid),
@@ -829,8 +882,8 @@ if !allowedQn[qn] {
 		"otype":    "json",
 		"fourk":    "1",
 		"fnver":    "0",
-		"fnval":    "4048",
-		"platform": "html5",
+		"fnval":    strconv.Itoa(fnval),
+		"platform": platform,
 	}, "GET")
 }
 
@@ -867,6 +920,84 @@ func (c *BilibiliClient) GetRecommend(freshType int) (json.RawMessage, error) {
 	return c.wbiRequest("https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd", map[string]string{
 		"fresh_type": strconv.Itoa(freshType),
 	}, "GET")
+}
+
+func (c *BilibiliClient) GetRecentHistory(max, viewAt int) (json.RawMessage, error) {
+	logInfo("获取最近观看 max=%d view_at=%d", max, viewAt)
+	params := map[string]string{}
+	if max > 0 {
+		params["max"] = strconv.Itoa(max)
+	}
+	if viewAt > 0 {
+		params["view_at"] = strconv.Itoa(viewAt)
+	}
+	params["business"] = "archive"
+	return c.request("https://api.bilibili.com/x/web-interface/history/cursor", params, "GET")
+}
+
+func (c *BilibiliClient) GetFavoriteFolders(mid int) (json.RawMessage, error) {
+	logInfo("获取收藏夹列表 mid=%d", mid)
+	return c.request("https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
+		"up_mid": strconv.Itoa(mid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) GetFavoriteResources(mediaId, pn, ps int) (json.RawMessage, error) {
+	logInfo("获取收藏夹内容 media_id=%d pn=%d ps=%d", mediaId, pn, ps)
+	return c.request("https://api.bilibili.com/x/v3/fav/resource/list", map[string]string{
+		"media_id": strconv.Itoa(mediaId),
+		"pn":       strconv.Itoa(pn),
+		"ps":       strconv.Itoa(ps),
+		"order":    "mtime",
+		"type":     "0",
+	}, "GET")
+}
+
+func (c *BilibiliClient) GetFavoriteStatus(aid int) (json.RawMessage, error) {
+	logInfo("获取收藏状态 aid=%d", aid)
+	return c.request("https://api.bilibili.com/x/v2/fav/video/favoured", map[string]string{
+		"aid": strconv.Itoa(aid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+
+	addMedia := ""
+	delMedia := ""
+	if add {
+		addMedia = strconv.Itoa(mediaId)
+	} else {
+		delMedia = strconv.Itoa(mediaId)
+	}
+
+	return c.request("https://api.bilibili.com/x/v3/fav/resource/deal", map[string]string{
+		"rid":           strconv.Itoa(aid),
+		"type":          "2",
+		"add_media_ids": addMedia,
+		"del_media_ids": delMedia,
+		"csrf":          biliJct,
+	}, "POST")
+}
+
+func (c *BilibiliClient) ReportHeartbeat(aid, cid int, bvid string, playedTime int) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+	params := map[string]string{
+		"aid":         strconv.Itoa(aid),
+		"cid":         strconv.Itoa(cid),
+		"bvid":        bvid,
+		"played_time": strconv.Itoa(playedTime),
+		"real_played_time": strconv.Itoa(playedTime),
+		"start_ts":    strconv.FormatInt(time.Now().Unix(), 10),
+		"csrf":        biliJct,
+	}
+	return c.request("https://api.bilibili.com/x/click-interface/web/heartbeat", params, "POST")
 }
 
 // ==================== HTTP 辅助函数 ====================
@@ -1036,6 +1167,12 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/login/info - 登录信息",
 				"/hot/search - 热搜",
 				"/recommend - 首页推荐",
+				"/history/recent - 最近观看",
+                "/player/heartbeat - 回调心跳",
+			    "/fav/folder/list - 收藏夹列表",
+    			"/fav/resource/list - 收藏夹内容",
+	    		"/fav/status - 收藏状态",
+		    	"/fav/toggle - 收藏切换",
 			},
 		},
 	})
@@ -1152,11 +1289,76 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
+	fnval, err := intParam(r.URL.Query().Get("fnval"), 0, 1, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	platform := r.URL.Query().Get("platform")
 	client := getClient()
-	result, err := client.GetPlayUrl(aid, cid, qn)
+	result, err := client.GetPlayUrl(aid, cid, qn, fnval, platform)
 	if err != nil {
 		logError("处理 /video/playurl 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
+		return
+	}
+
+	// 过滤不可观看的清晰度（以 accept_quality 为主，结合 support_formats 限制）
+	var resp map[string]interface{}
+	if err := json.Unmarshal(result, &resp); err == nil {
+		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
+			if data, ok := resp["data"].(map[string]interface{}); ok {
+				allowed := make(map[int]bool)
+
+				// 先以 accept_quality 为主
+				if aq, ok := data["accept_quality"].([]interface{}); ok {
+					for _, v := range aq {
+						qf, _ := v.(float64)
+						if int(qf) > 0 {
+							allowed[int(qf)] = true
+						}
+					}
+				}
+
+				// 再用 support_formats 的限制条件剔除不可观看清晰度
+				if sf, ok := data["support_formats"].([]interface{}); ok {
+					filtered := make([]interface{}, 0)
+					for _, v := range sf {
+						obj, _ := v.(map[string]interface{})
+						q, _ := obj["quality"].(float64)
+						canWatch, _ := obj["can_watch_qn_reason"].(float64)
+						limit, _ := obj["limit_watch_reason"].(float64)
+						if int(q) <= 0 {
+							continue
+						}
+						if int(canWatch) != 0 || int(limit) != 0 {
+							delete(allowed, int(q))
+							continue
+						}
+						filtered = append(filtered, obj)
+					}
+					data["support_formats"] = filtered
+				}
+
+				// 重建 accept_quality（保持原顺序）
+				if aq, ok := data["accept_quality"].([]interface{}); ok {
+					newAq := make([]interface{}, 0)
+					for _, v := range aq {
+						qf, _ := v.(float64)
+						if allowed[int(qf)] {
+							newAq = append(newAq, v)
+						}
+					}
+					if len(newAq) > 0 {
+						data["accept_quality"] = newAq
+					}
+				}
+			}
+		}
+	}
+
+	if len(resp) > 0 {
+		writeJSON(w, 200, resp)
 		return
 	}
 	writeJSON(w, 200, wrapResult(result))
@@ -1315,6 +1517,16 @@ func handleLoginInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	client := getClient()
+	client.ClearAuth()
+	writeJSON(w, 200, map[string]interface{}{
+		"code":    0,
+		"message": "logout",
+		"data":    nil,
+	})
+}
+
 func handleHotSearch(w http.ResponseWriter, r *http.Request) {
 	limit, err := intParam(r.URL.Query().Get("limit"), 1, 10, true)
 	if err != nil {
@@ -1341,6 +1553,211 @@ func handleRecommend(w http.ResponseWriter, r *http.Request) {
 	result, err := client.GetRecommend(freshType)
 	if err != nil {
 		logError("处理 /recommend 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
+	maxVal, err := intParam(r.URL.Query().Get("max"), 0, 0, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	viewAt, err := intParam(r.URL.Query().Get("view_at"), 0, 0, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	client := getClient()
+	result, err := client.GetRecentHistory(maxVal, viewAt)
+	if err != nil {
+		logError("处理 /history/recent 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	playedTime, err := intParam(r.URL.Query().Get("played_time"), 0, 0, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+	if bvid == "" {
+		writeError(w, 400, "bvid 为必填参数")
+		return
+	}
+
+	client := getClient()
+	result, err := client.ReportHeartbeat(aid, cid, bvid, playedTime)
+	if err != nil {
+		logError("处理 /player/heartbeat 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
+	mid, err := intParam(r.URL.Query().Get("mid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if mid == 0 {
+		logWarn("mid 缺失")
+		writeError(w, 400, "mid 为必填参数")
+		return
+	}
+	client := getClient()
+	result, err := client.GetFavoriteFolders(mid)
+	if err != nil {
+		logError("处理 /fav/folder/list 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleFavResourceList(w http.ResponseWriter, r *http.Request) {
+	mediaId, err := intParam(r.URL.Query().Get("media_id"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if mediaId == 0 {
+		logWarn("media_id 缺失")
+		writeError(w, 400, "media_id 为必填参数")
+		return
+	}
+	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	client := getClient()
+	result, err := client.GetFavoriteResources(mediaId, pn, ps)
+	if err != nil {
+		logError("处理 /fav/resource/list 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleFavStatus(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	client := getClient()
+	result, err := client.GetFavoriteStatus(aid)
+	if err != nil {
+		logError("处理 /fav/status 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleFavToggle(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	action := r.URL.Query().Get("action")
+	add := action != "0"
+
+	mediaId, err := intParam(r.URL.Query().Get("media_id"), 1, 0, true)
+	if err != nil {
+		mediaId = 0
+	}
+
+	client := getClient()
+	if mediaId <= 0 {
+		// 未指定收藏夹时，回退到默认收藏夹
+		loginRaw, err := client.GetLoginInfo()
+		if err != nil {
+			logError("获取登录信息失败: %s", err.Error())
+			writeError(w, 500, err.Error())
+			return
+		}
+		var loginResp map[string]interface{}
+		if err := json.Unmarshal(loginRaw, &loginResp); err != nil {
+			writeError(w, 500, "登录信息解析失败")
+			return
+		}
+		data, _ := loginResp["data"].(map[string]interface{})
+		midF, _ := data["mid"].(float64)
+		mid := int(midF)
+		if mid <= 0 {
+			writeError(w, 401, "未登录")
+			return
+		}
+
+		foldersRaw, err := client.GetFavoriteFolders(mid)
+		if err != nil {
+			logError("获取收藏夹失败: %s", err.Error())
+			writeError(w, 500, err.Error())
+			return
+		}
+		var favResp map[string]interface{}
+		if err := json.Unmarshal(foldersRaw, &favResp); err != nil {
+			writeError(w, 500, "收藏夹解析失败")
+			return
+		}
+		favData, _ := favResp["data"].(map[string]interface{})
+		list, _ := favData["list"].([]interface{})
+		if len(list) == 0 {
+			writeError(w, 500, "未找到收藏夹")
+			return
+		}
+		first, _ := list[0].(map[string]interface{})
+		fidF, _ := first["id"].(float64)
+		if fidF == 0 {
+			fidF, _ = first["fid"].(float64)
+		}
+		mediaId = int(fidF)
+		if mediaId <= 0 {
+			writeError(w, 500, "收藏夹ID无效")
+			return
+		}
+	}
+
+	result, err := client.ToggleFavorite(aid, add, mediaId)
+	if err != nil {
+		logError("处理 /fav/toggle 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
 		return
 	}
@@ -1521,8 +1938,15 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/comments", handleVideoComments)
 	mux.HandleFunc("/user/info", handleUserInfo)
 	mux.HandleFunc("/login/info", handleLoginInfo)
+	mux.HandleFunc("/logout", handleLogout)
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
+	mux.HandleFunc("/history/recent", handleRecentHistory)
+	mux.HandleFunc("/player/heartbeat", handlePlayerHeartbeat)
+	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
+	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
+	mux.HandleFunc("/fav/status", handleFavStatus)
+	mux.HandleFunc("/fav/toggle", handleFavToggle)
 	mux.HandleFunc("/qrcode/generate", handleQrcodeGenerate)
 	mux.HandleFunc("/qrcode/poll", handleQrcodePoll)
 }
@@ -1593,6 +2017,12 @@ func main() {
 	fmt.Println("  GET  /login/info       - 登录信息")
 	fmt.Println("  GET  /hot/search       - 热搜榜")
 	fmt.Println("  GET  /recommend        - 首页推荐")
+	fmt.Println("  GET  /history/recent   - 最近观看")
+    fmt.Println("  GET  /player/heartbeat - 回调心跳")
+	fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
+	fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
+	fmt.Println("  GET  /fav/status       - 收藏状态")
+	fmt.Println("  GET  /fav/toggle       - 收藏切换")
 	fmt.Println("  GET  /qrcode/generate  - 生成登录二维码")
 	fmt.Println("  GET  /qrcode/poll      - 轮询二维码状态")
 	fmt.Println(strings.Repeat("=", 60))

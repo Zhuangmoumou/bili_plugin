@@ -56,6 +56,16 @@ struct VideoPartItem {
     int duration = 0;
 };
 
+struct FavoriteFolderItem {
+    qint64 id = 0;
+    qint64 fid = 0;
+    QString title;
+    QString cover;
+    int mediaCount = 0;
+    QString intro;
+    int attr = 0;
+};
+
 // ============ Model 基类 ============
 
 class VideoListModel : public QAbstractListModel
@@ -273,4 +283,49 @@ signals:
 
 private:
     QVector<VideoPartItem> m_items;
+};
+
+// ============ 收藏夹列表模型 ============
+
+class FavoriteFolderModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+
+public:
+    enum Roles {
+        IdRole = Qt::UserRole + 1,
+        FidRole,
+        TitleRole,
+        CoverRole,
+        MediaCountRole,
+        IntroRole,
+        AttrRole
+    };
+    Q_ENUM(Roles)
+
+    explicit FavoriteFolderModel(QObject *parent = nullptr);
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    int count() const;
+    bool loading() const;
+
+    Q_INVOKABLE void clear();
+    void setItems(const QVector<FavoriteFolderItem> &items);
+    void setLoading(bool loading);
+    void updateCover(qint64 id, const QString &cover);
+
+    static FavoriteFolderItem parseFavoriteFolderItem(const QJsonObject &obj);
+
+signals:
+    void countChanged();
+    void loadingChanged();
+
+private:
+    QVector<FavoriteFolderItem> m_items;
+    bool m_loading = false;
 };

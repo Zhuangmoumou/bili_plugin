@@ -24,13 +24,17 @@ Rectangle {
     property string detailBvid: ""
     property string lastPage: "home"
     property bool _animating: false
+    property real rankingPageX: 0
+    property bool restoreRankingPageOnShow: false
 
     // 播放清晰度（由详情页选择）
     property int playQualitySelected: 16
 
-    // 首页推荐列表滚动位置缓存（仅从详情页返回时恢复）
+    // 首页列表滚动位置缓存（仅从详情页返回时恢复）
     property real homePopularX: 0
+    property real homeRankingX: 0
     property bool restoreHomePopularOnShow: false
+    property bool restoreHomeRankingOnShow: false
 
     // 首页 Tab 记录（0=推荐,1=排行,3=我的）
     property int homeTabIndex: 0
@@ -39,6 +43,7 @@ Rectangle {
         if (_animating) return;
         var newStack = pageStack.slice(0); // Create a copy
         newStack.push(currentPage);
+        console.log("[navigateTo] from=", currentPage, "to=", page, "stack=", JSON.stringify(newStack));
         pageStack = newStack; // Assign the new array
         lastPage = currentPage;
         if (props) {
@@ -52,41 +57,43 @@ Rectangle {
     function goBack() {
         if (_animating) return;
 
-        // 优先处理从评论页返回到详情页，避免误触发退出
-        if (currentPage === "comments" && detailBvid.length > 0) {
-            _animating = true;
-            currentPage = "detail";
-            pageTransitionBack.restart();
-            return;
-        }
+        console.log("[goBack] currentPage=", currentPage,
+                    "stack=", JSON.stringify(pageStack),
+                    "lastPage=", lastPage,
+                    "animating=", _animating);
 
         if (pageStack.length > 0) {
             var newStack = pageStack.slice(0); // Create a copy
             var prev = newStack.pop();
             var fromPage = currentPage;
+            console.log("[goBack] pop prev=", prev, "newStack=", JSON.stringify(newStack));
             pageStack = newStack; // Assign the new array
             _animating = true;
             currentPage = prev;
 
-            // 从详情页返回首页时恢复推荐列表滚动位置
-            if (fromPage === "detail" && prev === "home") {
-                restoreHomePopularOnShow = true;
+            // 从详情页返回时恢复对应页面滚动位置
+            if (fromPage === "detail") {
+                if (prev === "home") {
+                    if (root.homeTabIndex === 0) {
+                        restoreHomePopularOnShow = true;
+                    } else if (root.homeTabIndex === 1) {
+                        restoreHomeRankingOnShow = true;
+                    }
+                } else if (prev === "ranking") {
+                    restoreRankingPageOnShow = true;
+                }
             }
 
             pageTransitionBack.restart();
         } else {
-            if (currentPage === "comments" && detailBvid.length > 0) {
-                _animating = true;
-                currentPage = "detail";
-                pageTransitionBack.restart();
-                return;
-            }
+            console.log("[goBack] stack empty, currentPage=", currentPage);
             if (currentPage !== "home") {
                 _animating = true;
-                currentPage = lastPage && lastPage !== currentPage ? lastPage : "home";
+                currentPage = "home";
                 pageTransitionBack.restart();
                 return;
             }
+            console.log("[goBack] triggering plugin exit");
             backButtonClicked();
         }
     }
@@ -141,7 +148,8 @@ Rectangle {
         // ── 页面加载器 ──
         Loader {
             id: homeLoader
-            active: currentPage === "home"
+            active: true
+            visible: currentPage === "home"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.HomePage {
@@ -153,6 +161,8 @@ Rectangle {
                         if (!bvid || bvid.length < 2) return;
                         if (homeLoader.item) {
                             root.homePopularX = homeLoader.item.popularContentX();
+                            root.homeRankingX = homeLoader.item.rankingContentX();
+                            root.homeTabIndex = homeLoader.item.tabIndex;
                         }
                         Qt.callLater(function() {
                             root.navigateTo("detail", { bvid: bvid })
@@ -160,6 +170,7 @@ Rectangle {
                     }
                     onSearchRequested: root.navigateTo("search")
                     onLoginRequested: root.navigateTo("user")
+                    onRankingRequested: root.navigateTo("ranking")
                 }
             }
         }
@@ -188,7 +199,8 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "detail"
+            active: currentPage === "detail" || currentPage === "player" || currentPage === "comments"
+            visible: currentPage === "detail"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.VideoDetailPage {
@@ -229,14 +241,21 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "ranking"
+            id: rankingLoader
+            // 在排行榜页或从排行榜进入详情页时保持实例
+            active: currentPage === "ranking" || (currentPage === "detail" && lastPage === "ranking")
+            visible: currentPage === "ranking"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.RankingPage {
                     controller: root.rootController
+                    rootRef: root
                     onBackClicked: root.goBack()
                     onVideoSelected: {
                         if (!bvid || bvid.length < 2) return;
+                        if (rankingLoader.item) {
+                            root.rankingPageX = rankingLoader.item.contentXValue();
+                        }
                         Qt.callLater(function() {
                             root.navigateTo("detail", { bvid: bvid })
                         });
@@ -246,12 +265,20 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "user"
+            // 仅在用户页或从用户页进入详情时保持实例
+            active: currentPage === "user" || (currentPage === "detail" && lastPage === "user")
+            visible: currentPage === "user"
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.UserPage {
                     controller: root.rootController
                     onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
                 }
             }
         }

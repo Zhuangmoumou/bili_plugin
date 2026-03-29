@@ -151,8 +151,28 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.bvid = obj.value("bvid").toString();
     item.title = obj.value("title").toString();
     item.pic = obj.value("pic").toString();
+    if (item.pic.isEmpty()) item.pic = obj.value("cover").toString();
     item.desc = obj.value("desc").toString();
-    item.duration = obj.value("duration").toInt();
+
+    // duration 可能是数字字符串，或 mm:ss / hh:mm:ss
+    if (obj.value("duration").isString()) {
+        QString durationStr = obj.value("duration").toString().trimmed();
+        if (durationStr.contains(':')) {
+            QStringList parts = durationStr.split(':');
+            if (parts.size() == 2) {
+                item.duration = parts[0].toInt() * 60 + parts[1].toInt();
+            } else if (parts.size() == 3) {
+                item.duration = parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt();
+            } else {
+                item.duration = 0;
+            }
+        } else {
+            item.duration = durationStr.toInt();
+        }
+    } else {
+        item.duration = obj.value("duration").toInt();
+    }
+
     item.cid = obj.value("cid").toVariant().toLongLong();
     item.pubdate = obj.value("pubdate").toVariant().toLongLong();
 
@@ -173,6 +193,7 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
 
     QJsonObject owner = obj.value("owner").toObject();
     item.ownerName = owner.value("name").toString();
+    if (item.ownerName.isEmpty()) item.ownerName = obj.value("author").toString();
     item.ownerFace = owner.value("face").toString();
     item.ownerMid = owner.value("mid").toVariant().toLongLong();
 
@@ -183,6 +204,39 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.coins = stat.value("coin").toVariant().toLongLong();
     item.favorites = stat.value("favorite").toVariant().toLongLong();
     item.replies = stat.value("reply").toVariant().toLongLong();
+
+    auto parseCountString = [](const QString &s) -> qint64 {
+        QString t = s;
+        t.remove(',');
+        if (t.contains("万")) {
+            bool ok = false;
+            double v = t.left(t.indexOf("万")).toDouble(&ok);
+            return ok ? static_cast<qint64>(v * 10000) : 0;
+        }
+        if (t.contains("亿")) {
+            bool ok = false;
+            double v = t.left(t.indexOf("亿")).toDouble(&ok);
+            return ok ? static_cast<qint64>(v * 100000000) : 0;
+        }
+        bool ok = false;
+        qint64 v = t.toLongLong(&ok);
+        return ok ? v : 0;
+    };
+
+    // 搜索结果常用字段: play / video_review / view
+    if (item.views <= 0) {
+        if (obj.value("play").isString()) {
+            item.views = parseCountString(obj.value("play").toString());
+        } else {
+            item.views = obj.value("play").toVariant().toLongLong();
+        }
+    }
+    if (item.views <= 0) {
+        item.views = obj.value("view").toVariant().toLongLong();
+    }
+    if (item.danmaku <= 0) {
+        item.danmaku = obj.value("video_review").toVariant().toLongLong();
+    }
 
     QJsonObject rcmd = obj.value("rcmd_reason").toObject();
     item.rcmdReason = rcmd.value("content").toString();
@@ -485,5 +539,108 @@ VideoPartItem VideoPartListModel::parseVideoPartItem(const QJsonObject &obj)
     item.page = obj.value("page").toInt();
     item.part = obj.value("part").toString();
     item.duration = obj.value("duration").toInt();
+    return item;
+}
+
+// ============ FavoriteFolderModel ============
+
+FavoriteFolderModel::FavoriteFolderModel(QObject *parent)
+    : QAbstractListModel(parent)
+    , m_loading(false)
+{
+}
+
+int FavoriteFolderModel::rowCount(const QModelIndex &parent) const
+{
+    Q_UNUSED(parent)
+    return m_items.count();
+}
+
+QVariant FavoriteFolderModel::data(const QModelIndex &index, int role) const
+{
+    if (index.row() < 0 || index.row() >= m_items.count())
+        return QVariant();
+
+    const FavoriteFolderItem &item = m_items[index.row()];
+
+    switch (role) {
+    case IdRole: return item.id;
+    case FidRole: return item.fid;
+    case TitleRole: return item.title;
+    case CoverRole: return item.cover;
+    case MediaCountRole: return item.mediaCount;
+    case IntroRole: return item.intro;
+    case AttrRole: return item.attr;
+    default: return QVariant();
+    }
+}
+
+QHash<int, QByteArray> FavoriteFolderModel::roleNames() const
+{
+    return {
+        {IdRole, "id"},
+        {FidRole, "fid"},
+        {TitleRole, "title"},
+        {CoverRole, "cover"},
+        {MediaCountRole, "mediaCount"},
+        {IntroRole, "intro"},
+        {AttrRole, "attr"}
+    };
+}
+
+int FavoriteFolderModel::count() const { return m_items.count(); }
+
+bool FavoriteFolderModel::loading() const { return m_loading; }
+
+void FavoriteFolderModel::clear()
+{
+    beginResetModel();
+    m_items.clear();
+    endResetModel();
+    emit countChanged();
+}
+
+void FavoriteFolderModel::setItems(const QVector<FavoriteFolderItem> &items)
+{
+    beginResetModel();
+    m_items = items;
+    endResetModel();
+    emit countChanged();
+}
+
+void FavoriteFolderModel::setLoading(bool loading)
+{
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit loadingChanged();
+    }
+}
+
+void FavoriteFolderModel::updateCover(qint64 id, const QString &cover)
+{
+    if (cover.isEmpty()) return;
+    for (int i = 0; i < m_items.size(); ++i) {
+        if (m_items[i].id == id || m_items[i].fid == id) {
+            if (m_items[i].cover == cover) return;
+            m_items[i].cover = cover;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {CoverRole});
+            return;
+        }
+    }
+}
+
+FavoriteFolderItem FavoriteFolderModel::parseFavoriteFolderItem(const QJsonObject &obj)
+{
+    FavoriteFolderItem item;
+    item.id = obj.value("id").toVariant().toLongLong();
+    item.fid = obj.value("fid").toVariant().toLongLong();
+    if (item.id == 0) item.id = item.fid;
+    if (item.fid == 0) item.fid = item.id;
+    item.title = obj.value("title").toString();
+    item.cover = obj.value("cover").toString();
+    item.mediaCount = obj.value("media_count").toInt();
+    item.intro = obj.value("intro").toString();
+    item.attr = obj.value("attr").toInt();
     return item;
 }

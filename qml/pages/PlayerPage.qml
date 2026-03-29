@@ -1,5 +1,4 @@
 import QtQuick 2.12
-import FFmpegPlayer 1.0      // ← 替换 QtMultimedia
 import BiliPlugin 1.0
 import "../components" as Components
 import ".."
@@ -19,9 +18,6 @@ Rectangle {
     signal backClicked()
 
     property bool controlsVisible: true
-    property bool isPlaying: false
-    property real playProgress: 0.0
-    property bool progressDragActive: false
 
     readonly property int btnSize: 36
     readonly property int iconSize: 20
@@ -29,9 +25,20 @@ Rectangle {
     readonly property color accentColor: "#00A1D6"
     readonly property string fontFamily: "Microsoft YaHei"
 
+    property bool launchRequested: false
+    property bool launchLocked: false
+
+    function launchExternalPlayer(path) {
+        if (!path || path.length === 0) return;
+        if (launchRequested || launchLocked) return;
+        launchRequested = true;
+        launchLocked = true;
+        launchLockTimer.restart();
+        if (controller) controller.launchExternalPlayer(path);
+    }
+
     // ══════════════════════════════════════════
-    //  第1层：视频画面（最底层 z: 0）
-    //  使用自定义 FFmpeg VideoPlayer（它自身就是渲染组件）
+    //  第1层：占位画面（最底层 z: 0）
     // ══════════════════════════════════════════
     Rectangle {
         id: videoContainer
@@ -39,69 +46,17 @@ Rectangle {
         color: "#000000"
         z: 0
 
-        VideoPlayer {
-            id: videoPlayer
-            anchors.fill: parent
-            fillMode: VideoPlayer.PreserveAspectFit
-
-            source: ""
-
-            onSourceChanged: {
-                var sourceStr = source.toString();
-                if (sourceStr.length > 0 && sourceStr !== previousSource) {
-                    console.log("[Player] 开始播放:", sourceStr);
-                    previousSource = sourceStr;
-                    play();
-                }
-            }
-
-            onPlaybackStateChanged: {
-                isPlaying = (playbackState === VideoPlayer.PlayingState);
-                console.log("[Player] 播放状态:", playbackState);
-
-                // 播放开始时隐藏错误和占位
-                if (playbackState === VideoPlayer.PlayingState) {
-                    errorText.visible = false;
-                    placeholderText.visible = false;
-                }
-            }
-
-            onPositionChanged: {
-                if (!progressDragActive && duration > 0) {
-                    playProgress = position / duration;
-                }
-            }
-
-            onErrorOccurred: {
-                console.log("[Player] 错误:", error);
-                errorText.text = error;
-                errorText.visible = true;
-            }
-
-            onDurationChanged: {
-                console.log("[Player] 时长:", duration, "秒");
-            }
-        }
-
         Connections {
             target: controller
 
             function onDownloadStateChanged() {
-                // 下载完成且有临时文件路径时，设置播放源
-                if (controller && !controller.isDownloading &&
-                    controller.tempVideoPath && controller.tempVideoPath.length > 0) {
-
-                    var path = controller.tempVideoPath;
-                if (path.indexOf("://") === -1) {
-                    path = "file://" + path;
-                }
-
-                // 只有当 source 为空或不同时才更新（避免重复设置）
-                if (videoPlayer.source.toString() !== path) {
-                    console.log("[Player] 下载完成，设置播放源:", path);
-                    videoPlayer.source = path;
-                }
+                // 下载完成且有临时文件路径时，启动外部播放器
+                if (controller && !controller.isDownloading) {
+                    if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
+                        controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
+                        controller.launchExternalPlayerWithAudioUrl(controller.dashVideoUrl, controller.dashAudioUrl);
                     }
+                }
             }
         }
 
@@ -109,24 +64,14 @@ Rectangle {
         Text {
             id: placeholderText
             anchors.centerIn: parent
-            visible: {
-                if (!videoPlayer.source || videoPlayer.source.toString().length === 0)
-                    return true;
-                if (videoPlayer.playbackState === VideoPlayer.StoppedState &&
-                    videoPlayer.duration <= 0)
-                    return true;
-                return false;
-            }
+            visible: true
             text: {
-                // ══════════════════════════════════════════
-                //  根据下载状态显示不同提示
-                // ══════════════════════════════════════════
                 if (controller) {
                     if (controller.isDownloading)
                         return "正在下载视频...";
                     if (controller.tempVideoPath && controller.tempVideoPath.length > 0)
-                        return "加载中...";
-                    return "正在获取播放地址...";
+                        return "已启动外部播放器";
+                    return "点击播放按钮以开始";
                 }
                 return "正在初始化...";
             }
@@ -135,19 +80,6 @@ Rectangle {
             font.pixelSize: 13
             horizontalAlignment: Text.AlignHCenter
             lineHeight: 1.4
-        }
-
-        // 错误提示
-        Text {
-            id: errorText
-            anchors.centerIn: parent
-            visible: false
-            color: "#FF6666"
-            font.family: fontFamily
-            font.pixelSize: 12
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            width: parent.width - 40
         }
     }
 
@@ -224,7 +156,6 @@ Rectangle {
                     id: backBtnArea
                     anchors.fill: parent
                     onClicked: {
-                        videoPlayer.stop();
                         playerPage.backClicked();
                     }
                 }
@@ -284,32 +215,21 @@ Rectangle {
                         anchors.centerIn: parent
                         width: iconSize
                         height: iconSize
-                        property bool playing: isPlaying
-                        onPlayingChanged: requestPaint()
+                        property bool playing: false
                         onPaint: {
                             var ctx = getContext("2d");
                             ctx.clearRect(0, 0, width, height);
                             ctx.fillStyle = "#FFFFFF";
-                            if (playing) {
-                                var barWidth = 5;
-                                var barH = 16;
-                                var gap = 5;
-                                var startX = (width - barWidth * 2 - gap) / 2;
-                                var startY = (height - barH) / 2;
-                                ctx.fillRect(startX, startY, barWidth, barH);
-                                ctx.fillRect(startX + barWidth + gap, startY, barWidth, barH);
-                            } else {
-                                var triWidth = 14;
-                                var triHeight = 16;
-                                var offsetX = (width - triWidth) / 2 + 2;
-                                var offsetY = (height - triHeight) / 2;
-                                ctx.beginPath();
-                                ctx.moveTo(offsetX, offsetY);
-                                ctx.lineTo(offsetX, offsetY + triHeight);
-                                ctx.lineTo(offsetX + triWidth, offsetY + triHeight / 2);
-                                ctx.closePath();
-                                ctx.fill();
-                            }
+                            var triWidth = 14;
+                            var triHeight = 16;
+                            var offsetX = (width - triWidth) / 2 + 2;
+                            var offsetY = (height - triHeight) / 2;
+                            ctx.beginPath();
+                            ctx.moveTo(offsetX, offsetY);
+                            ctx.lineTo(offsetX, offsetY + triHeight);
+                            ctx.lineTo(offsetX + triWidth, offsetY + triHeight / 2);
+                            ctx.closePath();
+                            ctx.fill();
                         }
                         Component.onCompleted: requestPaint()
                     }
@@ -319,7 +239,22 @@ Rectangle {
                     id: playBtnArea
                     anchors.fill: parent
                     onClicked: {
-                        videoPlayer.togglePlayPause();  // ← 使用新方法
+                        if (launchLocked) {
+                            if (controller) controller.toastMessage("请勿重复点击，5秒后可再次启动");
+                            return;
+                        }
+
+                        launchLocked = true;
+                        launchLockTimer.restart();
+
+                        if (controller) controller.toastMessage("正在启动播放器，不要多次点击，请稍等...");
+                        if (controller && controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
+                            controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
+                            launchRequested = false;
+                            controller.launchExternalPlayerWithAudioUrl(controller.dashVideoUrl, controller.dashAudioUrl);
+                        } else {
+                            if (controller) controller.fetchPlayUrl(playQuality);
+                        }
                         hideControlsTimer.restart();
                     }
                 }
@@ -327,104 +262,14 @@ Rectangle {
 
             Text {
                 id: currentTimeText
-                text: formatTime(videoPlayer.position)  // ← 直接使用秒
+                text: "--:--"
                 color: "#FFFFFF"
                 font.family: fontFamily
                 font.pixelSize: 12
                 anchors.verticalCenter: parent.verticalCenter
                 width: 32
-                function formatTime(seconds) {
-                    var mins = Math.floor(seconds / 60);
-                    var secs = Math.floor(seconds % 60);
-                    return mins + ":" + (secs < 10 ? "0" : "") + secs;
-                }
             }
 
-            Item {
-                id: progressArea
-                width: parent.width - btnSize - currentTimeText.width - totalTimeText.width - 46
-                height: btnSize
-                anchors.verticalCenter: parent.verticalCenter
-
-                Rectangle {
-                    id: progressTrack
-                    width: parent.width
-                    height: 6
-                    radius: 3
-                    color: Qt.rgba(1, 1, 1, 0.3)
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    Rectangle {
-                        width: parent.width * playProgress
-                        height: parent.height
-                        radius: 3
-                        color: accentColor
-                        Behavior on width { NumberAnimation { duration: 50 } }
-                    }
-
-                    Rectangle {
-                        id: progressHandle
-                        x: Math.max(0, Math.min(parent.width * playProgress - width / 2, parent.width - width))
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 14
-                        height: 14
-                        radius: 7
-                        color: accentColor
-                        border.color: "#FFFFFF"
-                        border.width: 2
-                        Behavior on x { NumberAnimation { duration: 50 } }
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.topMargin: -10
-                    anchors.bottomMargin: -10
-
-                    onPressed: {
-                        progressDragActive = true;
-                        var pos = Math.max(0, Math.min(mouse.x, progressTrack.width));
-                        playProgress = pos / progressTrack.width;
-                    }
-                    onPositionChanged: {
-                        if (pressed) {
-                            var pos = Math.max(0, Math.min(mouse.x, progressTrack.width));
-                            playProgress = pos / progressTrack.width;
-                        }
-                    }
-                    onReleased: {
-                        // VideoPlayer.seek() 使用秒
-                        var targetSec = playProgress * videoPlayer.duration;
-                        videoPlayer.seek(targetSec);
-                        progressDragActive = false;
-                        hideControlsTimer.restart();
-                    }
-                    onClicked: {
-                        var pos = Math.max(0, Math.min(mouse.x, progressTrack.width));
-                        playProgress = pos / progressTrack.width;
-                        var targetSec = playProgress * videoPlayer.duration;
-                        videoPlayer.seek(targetSec);
-                        progressDragActive = false;
-                        hideControlsTimer.restart();
-                    }
-                }
-            }
-
-            Text {
-                id: totalTimeText
-                text: formatTotalTime(videoPlayer.duration)  // ← 直接使用秒
-                color: Qt.rgba(1, 1, 1, 0.7)
-                font.family: fontFamily
-                font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
-                width: 32
-                function formatTotalTime(seconds) {
-                    if (seconds <= 0) return "0:00";
-                    var mins = Math.floor(seconds / 60);
-                    var secs = Math.floor(seconds % 60);
-                    return mins + ":" + (secs < 10 ? "0" : "") + secs;
-                }
-            }
         }
     }
 
@@ -501,23 +346,20 @@ Rectangle {
         onTriggered: controlsVisible = false
     }
 
-    onIsPlayingChanged: {
-        if (isPlaying) {
-            hideControlsTimer.restart();
-        } else {
-            hideControlsTimer.stop();
-            controlsVisible = true;
-        }
+    Timer {
+        id: launchLockTimer
+        interval: 5000
+        repeat: false
+        onTriggered: launchLocked = false
     }
 
+
     Component.onCompleted: {
-        if (controller) controller.downloadAndPlay(playQuality);
+        if (controller) controller.fetchPlayUrl(playQuality);
         hideControlsTimer.start();
     }
 
     Component.onDestruction: {
-        videoPlayer.stop();
-        videoPlayer.source = "";
         if (controller) controller.cleanupTempVideo();
     }
 }

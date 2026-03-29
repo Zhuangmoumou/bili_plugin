@@ -10,9 +10,20 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
+    property var rootRef: null
 
     signal backClicked()
     signal videoSelected(string bvid)
+
+    function contentXValue() {
+        return rankList ? rankList.contentX : 0
+    }
+
+    function restoreContentX(x) {
+        if (rankList) {
+            Qt.callLater(function() { rankList.contentX = x; })
+        }
+    }
 
     Components.TitleBar {
         id: titleBar
@@ -45,8 +56,15 @@ Rectangle {
                 ListElement { name: "动画"; rid: 1 }
                 ListElement { name: "音乐"; rid: 3 }
                 ListElement { name: "游戏"; rid: 4 }
-                ListElement { name: "科技"; rid: 36 }
+                ListElement { name: "娱乐"; rid: 5 }
+                ListElement { name: "鬼畜"; rid: 119 }
+                ListElement { name: "国创"; rid: 168 }
+                ListElement { name: "科技"; rid: 188 }
+                ListElement { name: "知识"; rid: 36 }
                 ListElement { name: "生活"; rid: 160 }
+                ListElement { name: "美食"; rid: 211 }
+                ListElement { name: "运动"; rid: 234 }
+                ListElement { name: "影视"; rid: 181 }
             }
 
             delegate: Rectangle {
@@ -139,6 +157,17 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        if (controller) controller.fetchRanking(0);
+        if (controller) controller.fetchRanking(categoryBar.selectedRid);
+        if (rootRef && rootRef.restoreRankingPageOnShow) {
+            restoreContentX(rootRef.rankingPageX)
+            rootRef.restoreRankingPageOnShow = false
+        }
+    }
+
+    onVisibleChanged: {
+        if (visible && rootRef && rootRef.restoreRankingPageOnShow) {
+            restoreContentX(rootRef.rankingPageX)
+            rootRef.restoreRankingPageOnShow = false
+        }
     }
 }

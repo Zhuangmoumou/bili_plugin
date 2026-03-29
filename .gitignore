@@ -1,3 +1,6 @@
 .xmake
 build
 go_server/server
+bili_plugin.zip
+go_server/cookies.json
+go_server/rust

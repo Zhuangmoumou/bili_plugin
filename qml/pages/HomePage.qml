@@ -17,6 +17,7 @@ Rectangle {
     signal videoSelected(string bvid)
     signal searchRequested()
     signal loginRequested()
+    signal rankingRequested()
 
     // ── 内容区状态 ──
     property int tabIndex: 0
@@ -26,6 +27,11 @@ Rectangle {
 
     function switchTab(index) {
         // index: 0=推荐, 1=排行, 2=搜索, 3=我的
+        if (index === 1) {
+            rankingRequested()
+            return
+        }
+
         if (index === 2) {
             searchRequested()
             return
@@ -33,10 +39,8 @@ Rectangle {
 
         // 已登录时，点击“我的”直接进入 UserPage
         if (index === 3) {
-            if (controller && controller.loggedIn) {
-                loginRequested()
-                return
-            }
+            loginRequested()
+            return
         }
 
         // 只有在“推荐”页内再次点击时才刷新
@@ -56,10 +60,6 @@ Rectangle {
         tabIndex = index
         if (rootRef) rootRef.homeTabIndex = tabIndex
 
-        if (index === 1 && controller) {
-            var rm = controller.rankingModel()
-            if (rm && rm.count === 0) controller.fetchRanking()
-        }
     }
 
     // ── 内容区 (无标题栏，高度 = 170 - 26 = 144px) ──
@@ -202,7 +202,8 @@ Rectangle {
                             anchors.fill: parent
                             anchors.margins: 2
                             visible: controller && controller.loggedIn && source != ""
-                            source: controller && controller.userAvatar ? controller.userAvatar : ""
+                            source: controller && controller.userFace
+                            ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
                             sourceSize: Qt.size(112, 112)
                             cache: true
                             asynchronous: true
@@ -263,7 +264,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Lv" + (controller ? controller.level : 0)
+                        text: "Lv" + (controller ? controller.userLevel : 0)
                         color: Theme.primary
                         font.family: homePage.fontFamily
                         font.pixelSize: 14
@@ -271,7 +272,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "硬币: " + (controller ? controller.coins : 0)
+                        text: "硬币: " + (controller ? controller.userCoins : 0)
                         color: Theme.textSecondary
                         font.family: homePage.fontFamily
                         font.pixelSize: 10
@@ -414,9 +415,43 @@ Rectangle {
         return popularList ? popularList.contentX : 0
     }
 
+    function rankingContentX() {
+        return rankingList ? rankingList.contentX : 0
+    }
+
     function restorePopularContentX(x) {
         if (popularList) {
-            Qt.callLater(function() { popularList.contentX = x; })
+            popularList.positionViewAtIndex(0, ListView.Beginning)
+            popularList.contentX = x
+        }
+    }
+
+    function restoreRankingContentX(x) {
+        if (rankingList) {
+            rankingList.positionViewAtIndex(0, ListView.Beginning)
+            rankingList.contentX = x
+        }
+    }
+
+    function tryRestoreHomePosition() {
+        if (!rootRef) return
+        if (rootRef.restoreHomePopularOnShow && tabIndex === 0) {
+            Qt.callLater(function() {
+                restorePopularContentX(rootRef.homePopularX)
+                Qt.callLater(function() {
+                    restorePopularContentX(rootRef.homePopularX)
+                    rootRef.restoreHomePopularOnShow = false
+                })
+            })
+        }
+        if (rootRef.restoreHomeRankingOnShow && tabIndex === 1) {
+            Qt.callLater(function() {
+                restoreRankingContentX(rootRef.homeRankingX)
+                Qt.callLater(function() {
+                    restoreRankingContentX(rootRef.homeRankingX)
+                    rootRef.restoreHomeRankingOnShow = false
+                })
+            })
         }
     }
 
@@ -425,10 +460,12 @@ Rectangle {
             tabIndex = initialTabIndex
         }
         if (rootRef) rootRef.homeTabIndex = tabIndex
+        tryRestoreHomePosition()
+    }
 
-        if (rootRef && rootRef.restoreHomePopularOnShow && tabIndex === 0) {
-            restorePopularContentX(rootRef.homePopularX)
-            rootRef.restoreHomePopularOnShow = false
+    onVisibleChanged: {
+        if (visible) {
+            tryRestoreHomePosition()
         }
     }
 }

@@ -11,6 +11,46 @@ Rectangle {
 
     property var controller: null
     signal backClicked()
+    signal videoSelected(string bvid)
+
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置
+    property int favView: 0
+    property string currentFavTitle: ""
+    property int currentFavId: 0
+    property real recentHistoryContentX: 0
+    property bool restartConfirmVisible: false
+
+    function openFavorites() {
+        favView = 1
+        if (controller) controller.fetchFavoriteFolders()
+    }
+
+    function openFavoriteDetail(fid, title) {
+        currentFavId = fid
+        currentFavTitle = title
+        favView = 2
+        if (controller) controller.fetchFavoriteItems(fid, 1, 20)
+    }
+
+    function backInternal() {
+        if (favView === 2) {
+            favView = 1
+            return
+        }
+        if (favView === 1) {
+            favView = 0
+            return
+        }
+        if (favView === 3) {
+            favView = 0
+            return
+        }
+        if (favView === 4) {
+            favView = 0
+            return
+        }
+        backClicked()
+    }
 
     Component.onCompleted: {
         console.log("[UserPage] Created");
@@ -24,17 +64,21 @@ Rectangle {
         if (qrcodePollTimer) qrcodePollTimer.running = false;
         // 注意：如果已登录成功，不要取消 checkLoginStatus() 请求
         // 让用户信息能够正常加载并保存
-        if (controller && !controller.loggedIn) {
-            controller.cancelAll();
-        }
     }
 
     Components.TitleBar {
         id: titleBar
-        title: controller && controller.loggedIn ? "个人中心" : "扫码登录"
+        title: {
+            if (!controller || !controller.loggedIn) return "扫码登录"
+            if (favView === 1) return "我的收藏夹"
+            if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
+            if (favView === 3) return "最近观看"
+            if (favView === 4) return "设置"
+            return "个人中心"
+        }
         showBack: true
         anchors.top: parent.top
-        onBackClicked: userPage.backClicked()
+        onBackClicked: userPage.backInternal()
     }
 
     // ====== 未登录：二维码登录 ======
@@ -297,7 +341,7 @@ Rectangle {
         }
     }
 
-    // ====== 已登录：用户信息 ======
+    // ====== 已登录：用户信息 / 收藏夹 ======
     Item {
         visible: controller ? controller.loggedIn : false
         anchors.top: titleBar.bottom
@@ -305,98 +349,138 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
 
-        Flickable {
+        // ── 个人中心 ──
+        Item {
+            id: profileView
             anchors.fill: parent
-            anchors.margins: Theme.spacingLarge
-            contentHeight: contentColumn.height
-            clip: true
+            visible: favView === 0
 
-            Column {
-                id: contentColumn
-                width: parent.width - Theme.spacingLarge * 2
-                spacing: Theme.spacingLarge
-                anchors.horizontalCenter: parent.horizontalCenter
+            Flickable {
+                anchors.fill: parent
+                anchors.margins: Theme.spacingLarge
+                contentHeight: contentColumn.height
+                clip: true
 
-                // 头像和用户名
-                Row {
-                    width: parent.width
+                Column {
+                    id: contentColumn
+                    width: parent.width - Theme.spacingLarge * 2
                     spacing: Theme.spacingLarge
                     anchors.horizontalCenter: parent.horizontalCenter
 
-                    // 头像
-                    Rectangle {
-                        width: 60; height: 60
-                        radius: Theme.radiusRound
-                        color: Theme.bgTertiary
-                        border.color: Theme.primary
-                        border.width: 2
-                        clip: true
+                    // 头像和用户名
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingLarge
+                        anchors.horizontalCenter: parent.horizontalCenter
 
-                        Image {
-                            anchors.fill: parent
-                            anchors.margins: 2
-                            source: controller && controller.userFace
-                            ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                        }
-                    }
+                        // 头像
+                        Rectangle {
+                            width: 60; height: 60
+                            radius: Theme.radiusRound
+                            color: Theme.bgTertiary
+                            border.color: Theme.primary
+                            border.width: 2
+                            clip: true
 
-                    Column {
-                        spacing: Theme.spacingSmall
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        Text {
-                            text: controller ? controller.userName : ""
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                        }
-
-                        Row {
-                            spacing: Theme.spacingSmall
-
-                            Rectangle {
-                                width: 10; height: 10
-                                radius: 5
-                                color: Theme.success
-                                anchors.verticalCenter: parent.verticalCenter
+                            Image {
+                                anchors.fill: parent
+                                anchors.margins: 2
+                                source: controller && controller.userFace
+                                ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
                             }
+                        }
+
+                        Column {
+                            spacing: Theme.spacingSmall
+                            anchors.verticalCenter: parent.verticalCenter
+
                             Text {
-                                text: "已登录"
-                                color: Theme.success
+                                text: controller ? controller.userName : ""
+                                color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontBody
-                                anchors.verticalCenter: parent.verticalCenter
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
                             }
-                        }
 
-                        // 等级和 VIP
-                        Row {
-                            spacing: Theme.spacingSmall
+                            Row {
+                                spacing: Theme.spacingSmall
 
-                            Rectangle {
-                                width: 40; height: 20
-                                radius: Theme.radiusRound
-                                color: Theme.primary
-                                anchors.verticalCenter: parent.verticalCenter
-
+                                Rectangle {
+                                    width: 10; height: 10
+                                    radius: 5
+                                    color: Theme.success
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                                 Text {
-                                    anchors.centerIn: parent
-                                    text: "LV" + (controller ? controller.userLevel : 0)
-                                    color: Theme.textOnPrimary
+                                    text: "已登录"
+                                    color: Theme.success
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSmall
-                                    font.bold: true
+                                    font.pixelSize: Theme.fontBody
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
+                            // 等级和经验
+                            Row {
+                                spacing: Theme.spacingSmall
+
+                                Rectangle {
+                                    width: 40; height: 20
+                                    radius: Theme.radiusRound
+                                    color: Theme.primary
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "LV" + (controller ? controller.userLevel : 0)
+                                        color: Theme.textOnPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSmall
+                                        font.bold: true
+                                    }
+                                }
+
+                                Item {
+                                    width: 108; height: 20
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 5
+                                        radius: 4
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: Theme.withAlpha(Theme.bgTertiary, 0.9)
+                                        clip: true
+
+                                        Rectangle {
+                                            width: parent.width * (controller ? controller.userExpProgress : 0)
+                                            height: parent.height
+                                            radius: parent.radius
+                                            color: Theme.primary
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.bottom: parent.top
+                                        anchors.bottomMargin: 2
+                                        text: controller ? (String(controller.userExp) + "/" + String(controller.userExpNext)) : "0/0"
+                                        color: Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        //font.pixelSize: Theme.fontTiny
+                                        font.pixelSize: 8
+                                        font.bold: true
+                                    }
+                                }
+                            }
+
+                            // VIP 标签
                             Rectangle {
                                 width: 60; height: 20
                                 radius: Theme.radiusRound
                                 color: controller && controller.userIsVip ? "#FB7299" : Theme.bgTertiary
-                                anchors.verticalCenter: parent.verticalCenter
                                 visible: controller && (controller.userIsVip || controller.userVipLabel !== "")
 
                                 Text {
@@ -409,120 +493,603 @@ Rectangle {
                             }
                         }
                     }
-                }
 
-                // 签名
-                Text {
-                    text: controller && controller.userSign !== "" ? controller.userSign : "这个人很懒，什么都没写~"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                    wrapMode: Text.WordWrap
+                    // 签名
+                    Text {
+                        text: controller && controller.userSign !== "" ? controller.userSign : "这个人很懒，什么都没写~"
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontBody
+                        wrapMode: Text.WordWrap
+                        width: parent.width
+                    }
+
+                    // 统计数据
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        anchors.horizontalCenter: parent.horizontalCenter
+
+                        readonly property real colW: (width - Theme.spacingSmall * 2) / 3
+
+                        // 粉丝
+                        Column {
+                            width: parent.colW
+                            spacing: 4
+
+                            Text {
+                                width: parent.width
+                                text: controller ? String(controller.userFans) : "0"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: "粉丝"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+
+                        // 关注
+                        Column {
+                            width: parent.colW
+                            spacing: 4
+
+                            Text {
+                                width: parent.width
+                                text: controller ? String(controller.userFollowing) : "0"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: "关注"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+
+                        // 硬币
+                        Column {
+                            width: parent.colW
+                            spacing: 4
+
+                            Text {
+                                width: parent.width
+                                text: controller ? String(controller.userCoins) : "0"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: "硬币"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+                    }
+
+                    // 快捷入口：收藏夹 / 最近观看 / 设置
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.spacingLarge
+
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: favEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.fillStyle = Theme.primary
+                                        var cx = width / 2
+                                        var cy = height / 2
+                                        var outerR = 8
+                                        var innerR = 3.4
+                                        ctx.beginPath()
+                                        for (var i = 0; i < 5; i++) {
+                                            var outerAngle = (i * 72 - 90) * Math.PI / 180
+                                            var innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180
+                                            var ox = cx + outerR * Math.cos(outerAngle)
+                                            var oy = cy + outerR * Math.sin(outerAngle)
+                                            var ix = cx + innerR * Math.cos(innerAngle)
+                                            var iy = cy + innerR * Math.sin(innerAngle)
+                                            if (i === 0) ctx.moveTo(ox, oy)
+                                            else ctx.lineTo(ox, oy)
+                                            ctx.lineTo(ix, iy)
+                                        }
+                                        ctx.closePath()
+                                        ctx.fill()
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: favEntryArea
+                                    anchors.fill: parent
+                                    onClicked: userPage.openFavorites()
+                                }
+                            }
+
+                            Text {
+                                text: "收藏夹"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: historyEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = Theme.primary
+                                        ctx.lineWidth = 1.8
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(9, 9, 6.5, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(9, 9)
+                                        ctx.lineTo(9, 5.5)
+                                        ctx.moveTo(9, 9)
+                                        ctx.lineTo(12, 10.5)
+                                        ctx.stroke()
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: historyEntryArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        favView = 3
+                                        if (controller) controller.fetchRecentHistory()
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "最近观看"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: settingsEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = Theme.primary
+                                        ctx.lineWidth = 1.6
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(8, 8, 2.2, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        for (var i = 0; i < 8; i++) {
+                                            var a = i * Math.PI / 4
+                                            var x1 = 8 + Math.cos(a) * 4.2
+                                            var y1 = 8 + Math.sin(a) * 4.2
+                                            var x2 = 8 + Math.cos(a) * 6.8
+                                            var y2 = 8 + Math.sin(a) * 6.8
+                                            ctx.beginPath()
+                                            ctx.moveTo(x1, y1)
+                                            ctx.lineTo(x2, y2)
+                                            ctx.stroke()
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: settingsEntryArea
+                                    anchors.fill: parent
+                                    onClicked: favView = 4
+                                }
+                            }
+
+                            Text {
+                                text: "设置"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+                    }
+
+                    // 退出登录按钮
+                    Rectangle {
+                        width: 120; height: Theme.buttonHeight
+                        radius: Theme.radiusRound
+                        color: "transparent"
+                        border.color: Theme.withAlpha(Theme.error, 0.5)
+                        border.width: 1
+                        anchors.horizontalCenter: parent.horizontalCenter
+
+                        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "退出登录"
+                            color: Theme.withAlpha(Theme.error, 0.8)
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontBody
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller) controller.logout();
+                            }
+                            onPressed: parent.color = Theme.withAlpha(Theme.error, 0.1)
+                            onReleased: parent.color = "transparent"
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 收藏夹列表 ──
+        Item {
+            id: favListView
+            anchors.fill: parent
+            visible: favView === 1
+
+            ListView {
+                id: favList
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.favoriteFolderModel() : null
+                spacing: Theme.spacingSmall
+                clip: true
+
+                delegate: Rectangle {
                     width: parent.width
-                }
-
-                // 统计数据
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingLarge
-                    anchors.horizontalCenter: parent.horizontalCenter
-
-                    // 粉丝
-                    Column {
-                        width: 80
-                        spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
-
-                        Text {
-                            text: controller ? String(controller.userFans) : "0"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: "粉丝"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                    }
-
-                    // 关注
-                    Column {
-                        width: 80
-                        spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
-
-                        Text {
-                            text: controller ? String(controller.userFollowing) : "0"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: "关注"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                    }
-
-                    // 硬币
-                    Column {
-                        width: 80
-                        spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
-
-                        Text {
-                            text: controller ? String(controller.userCoins) : "0"
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontMedium
-                            font.bold: true
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: "硬币"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                    }
-                }
-
-                // 退出登录按钮
-                Rectangle {
-                    width: 120; height: Theme.buttonHeight
-                    radius: Theme.radiusRound
-                    color: "transparent"
-                    border.color: Theme.withAlpha(Theme.error, 0.5)
+                    height: 54
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.15)
                     border.width: 1
-                    anchors.horizontalCenter: parent.horizontalCenter
 
-                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
+                        Rectangle {
+                            width: 72
+                            height: parent.height - 2
+                            radius: Theme.radiusSmall
+                            color: Theme.bgTertiary
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: model.cover ? "image://bili/" + encodeURIComponent(model.cover) : ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                            }
+                        }
+
+                        Column {
+                            width: parent.width - 90
+                            spacing: 4
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                text: model.title || ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                text: "共" + (model.mediaCount || 0) + "个视频"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                            }
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: userPage.openFavoriteDetail(model.id, model.title)
+                    }
+                }
+            }
+
+            Text {
+                visible: favList.count === 0 && controller && !controller.isLoading
+                text: "暂无收藏夹"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
+            }
+
+            Components.LoadingIndicator {
+                anchors.centerIn: parent
+                running: controller ? controller.isLoading : false
+            }
+        }
+
+        // ── 最近观看 ──
+        Item {
+            id: recentHistoryView
+            anchors.fill: parent
+            visible: favView === 3
+
+            ListView {
+                id: recentList
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.recentHistoryModel() : null
+                orientation: ListView.Horizontal
+                spacing: Theme.spacingMedium
+                clip: true
+
+                onAtXEndChanged: {
+                    if (atXEnd && controller) controller.fetchMoreRecentHistory()
+                }
+
+                delegate: Components.VideoCard {
+                    height: recentList.height
+                    videoTitle: model.title || ""
+                    coverUrl: model.pic || ""
+                    upName: model.ownerName || ""
+                    viewCount: ""
+                    showViewCount: false
+                    durationText: model.durationText || ""
+                    bvid: model.bvid || ""
+                    onClicked: {
+                        userPage.recentHistoryContentX = recentList.contentX
+                        userPage.videoSelected(bvid)
+                    }
+                }
+            }
+
+            Text {
+                visible: recentList.count === 0
+                text: "暂无最近观看"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
+            }
+
+            onVisibleChanged: {
+                if (visible && recentHistoryContentX > 0) {
+                    Qt.callLater(function() {
+                        recentList.contentX = recentHistoryContentX
+                    })
+                }
+            }
+        }
+
+        // ── 设置页 ──
+        Item {
+            id: settingsView
+            anchors.fill: parent
+            visible: favView === 4
+
+            ListView {
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: ListModel {
+                    ListElement { title: "重启 Go 服务器" }
+                }
+                spacing: Theme.spacingSmall
+                clip: true
+
+                delegate: Rectangle {
+                    width: parent.width
+                    height: 34
+                    radius: Theme.radiusMedium
+                    color: settingsItemArea.pressed ? Theme.withAlpha(Theme.primary, 0.12) : Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
 
                     Text {
                         anchors.centerIn: parent
-                        text: "退出登录"
-                        color: Theme.withAlpha(Theme.error, 0.8)
+                        text: model.title
+                        color: Theme.textPrimary
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontBody
                     }
 
                     MouseArea {
+                        id: settingsItemArea
                         anchors.fill: parent
-                        onClicked: {
-                            if (controller) controller.logout();
+                        onClicked: userPage.restartConfirmVisible = true
+                    }
+                }
+            }
+        }
+
+        // ── 收藏夹详情 ──
+        Item {
+            id: favDetailView
+            anchors.fill: parent
+            visible: favView === 2
+
+            ListView {
+                id: favItems
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.favoriteItemModel() : null
+                orientation: ListView.Horizontal
+                spacing: Theme.spacingMedium
+                clip: true
+
+                delegate: Components.VideoCard {
+                    height: favItems.height
+                    videoTitle: model.title || ""
+                    coverUrl: model.pic || ""
+                    upName: model.ownerName || ""
+                    viewCount: model.views || ""
+                    durationText: model.durationText || ""
+                    bvid: model.bvid || ""
+                    showCollection: model.partCount > 1
+                    onClicked: userPage.videoSelected(bvid)
+                }
+
+                onAtXEndChanged: {
+                    if (atXEnd && controller) controller.fetchMoreFavoriteItems()
+                }
+            }
+
+            Text {
+                visible: favItems.count === 0 && controller && !controller.isLoading
+                text: "收藏夹为空"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
+            }
+
+            Components.LoadingIndicator {
+                anchors.centerIn: parent
+                running: controller ? controller.isLoading : false
+            }
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: restartConfirmVisible
+        color: Qt.rgba(0, 0, 0, 0.55)
+        z: 92
+
+        Rectangle {
+            width: 170
+            height: 88
+            radius: 10
+            color: Theme.bgSecondary
+            border.color: Theme.withAlpha(Theme.primary, 0.2)
+            border.width: 1
+            anchors.centerIn: parent
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 10
+
+                Text {
+                    text: "确认重启 Go 服务器？"
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    width: parent.width
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 10
+
+                    Rectangle {
+                        width: 56
+                        height: 24
+                        radius: 6
+                        color: cancelRestartArea.pressed ? Theme.withAlpha(Theme.primary, 0.12) : Theme.bgTertiary
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "取消"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
                         }
-                        onPressed: parent.color = Theme.withAlpha(Theme.error, 0.1)
-                        onReleased: parent.color = "transparent"
+
+                        MouseArea {
+                            id: cancelRestartArea
+                            anchors.fill: parent
+                            onClicked: userPage.restartConfirmVisible = false
+                        }
+                    }
+
+                    Rectangle {
+                        width: 56
+                        height: 24
+                        radius: 6
+                        color: confirmRestartArea.pressed ? Theme.primaryDark : Theme.primary
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "确认"
+                            color: Theme.textOnPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
+
+                        MouseArea {
+                            id: confirmRestartArea
+                            anchors.fill: parent
+                            onClicked: {
+                                userPage.restartConfirmVisible = false
+                                if (controller) controller.restartGoServer()
+                            }
+                        }
                     }
                 }
             }

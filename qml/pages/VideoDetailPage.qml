@@ -13,6 +13,8 @@ Rectangle {
     property string bvid: ""
     property bool fullTitleVisible: false
     property var rootRef: null
+    property bool fullPartTitleVisible: false
+    property string fullPartTitleText: ""
 
     // 清晰度选择（默认16）
     property int selectedQuality: 16
@@ -50,6 +52,20 @@ Rectangle {
     signal playRequested(int quality)
     signal commentsRequested()
 
+    property real savedPartListX: 0
+    property bool favoritePickerVisible: false
+
+    function restorePartListPosition() {
+        if (!videoPartList || !videoPartList.visible) return;
+        if (savedPartListX <= 0) return;
+        Qt.callLater(function() {
+            videoPartList.contentX = savedPartListX;
+            Qt.callLater(function() {
+                videoPartList.contentX = savedPartListX;
+            })
+        })
+    }
+
     readonly property string fontFamily: "Microsoft YaHei"
     readonly property color primaryColor: "#3b82f6"
     readonly property color primaryLight: "#60a5fa"
@@ -82,6 +98,33 @@ Rectangle {
         MouseArea {
             anchors.fill: parent
             onClicked: detailPage.fullTitleVisible = false
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.8)
+        z: 201
+        visible: detailPage.fullPartTitleVisible
+
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+        Text {
+            anchors.centerIn: parent
+            width: parent.width - 40
+            text: detailPage.fullPartTitleText
+            color: "white"
+            font.family: fontFamily
+            font.pixelSize: 14
+            font.bold: true
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: detailPage.fullPartTitleVisible = false
         }
     }
 
@@ -509,83 +552,96 @@ Rectangle {
                 // ─────────────────────────────────────
                 // 清晰度选择器
                 // ─────────────────────────────────────
-                Row {
-                    id: qualityRow
-                    spacing: 6
+                Flickable {
+                    id: qualityFlick
                     anchors.left: parent.left
                     anchors.leftMargin: 16
                     anchors.right: parent.right
                     anchors.rightMargin: 16
+                    height: 22
+                    contentWidth: qualityRow.implicitWidth
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    clip: true
+                    boundsBehavior: Flickable.DragOverBounds
 
-                    Text {
-                        text: "清晰度: " + qualityLabel(detailPage.selectedQuality)
-                        color: primaryLight
-                        font.family: fontFamily
-                        font.pixelSize: 10
+                    Row {
+                        id: qualityRow
+                        spacing: 6
+                        height: parent.height
                         anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Rectangle {
-                        height: 18
-                        width: 38
-                        radius: 9
-                        color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.08)
-                        border.width: 1
-                        border.color: Qt.rgba(1, 1, 1, 0.12)
+                        anchors.verticalCenterOffset: 2
 
                         Text {
-                            anchors.centerIn: parent
-                            text: "刷新"
-                            color: "#cbd5e1"
+                            text: "清晰度: " + qualityLabel(detailPage.selectedQuality)
+                            color: primaryLight
                             font.family: fontFamily
-                            font.pixelSize: 9
-                            font.bold: true
+                            font.pixelSize: 10
+                            anchors.verticalCenter: parent.verticalCenter
                         }
-
-                        MouseArea {
-                            id: refreshArea
-                            anchors.fill: parent
-                            onClicked: {
-                                if (controller) {
-                                    controller.fetchAcceptQualities(detailPage.selectedQuality)
-                                }
-                            }
-                        }
-                    }
-
-                    Repeater {
-                        model: detailPage.availableQualities
 
                         Rectangle {
                             height: 18
-                            width: Math.max(38, qualityText.implicitWidth + 10)
+                            width: 38
                             radius: 9
-                            color: detailPage.selectedQuality === modelData
-                                   ? primaryColor
-                                   : Qt.rgba(1, 1, 1, 0.08)
+                            color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.08)
                             border.width: 1
-                            border.color: detailPage.selectedQuality === modelData
-                                           ? primaryLight
-                                           : Qt.rgba(1, 1, 1, 0.12)
+                            border.color: Qt.rgba(1, 1, 1, 0.12)
 
                             Text {
-                                id: qualityText
                                 anchors.centerIn: parent
-                                text: qualityLabel(modelData) + (detailPage.selectedQuality === modelData ? " ✓" : "")
-                                color: detailPage.selectedQuality === modelData
-                                       ? "white"
-                                       : "#cbd5e1"
+                                text: "刷新"
+                                color: "#cbd5e1"
                                 font.family: fontFamily
                                 font.pixelSize: 9
-                                font.bold: detailPage.selectedQuality === modelData
+                                font.bold: true
                             }
 
                             MouseArea {
+                                id: refreshArea
                                 anchors.fill: parent
                                 onClicked: {
-                                    detailPage.selectedQuality = modelData
-                                    if (detailPage.rootRef) {
-                                        detailPage.rootRef.playQualitySelected = modelData
+                                    if (controller) {
+                                        controller.fetchAcceptQualities(detailPage.selectedQuality)
+                                    }
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: detailPage.availableQualities
+
+                            Rectangle {
+                                height: 18
+                                width: Math.max(38, qualityText.implicitWidth + 10)
+                                radius: 9
+                                color: detailPage.selectedQuality === modelData
+                                       ? primaryColor
+                                       : Qt.rgba(1, 1, 1, 0.08)
+                                border.width: 1
+                                border.color: detailPage.selectedQuality === modelData
+                                               ? primaryLight
+                                               : Qt.rgba(1, 1, 1, 0.12)
+
+                                Text {
+                                    id: qualityText
+                                    anchors.centerIn: parent
+                                    text: qualityLabel(modelData) + (detailPage.selectedQuality === modelData ? " ✓" : "")
+                                    color: detailPage.selectedQuality === modelData
+                                           ? "white"
+                                           : "#cbd5e1"
+                                    font.family: fontFamily
+                                    font.pixelSize: 9
+                                    font.bold: detailPage.selectedQuality === modelData
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        detailPage.selectedQuality = modelData
+                                        if (detailPage.rootRef) {
+                                            detailPage.rootRef.playQualitySelected = modelData
+                                        }
                                     }
                                 }
                             }
@@ -633,11 +689,76 @@ Rectangle {
                             iconColor: "#fbbf24"
                         }
 
-                        // 收藏
-                        BadgeItem {
-                            iconType: "star"
-                            value: controller ? controller.videoFavorites : "0"
-                            iconColor: "#a78bfa"
+                        // 收藏（可点击）
+                        Rectangle {
+                            width: badgeContent.width + 14
+                            height: 24
+                            radius: 12
+                            color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.2) : Qt.rgba(1, 1, 1, 0.07)
+                            border.color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.6) : Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Row {
+                                id: badgeContent
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Canvas {
+                                    width: 12
+                                    height: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    property bool fav: controller ? controller.isFavorited : false
+                                    onFavChanged: requestPaint()
+
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        var col = controller && controller.isFavorited ? "#fb7299" : "#a78bfa"
+                                        ctx.fillStyle = col
+                                        ctx.beginPath()
+                                        var cx = 6, cy = 6, outerR = 5.5, innerR = 2.2
+                                        for (var i = 0; i < 5; i++) {
+                                            var outerAngle = (i * 72 - 90) * Math.PI / 180
+                                            var innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180
+                                            if (i === 0) {
+                                                ctx.moveTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
+                                            } else {
+                                                ctx.lineTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
+                                            }
+                                            ctx.lineTo(cx + innerR * Math.cos(innerAngle), cy + innerR * Math.sin(innerAngle))
+                                        }
+                                        ctx.closePath()
+                                        ctx.fill()
+                                    }
+                                }
+
+                                Text {
+                                    text: controller ? controller.videoFavorites : "0"
+                                    color: controller && controller.isFavorited ? "#fb7299" : "#d1d5db"
+                                    font.family: fontFamily
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (!controller) return
+                                    if (controller.isFavorited) {
+                                        controller.toggleFavorite()
+                                    } else {
+                                        controller.fetchFavoriteFolders()
+                                        detailPage.favoritePickerVisible = true
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            visible: false
                         }
 
                         // 弹幕
@@ -830,8 +951,14 @@ Rectangle {
                             isCurrent: controller && controller.videoCid === model.cid
 
                             onClicked: {
-                                if (controller) {
+                                if (!controller) return
+                                detailPage.savedPartListX = videoPartList.contentX
+                                if (controller.videoCid === model.cid) {
+                                    detailPage.fullPartTitleText = model.part || ""
+                                    detailPage.fullPartTitleVisible = true
+                                } else {
                                     controller.playVideoPart(index)
+                                    detailPage.restorePartListPosition()
                                 }
                             }
                         }
@@ -943,6 +1070,95 @@ Rectangle {
                 font.pixelSize: 10
                 font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 收藏夹选择弹窗
+    // ═══════════════════════════════════════════════════════════
+    Item {
+        id: favoritePickerOverlay
+        anchors.fill: parent
+        visible: detailPage.favoritePickerVisible
+        z: 95
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.55)
+        }
+
+        Rectangle {
+            id: favoritePickerDialog
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 40, 220)
+            height: Math.min(parent.height - 20, 145)
+            radius: 10
+            color: Qt.rgba(0.08, 0.1, 0.14, 0.98)
+            border.color: Qt.rgba(1, 1, 1, 0.12)
+            border.width: 1
+            z: 2
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 6
+
+                Text {
+                    text: "选择收藏夹"
+                    color: "white"
+                    font.family: fontFamily
+                    font.pixelSize: 11
+                    font.bold: true
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                ListView {
+                    id: favoriteFolderListDialog
+                    width: parent.width
+                    height: parent.height - 30
+                    model: controller ? controller.favoriteFolderModel() : null
+                    clip: true
+                    spacing: 4
+                    z: 3
+
+                    delegate: Rectangle {
+                        width: favoriteFolderListDialog.width
+                        height: 34
+                        radius: 6
+                        color: favChooseArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 12
+                            text: model.title || "未命名收藏夹"
+                            color: "white"
+                            font.family: fontFamily
+                            font.pixelSize: 10
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        MouseArea {
+                            id: favChooseArea
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller) controller.toggleFavoriteTo(model.id)
+                                detailPage.favoritePickerVisible = false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            z: 1
+            onClicked: {
+                if (!favoritePickerDialog.contains(mapToItem(favoritePickerDialog, mouse.x, mouse.y))) {
+                    detailPage.favoritePickerVisible = false
+                }
             }
         }
     }
@@ -1091,6 +1307,7 @@ Rectangle {
         // 尝试获取可用清晰度
         if (controller && controller.videoCid > 0) {
             controller.fetchAcceptQualities(selectedQuality)
+            controller.fetchFavoriteStatus()
         }
 
         enterAnimation.start()
@@ -1102,6 +1319,13 @@ Rectangle {
         function onVideoDetailChanged() {
             if (controller && controller.videoCid > 0) {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
+                controller.fetchFavoriteStatus()
+            }
+            detailPage.restorePartListPosition()
+        }
+        function onLoginStateChanged() {
+            if (controller && controller.loggedIn && controller.videoCid > 0) {
+                controller.fetchFavoriteStatus()
             }
         }
     }
