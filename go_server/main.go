@@ -8,12 +8,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -722,8 +724,31 @@ func (c *BilibiliClient) request(apiURL string, params map[string]string, method
 
 func (c *BilibiliClient) rawRequest(apiURL string, params map[string]string) ([]byte, error) {
 	query := buildSortedQuery(params)
-	fullURL := apiURL + "?" + query
+	fullURL := apiURL
+	if query != "" {
+		if strings.Contains(fullURL, "?") {
+			fullURL = fullURL + "&" + query
+		} else {
+			fullURL = fullURL + "?" + query
+		}
+	}
 
+	req, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+
+func (c *BilibiliClient) rawGetURL(fullURL string) ([]byte, error) {
 	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
 		return nil, err
@@ -845,6 +870,17 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
 	logInfo("获取登录信息")
 	return c.request("https://api.bilibili.com/x/web-interface/nav", map[string]string{}, "GET")
+}
+
+func (c *BilibiliClient) GetPlayerV2(aid, cid int, bvid string) (json.RawMessage, error) {
+	params := map[string]string{
+		"aid": strconv.Itoa(aid),
+		"cid": strconv.Itoa(cid),
+	}
+	if bvid != "" {
+		params["bvid"] = bvid
+	}
+	return c.wbiRequest("https://api.bilibili.com/x/player/wbi/v2", params, "GET")
 }
 
 func (c *BilibiliClient) GetPlayUrl(aid, cid, qn, fnval int, platform string) (json.RawMessage, error) {
@@ -1163,6 +1199,8 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/video/playurl - 播放地址",
 				"/video/danmaku - 弹幕",
 				"/video/comments - 评论",
+				"/video/subtitle/list - CC字幕列表",
+				"/video/subtitle/ass - 生成ASS字幕",
 				"/user/info - 用户信息",
 				"/login/info - 登录信息",
 				"/hot/search - 热搜",
@@ -1397,6 +1435,58 @@ func handleVideoDanmaku(w http.ResponseWriter, r *http.Request) {
 		  "note":    "弹幕数据为 Protobuf 二进制格式，需使用专用解析器",
 		},
 	})
+}
+
+func formatAssTime(sec float64) string {
+	if sec < 0 {
+		sec = 0
+	}
+	h := int(sec) / 3600
+	m := (int(sec) % 3600) / 60
+	s := int(sec) % 60
+	cs := int((sec - float64(int(sec))) * 100)
+	if cs < 0 {
+		cs = 0
+	}
+	if cs > 99 {
+		cs = 99
+	}
+	return fmt.Sprintf("%d:%02d:%02d.%02d", h, m, s, cs)
+}
+
+func buildASSFromSubtitleBody(body []interface{}) string {
+	var sb strings.Builder
+	sb.WriteString("[Script Info]\n")
+	sb.WriteString("ScriptType: v4.00+\n")
+	sb.WriteString("PlayResX: 320\n")
+	sb.WriteString("PlayResY: 170\n")
+	sb.WriteString("WrapStyle: 2\n")
+	sb.WriteString("ScaledBorderAndShadow: no\n\n")
+	sb.WriteString("[V4+ Styles]\n")
+	sb.WriteString("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
+	sb.WriteString("Style: Default,Arial,10,&H00FFFFFF,&H000000FF,&H00111111,&H64000000,1,0,0,0,100,100,2,0,1,2,0,2,8,8,2,1\n\n")
+	sb.WriteString("[Events]\n")
+	sb.WriteString("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+
+	for _, item := range body {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		from, _ := obj["from"].(float64)
+		to, _ := obj["to"].(float64)
+		content, _ := obj["content"].(string)
+		if to <= from {
+			to = from + 2
+		}
+		text := html.EscapeString(content)
+		text = strings.ReplaceAll(text, "\r\n", "\\N")
+		text = strings.ReplaceAll(text, "\n", "\\N")
+		text = strings.ReplaceAll(text, "\r", "\\N")
+		sb.WriteString(fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", formatAssTime(from), formatAssTime(to), text))
+	}
+
+	return sb.String()
 }
 
 func handleVideoDanmakuConfig(w http.ResponseWriter, r *http.Request) {
@@ -1824,6 +1914,140 @@ func handleQrcodeGenerate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleVideoSubtitleList(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+	client := getClient()
+	result, err := client.GetPlayerV2(aid, cid, bvid)
+	if err != nil {
+		logError("处理 /video/subtitle/list 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		writeError(w, 500, "字幕列表解析失败")
+		return
+	}
+	code, _ := resp["code"].(float64)
+	if int(code) != 0 {
+		writeJSON(w, 200, wrapResult(result))
+		return
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	subtitle, _ := data["subtitle"].(map[string]interface{})
+	subs, _ := subtitle["subtitles"].([]interface{})
+	writeJSON(w, 200, map[string]interface{}{
+		"code":    0,
+		"message": "success",
+		"data": map[string]interface{}{
+			"subtitles": subs,
+		},
+	})
+}
+
+func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	sid, err := intParam(r.URL.Query().Get("sid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+
+	client := getClient()
+	result, err := client.GetPlayerV2(aid, cid, bvid)
+	if err != nil {
+		logError("处理 /video/subtitle/ass 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		writeError(w, 500, "字幕列表解析失败")
+		return
+	}
+	code, _ := resp["code"].(float64)
+	if int(code) != 0 {
+		writeJSON(w, 200, wrapResult(result))
+		return
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	subtitle, _ := data["subtitle"].(map[string]interface{})
+	subs, _ := subtitle["subtitles"].([]interface{})
+
+	var subtitleURL string
+	for _, item := range subs {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		idVal, _ := obj["id"].(float64)
+		if int(idVal) == sid {
+			subtitleURL, _ = obj["subtitle_url"].(string)
+			break
+		}
+	}
+	if subtitleURL == "" {
+		writeError(w, 404, "未找到指定字幕")
+		return
+	}
+	if strings.HasPrefix(subtitleURL, "//") {
+		subtitleURL = "https:" + subtitleURL
+	}
+
+	bodyRaw, err := client.rawGetURL(subtitleURL)
+	if err != nil {
+		writeError(w, 500, "字幕下载失败: "+err.Error())
+		return
+	}
+	var subResp map[string]interface{}
+	if err := json.Unmarshal(bodyRaw, &subResp); err != nil {
+		writeError(w, 500, "字幕内容解析失败")
+		return
+	}
+	body, _ := subResp["body"].([]interface{})
+	if len(body) == 0 {
+		writeError(w, 404, "该字幕内容为空")
+		return
+	}
+
+	assContent := buildASSFromSubtitleBody(body)
+	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("bili_cc_%d_%d_%d.ass", aid, cid, sid))
+	if err := os.WriteFile(tmpPath, []byte(assContent), 0644); err != nil {
+		writeError(w, 500, "字幕文件写入失败")
+		return
+	}
+
+	writeJSON(w, 200, map[string]interface{}{
+		"code":    0,
+		"message": "success",
+		"data": map[string]interface{}{
+			"path": tmpPath,
+		},
+	})
+}
+
 func handleQrcodePoll(w http.ResponseWriter, r *http.Request) {
 	qrcodeKey := r.URL.Query().Get("qrcode_key")
 	if qrcodeKey == "" {
@@ -1936,6 +2160,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/danmaku", handleVideoDanmaku)
 	mux.HandleFunc("/video/danmaku/config", handleVideoDanmakuConfig)
 	mux.HandleFunc("/video/comments", handleVideoComments)
+	mux.HandleFunc("/video/subtitle/list", handleVideoSubtitleList)
+	mux.HandleFunc("/video/subtitle/ass", handleVideoSubtitleASS)
 	mux.HandleFunc("/user/info", handleUserInfo)
 	mux.HandleFunc("/login/info", handleLoginInfo)
 	mux.HandleFunc("/logout", handleLogout)
@@ -2013,6 +2239,8 @@ func main() {
 	fmt.Println("  GET  /video/playurl    - 播放地址")
 	fmt.Println("  GET  /video/danmaku    - 弹幕数据")
 	fmt.Println("  GET  /video/comments   - 评论列表")
+	fmt.Println("  GET  /video/subtitle/list - CC字幕列表")
+	fmt.Println("  GET  /video/subtitle/ass  - 生成ASS字幕")
 	fmt.Println("  GET  /user/info        - 用户信息")
 	fmt.Println("  GET  /login/info       - 登录信息")
 	fmt.Println("  GET  /hot/search       - 热搜榜")

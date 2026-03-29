@@ -54,6 +54,7 @@ Rectangle {
 
     property real savedPartListX: 0
     property bool favoritePickerVisible: false
+    property bool subtitlePickerVisible: false
 
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
@@ -541,6 +542,46 @@ Rectangle {
                                             if (controller) {
                                                 controller.downloadVideoToDisk(detailPage.selectedQuality);
                                             }
+                                        }
+                                    }
+                                }
+
+                                // 字幕按钮
+                                Rectangle {
+                                    width: 55
+                                    height: 20
+                                    radius: 10
+                                    color: subtitleArea.pressed ? primaryDark : primaryColor
+
+                                    scale: subtitleArea.pressed ? 0.92 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                    Behavior on color { ColorAnimation { duration: 100 } }
+
+                                    Text {
+                                        text: {
+                                            if (controller && controller.selectedSubtitleLabel && controller.selectedSubtitleLabel.length > 0) {
+                                                return "字幕:" + controller.selectedSubtitleLabel;
+                                            }
+                                            return "字幕";
+                                        }
+                                        color: "white"
+                                        font.family: fontFamily
+                                        font.pixelSize: 9
+                                        font.bold: true
+                                        anchors.centerIn: parent
+                                        elide: Text.ElideRight
+                                        width: parent.width - 6
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    MouseArea {
+                                        id: subtitleArea
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (controller) {
+                                                controller.fetchSubtitleList();
+                                            }
+                                            detailPage.subtitlePickerVisible = true;
                                         }
                                     }
                                 }
@@ -1075,6 +1116,156 @@ Rectangle {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // 字幕选择弹窗
+    // ═══════════════════════════════════════════════════════════
+    Item {
+        id: subtitlePickerOverlay
+        anchors.fill: parent
+        visible: detailPage.subtitlePickerVisible
+        z: 94
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.55)
+        }
+
+        Rectangle {
+            id: subtitlePickerDialog
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 40, 220)
+            height: Math.min(parent.height - 20, 145)
+            radius: 10
+            color: Qt.rgba(0.08, 0.1, 0.14, 0.98)
+            border.color: Qt.rgba(1, 1, 1, 0.12)
+            border.width: 1
+            z: 2
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 6
+
+                Text {
+                    text: "选择字幕"
+                    color: "white"
+                    font.family: fontFamily
+                    font.pixelSize: 11
+                    font.bold: true
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                Text {
+                    text: "当前字幕已选中 ✅"
+                    visible: controller && controller.selectedSubtitleId > 0
+                    color: "#9ae6b4"
+                    font.family: fontFamily
+                    font.pixelSize: 9
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                ListView {
+                    id: subtitleListDialog
+                    width: parent.width
+                    height: parent.height - 30
+                    model: controller ? controller.subtitleList : []
+                    clip: true
+                    spacing: 4
+                    z: 3
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "没有字幕"
+                        visible: !controller || controller.subtitleList.length === 0
+                        color: "#94a3b8"
+                        font.family: fontFamily
+                        font.pixelSize: 10
+                    }
+
+                    header: Item {
+                        width: subtitleListDialog.width
+                        height: 42
+
+                        Rectangle {
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 30
+                            radius: 6
+                            color: noSubArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
+
+                            Text {
+                                anchors.centerIn: parent
+                                width: parent.width - 12
+                                text: "不使用字幕"
+                                color: "white"
+                                font.family: fontFamily
+                                font.pixelSize: 10
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            MouseArea {
+                                id: noSubArea
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (controller) controller.clearSelectedSubtitle();
+                                    detailPage.subtitlePickerVisible = false;
+                                }
+                            }
+                        }
+                    }
+
+                    delegate: Rectangle {
+                        width: subtitleListDialog.width
+                        height: 34
+                        radius: 6
+                        color: subChooseArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 12
+                            text: {
+                                var label = modelData.lan_doc || modelData.lan || ("字幕" + (index + 1));
+                                if (controller && controller.selectedSubtitleId === (modelData.id || 0)) {
+                                    return label + " ✅";
+                                }
+                                return label;
+                            }
+                            color: "white"
+                            font.family: fontFamily
+                            font.pixelSize: 10
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        MouseArea {
+                            id: subChooseArea
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller) {
+                                    var label = modelData.lan_doc || modelData.lan || ("字幕" + (index + 1));
+                                    controller.selectSubtitle(modelData.id || 0, label);
+                                }
+                                detailPage.subtitlePickerVisible = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            z: 1
+            onClicked: {
+                if (!subtitlePickerDialog.contains(mapToItem(subtitlePickerDialog, mouse.x, mouse.y))) {
+                    detailPage.subtitlePickerVisible = false;
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // 收藏夹选择弹窗
     // ═══════════════════════════════════════════════════════════
     Item {
@@ -1320,6 +1511,7 @@ Rectangle {
             if (controller && controller.videoCid > 0) {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
                 controller.fetchFavoriteStatus()
+                controller.fetchSubtitleList()
             }
             detailPage.restorePartListPosition()
         }

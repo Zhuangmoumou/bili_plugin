@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 #include <QNetworkReply>
 #include <QVariantList>
+#include <QJsonArray>
 
 #include "BiliModels.h"
 
@@ -60,6 +61,9 @@ class BiliController : public QObject {
   Q_PROPERTY(QString tempAudioPath READ tempAudioPath NOTIFY downloadStateChanged)
   Q_PROPERTY(QString dashVideoUrl READ dashVideoUrl NOTIFY playUrlChanged)
   Q_PROPERTY(QString dashAudioUrl READ dashAudioUrl NOTIFY playUrlChanged)
+  Q_PROPERTY(QVariantList subtitleList READ subtitleList NOTIFY subtitleListChanged)
+  Q_PROPERTY(qint64 selectedSubtitleId READ selectedSubtitleId NOTIFY selectedSubtitleChanged)
+  Q_PROPERTY(QString selectedSubtitleLabel READ selectedSubtitleLabel NOTIFY selectedSubtitleChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -120,6 +124,9 @@ public:
   QString tempAudioPath() const { return m_tempAudioPath; }
   QString dashVideoUrl() const { return m_dashVideoUrl; }
   QString dashAudioUrl() const { return m_dashAudioUrl; }
+  QVariantList subtitleList() const;
+  qint64 selectedSubtitleId() const { return m_selectedSubtitleId; }
+  QString selectedSubtitleLabel() const { return m_selectedSubtitleLabel; }
 
   bool loggedIn() const;
   bool isFavorited() const { return m_isFavorited; }
@@ -167,6 +174,11 @@ public:
   Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
   Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
+  Q_INVOKABLE void launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath);
+  Q_INVOKABLE void fetchSubtitleList();
+  Q_INVOKABLE void selectSubtitle(qint64 subtitleId, const QString &label);
+  Q_INVOKABLE void clearSelectedSubtitle();
+  Q_INVOKABLE void launchExternalPlayerCurrentSelection();
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -207,6 +219,8 @@ signals:
   void videoDetailChanged();
   void playUrlChanged();
   void acceptQualitiesChanged();
+  void subtitleListChanged();
+  void selectedSubtitleChanged();
   void loginStateChanged();
   void qrcodeChanged();
   void globalErrorChanged();
@@ -252,6 +266,9 @@ private:
   QString m_tempAudioPath;
   QString m_dashVideoUrl;
   QString m_dashAudioUrl;
+  QJsonArray m_subtitleItems;
+  qint64 m_selectedSubtitleId = 0;
+  QString m_selectedSubtitleLabel;
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;

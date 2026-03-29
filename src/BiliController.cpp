@@ -135,6 +135,16 @@ QString BiliController::videoPubDate() const {
 QString BiliController::playUrl() const { return m_playUrl; }
 int BiliController::playQuality() const { return m_playQuality; }
 
+QVariantList BiliController::subtitleList() const {
+  QVariantList list;
+  for (const QJsonValue &v : m_subtitleItems) {
+    if (v.isObject()) {
+      list << v.toObject().toVariantMap();
+    }
+  }
+  return list;
+}
+
 QVariantList BiliController::acceptQualities() const {
   QVariantList list;
   for (int q : m_acceptQualities) {
@@ -513,6 +523,17 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
   if (m_isFavorited) {
     m_isFavorited = false;
     emit favoriteStatusChanged();
+  }
+
+  // 切换视频时重置字幕选择与列表
+  if (m_selectedSubtitleId != 0 || !m_selectedSubtitleLabel.isEmpty()) {
+    m_selectedSubtitleId = 0;
+    m_selectedSubtitleLabel.clear();
+    emit selectedSubtitleChanged();
+  }
+  if (!m_subtitleItems.isEmpty()) {
+    m_subtitleItems = QJsonArray();
+    emit subtitleListChanged();
   }
 
   // BV号格式校验
@@ -1545,6 +1566,127 @@ void BiliController::launchExternalPlayerWithAudioUrl(const QString &videoUrl, c
   if (!ok) {
     emit toastMessage("启动外部播放器失败");
   }
+}
+
+void BiliController::launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath) {
+  if (videoUrl.isEmpty() || audioUrl.isEmpty()) {
+    emit toastMessage("播放地址不完整");
+    return;
+  }
+
+  QString player = "/userdisk/VideoPlayer";
+  if (!QFile::exists(player)) {
+    emit toastMessage("外部播放器不存在");
+    return;
+  }
+
+  QString sub = subtitlePath;
+  if (sub.startsWith("file://")) {
+    sub = sub.mid(7);
+  }
+
+  QStringList args;
+  args << videoUrl << ("--audio-file=" + audioUrl);
+  if (!sub.isEmpty()) {
+    args << ("--sub-file=" + sub);
+  }
+  args << "--referrer=https://www.bilibili.com"
+       << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+       << ("--script-opts=bili-aid=" + QString::number(videoAid())
+           + ",bili-cid=" + QString::number(m_currentVideo.cid)
+           + ",bili-bvid=" + m_currentVideo.bvid);
+
+  bool ok = QProcess::startDetached(player, args);
+  if (!ok) {
+    emit toastMessage("启动外部播放器失败");
+  }
+}
+
+void BiliController::fetchSubtitleList() {
+  if (m_currentVideo.aid <= 0 || m_currentVideo.cid <= 0) {
+    emit toastMessage("视频信息不完整，无法获取字幕");
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  params["cid"] = QString::number(m_currentVideo.cid);
+  params["bvid"] = m_currentVideo.bvid;
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/video/subtitle/list", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+        self->m_subtitleItems = data.value("subtitles").toArray();
+        emit self->subtitleListChanged();
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        self->m_subtitleItems = QJsonArray();
+        emit self->subtitleListChanged();
+        emit self->toastMessage(QString("获取字幕列表失败：%1").arg(msg));
+      });
+}
+
+void BiliController::selectSubtitle(qint64 subtitleId, const QString &label) {
+  if (m_selectedSubtitleId == subtitleId && m_selectedSubtitleLabel == label) {
+    return;
+  }
+  m_selectedSubtitleId = subtitleId;
+  m_selectedSubtitleLabel = label;
+  emit selectedSubtitleChanged();
+}
+
+void BiliController::clearSelectedSubtitle() {
+  if (m_selectedSubtitleId == 0 && m_selectedSubtitleLabel.isEmpty()) {
+    return;
+  }
+  m_selectedSubtitleId = 0;
+  m_selectedSubtitleLabel.clear();
+  emit selectedSubtitleChanged();
+}
+
+void BiliController::launchExternalPlayerCurrentSelection() {
+  if (m_dashVideoUrl.isEmpty() || m_dashAudioUrl.isEmpty()) {
+    emit toastMessage("播放地址尚未准备好");
+    return;
+  }
+
+  if (m_selectedSubtitleId <= 0) {
+    launchExternalPlayerWithAudioUrl(m_dashVideoUrl, m_dashAudioUrl);
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  params["cid"] = QString::number(m_currentVideo.cid);
+  params["bvid"] = m_currentVideo.bvid;
+  params["sid"] = QString::number(m_selectedSubtitleId);
+
+  QPointer<BiliController> self(this);
+  setIsLoading(true);
+  m_network->get(
+      "/video/subtitle/ass", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+        self->setIsLoading(false);
+        QString path = data.value("path").toString();
+        if (path.isEmpty()) {
+          emit self->toastMessage("字幕文件生成失败");
+          return;
+        }
+        self->launchExternalPlayerWithAudioUrlAndSubtitle(self->m_dashVideoUrl, self->m_dashAudioUrl, path);
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        self->setIsLoading(false);
+        emit self->toastMessage(QString("获取字幕失败：%1").arg(msg));
+      });
 }
 
 // ====== API: 登录 ======

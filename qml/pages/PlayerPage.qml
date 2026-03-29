@@ -54,7 +54,7 @@ Rectangle {
                 if (controller && !controller.isDownloading) {
                     if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                         controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
-                        controller.launchExternalPlayerWithAudioUrl(controller.dashVideoUrl, controller.dashAudioUrl);
+                        controller.launchExternalPlayerCurrentSelection();
                     }
                 }
             }
@@ -251,7 +251,7 @@ Rectangle {
                         if (controller && controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                             controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
                             launchRequested = false;
-                            controller.launchExternalPlayerWithAudioUrl(controller.dashVideoUrl, controller.dashAudioUrl);
+                            controller.launchExternalPlayerCurrentSelection();
                         } else {
                             if (controller) controller.fetchPlayUrl(playQuality);
                         }
