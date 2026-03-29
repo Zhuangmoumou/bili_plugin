@@ -64,6 +64,10 @@ class BiliController : public QObject {
   Q_PROPERTY(QVariantList subtitleList READ subtitleList NOTIFY subtitleListChanged)
   Q_PROPERTY(qint64 selectedSubtitleId READ selectedSubtitleId NOTIFY selectedSubtitleChanged)
   Q_PROPERTY(QString selectedSubtitleLabel READ selectedSubtitleLabel NOTIFY selectedSubtitleChanged)
+  Q_PROPERTY(int subtitleFontSize READ subtitleFontSize NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(double subtitleOutline READ subtitleOutline NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(int subtitleMarginV READ subtitleMarginV NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(double subtitleSpacing READ subtitleSpacing NOTIFY subtitleStyleChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -127,6 +131,10 @@ public:
   QVariantList subtitleList() const;
   qint64 selectedSubtitleId() const { return m_selectedSubtitleId; }
   QString selectedSubtitleLabel() const { return m_selectedSubtitleLabel; }
+  int subtitleFontSize() const { return m_subtitleFontSize; }
+  double subtitleOutline() const { return m_subtitleOutline; }
+  int subtitleMarginV() const { return m_subtitleMarginV; }
+  double subtitleSpacing() const { return m_subtitleSpacing; }
 
   bool loggedIn() const;
   bool isFavorited() const { return m_isFavorited; }
@@ -179,6 +187,10 @@ public:
   Q_INVOKABLE void selectSubtitle(qint64 subtitleId, const QString &label);
   Q_INVOKABLE void clearSelectedSubtitle();
   Q_INVOKABLE void launchExternalPlayerCurrentSelection();
+  Q_INVOKABLE void setSubtitleFontSize(int value);
+  Q_INVOKABLE void setSubtitleOutline(double value);
+  Q_INVOKABLE void setSubtitleMarginV(int value);
+  Q_INVOKABLE void setSubtitleSpacing(double value);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -221,6 +233,7 @@ signals:
   void acceptQualitiesChanged();
   void subtitleListChanged();
   void selectedSubtitleChanged();
+  void subtitleStyleChanged();
   void loginStateChanged();
   void qrcodeChanged();
   void globalErrorChanged();
@@ -269,6 +282,10 @@ private:
   QJsonArray m_subtitleItems;
   qint64 m_selectedSubtitleId = 0;
   QString m_selectedSubtitleLabel;
+  int m_subtitleFontSize = 10;
+  double m_subtitleOutline = 2.3;
+  int m_subtitleMarginV = 10;
+  double m_subtitleSpacing = 2.0;
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;

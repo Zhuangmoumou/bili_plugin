@@ -61,6 +61,12 @@ BiliController::BiliController(QObject *parent)
 
   loadLoginStatus();
   loadSearchHistory();
+  // 加载字幕样式设置
+  QSettings settings("BiliPocket", "BiliPlugin");
+  m_subtitleFontSize = settings.value("subtitleFontSize", m_subtitleFontSize).toInt();
+  m_subtitleOutline = settings.value("subtitleOutline", m_subtitleOutline).toDouble();
+  m_subtitleMarginV = settings.value("subtitleMarginV", m_subtitleMarginV).toInt();
+  m_subtitleSpacing = settings.value("subtitleSpacing", m_subtitleSpacing).toDouble();
 }
 
 BiliController::~BiliController() {
@@ -1649,6 +1655,48 @@ void BiliController::clearSelectedSubtitle() {
   emit selectedSubtitleChanged();
 }
 
+void BiliController::setSubtitleFontSize(int value) {
+  value = qBound(6, value, 40);
+  if (m_subtitleFontSize == value) return;
+  m_subtitleFontSize = value;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("subtitleFontSize", m_subtitleFontSize);
+  settings.sync();
+  emit subtitleStyleChanged();
+}
+
+void BiliController::setSubtitleOutline(double value) {
+  if (value < 0.5) value = 0.5;
+  if (value > 6.0) value = 6.0;
+  if (qFuzzyCompare(m_subtitleOutline, value)) return;
+  m_subtitleOutline = value;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("subtitleOutline", m_subtitleOutline);
+  settings.sync();
+  emit subtitleStyleChanged();
+}
+
+void BiliController::setSubtitleMarginV(int value) {
+  value = qBound(0, value, 30);
+  if (m_subtitleMarginV == value) return;
+  m_subtitleMarginV = value;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("subtitleMarginV", m_subtitleMarginV);
+  settings.sync();
+  emit subtitleStyleChanged();
+}
+
+void BiliController::setSubtitleSpacing(double value) {
+  if (value < 0) value = 0;
+  if (value > 6.0) value = 6.0;
+  if (qFuzzyCompare(m_subtitleSpacing, value)) return;
+  m_subtitleSpacing = value;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("subtitleSpacing", m_subtitleSpacing);
+  settings.sync();
+  emit subtitleStyleChanged();
+}
+
 void BiliController::launchExternalPlayerCurrentSelection() {
   if (m_dashVideoUrl.isEmpty() || m_dashAudioUrl.isEmpty()) {
     emit toastMessage("播放地址尚未准备好");
@@ -1665,6 +1713,10 @@ void BiliController::launchExternalPlayerCurrentSelection() {
   params["cid"] = QString::number(m_currentVideo.cid);
   params["bvid"] = m_currentVideo.bvid;
   params["sid"] = QString::number(m_selectedSubtitleId);
+  params["font_size"] = QString::number(m_subtitleFontSize);
+  params["outline"] = QString::number(m_subtitleOutline, 'f', 2);
+  params["margin_v"] = QString::number(m_subtitleMarginV);
+  params["spacing"] = QString::number(m_subtitleSpacing, 'f', 2);
 
   QPointer<BiliController> self(this);
   setIsLoading(true);

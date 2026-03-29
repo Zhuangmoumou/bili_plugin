@@ -1454,7 +1454,18 @@ func formatAssTime(sec float64) string {
 	return fmt.Sprintf("%d:%02d:%02d.%02d", h, m, s, cs)
 }
 
-func buildASSFromSubtitleBody(body []interface{}) string {
+func floatParam(val string, defaultVal float64) (float64, error) {
+	if val == "" {
+		return defaultVal, nil
+	}
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return 0, fmt.Errorf("参数必须为数字，收到: %s", val)
+	}
+	return f, nil
+}
+
+func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64, marginV int, spacing float64) string {
 	var sb strings.Builder
 	sb.WriteString("[Script Info]\n")
 	sb.WriteString("ScriptType: v4.00+\n")
@@ -1464,7 +1475,10 @@ func buildASSFromSubtitleBody(body []interface{}) string {
 	sb.WriteString("ScaledBorderAndShadow: no\n\n")
 	sb.WriteString("[V4+ Styles]\n")
 	sb.WriteString("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-	sb.WriteString("Style: Default,Arial,10,&H00FFFFFF,&H000000FF,&H00111111,&H64000000,1,0,0,0,100,100,2,0,1,2,0,2,8,8,2,1\n\n")
+	outlineStr := strconv.FormatFloat(outline, 'f', 1, 64)
+	spacingStr := strconv.FormatFloat(spacing, 'f', 1, 64)
+	styleLine := fmt.Sprintf("Style: Default,Arial,%d,&H00FFFFFF,&H000000FF,&H00111111,&H64000000,1,0,0,0,100,100,%s,0,1,%s,0,2,8,8,%d,1\n\n", fontSize, spacingStr, outlineStr, marginV)
+	sb.WriteString(styleLine)
 	sb.WriteString("[Events]\n")
 	sb.WriteString("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
 
@@ -1974,6 +1988,27 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 	}
 	bvid := r.URL.Query().Get("bvid")
 
+	fontSize, err := intParam(r.URL.Query().Get("font_size"), 6, 10, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	outline, err := floatParam(r.URL.Query().Get("outline"), 2.3)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	marginV, err := intParam(r.URL.Query().Get("margin_v"), 0, 2, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	spacing, err := floatParam(r.URL.Query().Get("spacing"), 2.0)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+
 	client := getClient()
 	result, err := client.GetPlayerV2(aid, cid, bvid)
 	if err != nil {
@@ -2032,7 +2067,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assContent := buildASSFromSubtitleBody(body)
+	assContent := buildASSFromSubtitleBody(body, fontSize, outline, marginV, spacing)
 	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("bili_cc_%d_%d_%d.ass", aid, cid, sid))
 	if err := os.WriteFile(tmpPath, []byte(assContent), 0644); err != nil {
 		writeError(w, 500, "字幕文件写入失败")
