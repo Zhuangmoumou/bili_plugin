@@ -20,10 +20,11 @@ Rectangle {
     Rectangle {
         id: backBtn
         visible: showBack
-        width: 44
+        width: 56
         height: parent.height
         color: "transparent"
         anchors.left: parent.left
+        anchors.leftMargin: 10
         anchors.verticalCenter: parent.verticalCenter
 
         Rectangle {

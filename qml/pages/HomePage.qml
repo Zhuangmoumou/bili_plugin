@@ -316,16 +316,15 @@ Rectangle {
                     height: 20
                     radius: 10
                     color: {
-                        if (modelData.idx === 2) {
-                            return tabMouseArea.pressed
-                            ? Theme.withAlpha(Theme.primary, 0.2)
-                            : Theme.bgTertiary
-                        }
+                        if (tabMouseArea.pressed) return Theme.withAlpha(Theme.primary, 0.2)
+                        if (modelData.idx === 2) return Theme.bgTertiary
                         return (tabIndex === modelData.idx || (modelData.idx === 3 && tabIndex === 3))
                         ? Theme.withAlpha(Theme.primary, 0.15)
                         : "transparent"
                     }
 
+                    scale: tabMouseArea.pressed ? 0.92 : 1.0
+                    Behavior on scale { NumberAnimation { duration: 80 } }
                     Behavior on color { ColorAnimation { duration: 100 } }
 
                     Text {
