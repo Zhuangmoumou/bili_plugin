@@ -68,6 +68,7 @@ class BiliController : public QObject {
   Q_PROPERTY(double subtitleOutline READ subtitleOutline NOTIFY subtitleStyleChanged)
   Q_PROPERTY(int subtitleMarginV READ subtitleMarginV NOTIFY subtitleStyleChanged)
   Q_PROPERTY(double subtitleSpacing READ subtitleSpacing NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(int subtitleBold READ subtitleBold NOTIFY subtitleStyleChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -135,6 +136,7 @@ public:
   double subtitleOutline() const { return m_subtitleOutline; }
   int subtitleMarginV() const { return m_subtitleMarginV; }
   double subtitleSpacing() const { return m_subtitleSpacing; }
+  int subtitleBold() const { return m_subtitleBold; }
 
   bool loggedIn() const;
   bool isFavorited() const { return m_isFavorited; }
@@ -191,6 +193,7 @@ public:
   Q_INVOKABLE void setSubtitleOutline(double value);
   Q_INVOKABLE void setSubtitleMarginV(int value);
   Q_INVOKABLE void setSubtitleSpacing(double value);
+  Q_INVOKABLE void setSubtitleBold(int value);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -286,6 +289,7 @@ private:
   double m_subtitleOutline = 2.3;
   int m_subtitleMarginV = 10;
   double m_subtitleSpacing = 2.0;
+  int m_subtitleBold = 1;
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;

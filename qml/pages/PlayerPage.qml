@@ -46,6 +46,17 @@ Rectangle {
         color: "#000000"
         z: 0
 
+        Image {
+            anchors.fill: parent
+            source: controller && controller.videoPic
+                    ? "image://bili/" + encodeURIComponent(controller.videoPic)
+                    : ""
+            fillMode: Image.PreserveAspectCrop
+            asynchronous: true
+            opacity: 1
+            visible: controller && controller.videoPic && controller.videoPic.length > 0
+        }
+
         Connections {
             target: controller
 
@@ -64,7 +75,12 @@ Rectangle {
         Text {
             id: placeholderText
             anchors.centerIn: parent
-            visible: true
+            visible: {
+                if (!controller) return true;
+                if (controller.isDownloading) return true;
+                if (controller.tempVideoPath && controller.tempVideoPath.length > 0) return true;
+                return controlsVisible;
+            }
             text: {
                 if (controller) {
                     if (controller.isDownloading)
@@ -83,7 +99,7 @@ Rectangle {
         }
     }
 
-    // ══════════════════════════════════════════
+    // ========
     //  第2层：点击区域（z: 10，在视频上方，控制栏下方）
     // ══════════════════════════════════════════
     MouseArea {
@@ -240,7 +256,7 @@ Rectangle {
                     anchors.fill: parent
                     onClicked: {
                         if (launchLocked) {
-                            if (controller) controller.toastMessage("请勿重复点击，5秒后可再次启动");
+                            if (controller) controller.toastMessage("请勿重复点击，10秒后可再次启动");
                             return;
                         }
 
@@ -335,6 +351,9 @@ Rectangle {
         z: 50
         running: controller && controller.isLoading && !controller.isDownloading
         message: controller && controller.isDownloading ? "正在下载视频..." : "获取播放地址..."
+        onCancelRequested: {
+            if (controller) controller.cancelAll();
+        }
     }
 
     // ══════════════════════════════════════════
@@ -348,7 +367,7 @@ Rectangle {
 
     Timer {
         id: launchLockTimer
-        interval: 5000
+        interval: 10000
         repeat: false
         onTriggered: launchLocked = false
     }

@@ -89,12 +89,17 @@ Rectangle {
             console.log("[goBack] stack empty, currentPage=", currentPage);
             if (currentPage !== "home") {
                 _animating = true;
+                var fromPage2 = currentPage;
                 currentPage = "home";
+                lastPage = fromPage2;
                 pageTransitionBack.restart();
                 return;
             }
-            console.log("[goBack] triggering plugin exit");
-            backButtonClicked();
+            // 只有在首页且没有任何弹层/页面跳转上下文时才允许退出插件
+            if (currentPage === "home") {
+                console.log("[goBack] triggering plugin exit");
+                backButtonClicked();
+            }
         }
     }
 
@@ -150,6 +155,7 @@ Rectangle {
             id: homeLoader
             active: true
             visible: currentPage === "home"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.HomePage {
@@ -180,6 +186,7 @@ Rectangle {
             // 仅在搜索页或从搜索进入详情页时保持实例
             active: currentPage === "search" || (currentPage === "detail" && lastPage === "search")
             visible: currentPage === "search"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.SearchPage {
@@ -201,6 +208,7 @@ Rectangle {
         Loader {
             active: currentPage === "detail" || currentPage === "player" || currentPage === "comments"
             visible: currentPage === "detail"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.VideoDetailPage {
@@ -219,6 +227,8 @@ Rectangle {
 
         Loader {
             active: currentPage === "player"
+            visible: currentPage === "player"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.PlayerPage {
@@ -231,6 +241,8 @@ Rectangle {
 
         Loader {
             active: currentPage === "comments"
+            visible: currentPage === "comments"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.CommentsPage {
@@ -245,6 +257,7 @@ Rectangle {
             // 在排行榜页或从排行榜进入详情页时保持实例
             active: currentPage === "ranking" || (currentPage === "detail" && lastPage === "ranking")
             visible: currentPage === "ranking"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.RankingPage {
@@ -268,6 +281,7 @@ Rectangle {
             // 仅在用户页或从用户页进入详情时保持实例
             active: currentPage === "user" || (currentPage === "detail" && lastPage === "user")
             visible: currentPage === "user"
+            enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.UserPage {

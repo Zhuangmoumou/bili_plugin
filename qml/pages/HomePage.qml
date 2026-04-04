@@ -407,6 +407,35 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
+
+            Rectangle {
+                height: 16
+                width: cancelTextItem.implicitWidth + 10
+                radius: 8
+                color: cancelArea.pressed
+                       ? Theme.withAlpha(Theme.primary, 0.18)
+                       : Theme.withAlpha(Theme.primary, 0.08)
+                border.color: Theme.withAlpha(Theme.primary, 0.25)
+                border.width: 1
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    id: cancelTextItem
+                    anchors.centerIn: parent
+                    text: "取消"
+                    color: Theme.textSecondary
+                    font.family: homePage.fontFamily
+                    font.pixelSize: 8
+                }
+
+                MouseArea {
+                    id: cancelArea
+                    anchors.fill: parent
+                    onClicked: {
+                        if (controller) controller.cancelAll();
+                    }
+                }
+            }
         }
     }
 

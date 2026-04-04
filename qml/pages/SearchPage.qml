@@ -618,6 +618,9 @@ Rectangle {
     Components.LoadingIndicator {
         anchors.centerIn: parent
         running: controller ? controller.isLoading : false
+        onCancelRequested: {
+            if (controller) controller.cancelAll();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════

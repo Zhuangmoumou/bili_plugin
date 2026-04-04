@@ -12,6 +12,10 @@ Item {
 
     property bool running: false
     property string message: "加载中..."
+    property bool cancelEnabled: true
+    property string cancelText: "取消"
+
+    signal cancelRequested()
 
     Behavior on opacity {
         NumberAnimation { duration: Theme.animNormal }
@@ -62,6 +66,34 @@ Item {
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontTiny
             anchors.horizontalCenter: parent.horizontalCenter
+        }
+
+        Rectangle {
+            visible: loadingRoot.cancelEnabled
+            height: 20
+            width: cancelTextItem.implicitWidth + 16
+            radius: 10
+            color: cancelArea.pressed
+                   ? Theme.withAlpha(Theme.primary, 0.18)
+                   : Theme.withAlpha(Theme.primary, 0.08)
+            border.color: Theme.withAlpha(Theme.primary, 0.25)
+            border.width: 1
+            anchors.horizontalCenter: parent.horizontalCenter
+
+            Text {
+                id: cancelTextItem
+                anchors.centerIn: parent
+                text: loadingRoot.cancelText
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontTiny
+            }
+
+            MouseArea {
+                id: cancelArea
+                anchors.fill: parent
+                onClicked: loadingRoot.cancelRequested()
+            }
         }
     }
 }

@@ -219,7 +219,7 @@ Rectangle {
                     MouseArea {
                         id: backArea
                         anchors.fill: parent
-                        anchors.margins: -6
+                        anchors.margins: -2
                         onClicked: detailPage.backClicked()
                     }
                 }
@@ -1475,6 +1475,35 @@ Rectangle {
                 font.family: fontFamily
                 font.pixelSize: 10
                 anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Rectangle {
+                height: 18
+                width: cancelTextItem.implicitWidth + 12
+                radius: 9
+                color: cancelArea.pressed
+                       ? Qt.rgba(0.23, 0.51, 0.96, 0.25)
+                       : Qt.rgba(0.23, 0.51, 0.96, 0.12)
+                border.color: Qt.rgba(0.23, 0.51, 0.96, 0.35)
+                border.width: 1
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Text {
+                    id: cancelTextItem
+                    anchors.centerIn: parent
+                    text: "取消"
+                    color: "#cbd5e1"
+                    font.family: fontFamily
+                    font.pixelSize: 9
+                }
+
+                MouseArea {
+                    id: cancelArea
+                    anchors.fill: parent
+                    onClicked: {
+                        if (controller) controller.cancelAll();
+                    }
+                }
             }
         }
     }

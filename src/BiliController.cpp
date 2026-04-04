@@ -67,6 +67,7 @@ BiliController::BiliController(QObject *parent)
   m_subtitleOutline = settings.value("subtitleOutline", m_subtitleOutline).toDouble();
   m_subtitleMarginV = settings.value("subtitleMarginV", m_subtitleMarginV).toInt();
   m_subtitleSpacing = settings.value("subtitleSpacing", m_subtitleSpacing).toDouble();
+  m_subtitleBold = settings.value("subtitleBold", m_subtitleBold).toInt();
 }
 
 BiliController::~BiliController() {
@@ -1697,6 +1698,16 @@ void BiliController::setSubtitleSpacing(double value) {
   emit subtitleStyleChanged();
 }
 
+void BiliController::setSubtitleBold(int value) {
+  value = qBound(0, value, 1);
+  if (m_subtitleBold == value) return;
+  m_subtitleBold = value;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("subtitleBold", m_subtitleBold);
+  settings.sync();
+  emit subtitleStyleChanged();
+}
+
 void BiliController::launchExternalPlayerCurrentSelection() {
   if (m_dashVideoUrl.isEmpty() || m_dashAudioUrl.isEmpty()) {
     emit toastMessage("播放地址尚未准备好");
@@ -1717,6 +1728,7 @@ void BiliController::launchExternalPlayerCurrentSelection() {
   params["outline"] = QString::number(m_subtitleOutline, 'f', 2);
   params["margin_v"] = QString::number(m_subtitleMarginV);
   params["spacing"] = QString::number(m_subtitleSpacing, 'f', 2);
+  params["bold"] = QString::number(m_subtitleBold);
 
   QPointer<BiliController> self(this);
   setIsLoading(true);
@@ -2213,12 +2225,12 @@ void BiliController::playVideoPart(int index) {
 }
 
 void BiliController::restartGoServer() {
-    emit toastMessage("正在重启 Go 服务...");
+    emit toastMessage("正在重启 Go 服务端...");
     stopApiServer();
     if (startApiServer()) {
-        emit toastMessage("Go 服务已重启");
+        emit toastMessage("Go 服务端已重启");
     } else {
-        emit toastMessage("Go 服务重启失败");
+        emit toastMessage("Go 服务端重启失败");
     }
 }
 

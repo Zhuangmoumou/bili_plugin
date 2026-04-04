@@ -27,6 +27,7 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
 
         Rectangle {
+            id: backBtnCore
             anchors.centerIn: parent
             width: 38; height: 22
             radius: Theme.radiusMedium
@@ -54,12 +55,12 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
-        }
 
-        MouseArea {
-            id: backArea
-            anchors.fill: parent
-            onClicked: titleBar.backClicked()
+            MouseArea {
+                id: backArea
+                anchors.fill: parent
+                onClicked: titleBar.backClicked()
+            }
         }
     }
 

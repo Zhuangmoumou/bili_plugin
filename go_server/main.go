@@ -1465,7 +1465,7 @@ func floatParam(val string, defaultVal float64) (float64, error) {
 	return f, nil
 }
 
-func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64, marginV int, spacing float64) string {
+func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64, marginV int, spacing float64, bold int) string {
 	var sb strings.Builder
 	sb.WriteString("[Script Info]\n")
 	sb.WriteString("ScriptType: v4.00+\n")
@@ -1477,7 +1477,7 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64,
 	sb.WriteString("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
 	outlineStr := strconv.FormatFloat(outline, 'f', 1, 64)
 	spacingStr := strconv.FormatFloat(spacing, 'f', 1, 64)
-	styleLine := fmt.Sprintf("Style: Default,Arial,%d,&H00FFFFFF,&H000000FF,&H00111111,&H64000000,1,0,0,0,100,100,%s,0,1,%s,0,2,8,8,%d,1\n\n", fontSize, spacingStr, outlineStr, marginV)
+	styleLine := fmt.Sprintf("Style: Default,Arial,%d,&H00FFFFFF,&H000000FF,&H00111111,&H64000000,%d,0,0,0,100,100,%s,0,1,%s,0,2,8,8,%d,1\n\n", fontSize, bold, spacingStr, outlineStr, marginV)
 	sb.WriteString(styleLine)
 	sb.WriteString("[Events]\n")
 	sb.WriteString("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
@@ -2008,6 +2008,11 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
+	bold, err := intParam(r.URL.Query().Get("bold"), 0, 1, false)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 
 	client := getClient()
 	result, err := client.GetPlayerV2(aid, cid, bvid)
@@ -2067,7 +2072,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assContent := buildASSFromSubtitleBody(body, fontSize, outline, marginV, spacing)
+	assContent := buildASSFromSubtitleBody(body, fontSize, outline, marginV, spacing, bold)
 	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("bili_cc_%d_%d_%d.ass", aid, cid, sid))
 	if err := os.WriteFile(tmpPath, []byte(assContent), 0644); err != nil {
 		writeError(w, 500, "字幕文件写入失败")
