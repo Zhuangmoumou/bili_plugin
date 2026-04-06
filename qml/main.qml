@@ -183,8 +183,8 @@ Rectangle {
 
         Loader {
             id: searchLoader
-            // 仅在搜索页或从搜索进入详情页时保持实例
-            active: currentPage === "search" || (currentPage === "detail" && lastPage === "search")
+            // 仅在搜索页或从搜索进入详情/播放页时保持实例
+            active: currentPage === "search" || (currentPage === "detail" && lastPage === "search") || (currentPage === "player" && root.pageStack.indexOf("search") >= 0)
             visible: currentPage === "search"
             enabled: visible
             anchors.fill: parent

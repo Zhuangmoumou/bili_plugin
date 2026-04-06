@@ -43,6 +43,17 @@ struct CommentItem {
     bool isVip = false;
 };
 
+struct CommentReplyItem {
+    qint64 rpid = 0;
+    QString userName;
+    QString avatar;
+    int level = 0;
+    QString content;
+    qint64 likes = 0;
+    qint64 ctime = 0;
+    bool isVip = false;
+};
+
 struct HotSearchItem {
     QString keyword;
     QString icon;
@@ -185,6 +196,57 @@ private:
     QVector<CommentItem> m_items;
     bool m_loading;
     int m_totalCount;
+    QString m_errorMessage;
+};
+
+// ============ 子评论列表模型 ============
+
+class CommentReplyListModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+
+public:
+    enum Roles {
+        RpidRole = Qt::UserRole + 1,
+        UserNameRole,
+        AvatarRole,
+        LevelRole,
+        ContentRole,
+        LikesRole,
+        CtimeRole,
+        CtimeTextRole,
+        IsVipRole
+    };
+    Q_ENUM(Roles)
+
+    explicit CommentReplyListModel(QObject *parent = nullptr);
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    int count() const;
+    bool loading() const;
+    QString errorMessage() const;
+
+    Q_INVOKABLE void clear();
+    void setItems(const QVector<CommentReplyItem> &items);
+    void setLoading(bool loading);
+    void setErrorMessage(const QString &msg);
+
+    static CommentReplyItem parseCommentReplyItem(const QJsonObject &obj);
+
+signals:
+    void countChanged();
+    void loadingChanged();
+    void errorMessageChanged();
+
+private:
+    QVector<CommentReplyItem> m_items;
+    bool m_loading = false;
     QString m_errorMessage;
 };
 

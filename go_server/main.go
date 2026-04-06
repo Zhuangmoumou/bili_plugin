@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/hmac"
 	"crypto/md5"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,11 +13,13 @@ import (
 	"html"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -514,11 +518,66 @@ func (c *BilibiliClient) startCookieRefreshLoop() {
 	go func() {
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
-		for {
+		for range ticker.C {
 			c.refreshCookies()
-			<-ticker.C
 		}
 	}()
+}
+
+func buildCorrespondPath(ts int64) (string, error) {
+	// 对 refresh_{timestamp} 进行 RSA-OAEP(SHA256) 加密，输出小写 hex
+	message := []byte("refresh_" + strconv.FormatInt(ts, 10))
+
+	// 公钥参数来自官方文档
+	modulusHex := "y4HdjgJHBlbaBN04VERG4qNBIFHP6a3GozCl75AihQloSWCXC5HDNgyinEnhaQ_4-gaMud_GF50elYXLlCToR9se9Z8z433U3KjM-3Yx7ptKkmQNAMggQwAVKgq3zYAoidNEWuxpkY_mAitTSRLnsJW-NCTa0bqBFF6Wm1MxgfE"
+	modulusBytes, err := base64.RawURLEncoding.DecodeString(modulusHex)
+	if err != nil {
+		return "", err
+	}
+	modulus := new(big.Int).SetBytes(modulusBytes)
+	pub := &rsa.PublicKey{N: modulus, E: 65537}
+
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, message, nil)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(hex.EncodeToString(ciphertext)), nil
+}
+
+func getRefreshCSRF(c *BilibiliClient, sessdata, biliJct string, ts int64) string {
+	correspondPath, err := buildCorrespondPath(ts)
+	if err != nil {
+		logWarn("生成 correspondPath 失败: %s", err.Error())
+		return ""
+	}
+	urlStr := "https://www.bilibili.com/correspond/1/" + correspondPath
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		logWarn("请求 refresh_csrf 失败: %s", err.Error())
+		return ""
+	}
+	c.setHeaders(req)
+	req.Header.Set("Cookie", "SESSDATA="+sessdata+"; bili_jct="+biliJct)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		logWarn("refresh_csrf 请求失败: %s", err.Error())
+		return ""
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	text := string(body)
+
+	// 尝试多种模式提取 refresh_csrf
+	re1 := regexp.MustCompile(`refresh_csrf"\s*:\s*"([^"]+)"`)
+	re2 := regexp.MustCompile(`name="refresh_csrf"\s+value="([^"]+)"`)
+	if m := re1.FindStringSubmatch(text); len(m) > 1 {
+		return m[1]
+	}
+	if m := re2.FindStringSubmatch(text); len(m) > 1 {
+		return m[1]
+	}
+	return ""
 }
 
 func (c *BilibiliClient) refreshCookies() {
@@ -563,14 +622,26 @@ func (c *BilibiliClient) refreshCookies() {
 		refreshToken = rt
 	}
 
+	timestamp := int64(0)
+	if ts, ok := data["timestamp"].(float64); ok {
+		timestamp = int64(ts)
+	}
+
 	logInfo("Cookie 刷新状态: refresh=%t refresh_token=%t", refreshNeeded, refreshToken != "")
 	if !refreshNeeded {
 		logInfo("Cookie 无需刷新")
 		return
 	}
 	if refreshCSRF == "" {
-		refreshCSRF = biliJct
-		logWarn("refresh_csrf 缺失，使用 bili_jct 作为 fallback")
+		if timestamp <= 0 {
+			logInfo("refresh_csrf 缺失且 timestamp 不可用，跳过本次刷新")
+			return
+		}
+		refreshCSRF = getRefreshCSRF(c, sessdata, biliJct, timestamp)
+		if refreshCSRF == "" {
+			logInfo("refresh_csrf 获取失败，跳过本次刷新")
+			return
+		}
 	}
 
 	// Step 2: 刷新 Cookie
@@ -603,7 +674,12 @@ func (c *BilibiliClient) refreshCookies() {
 		return
 	}
 	if code, ok := refreshResult["code"].(float64); ok && int(code) != 0 {
-		logWarn("Cookie refresh 返回异常: code=%d", int(code))
+		codeInt := int(code)
+		if codeInt == 86095 {
+			logInfo("Cookie 当前无需刷新或刷新条件不满足: code=%d", codeInt)
+			return
+		}
+		logWarn("Cookie refresh 返回异常: code=%d", codeInt)
 		return
 	}
 
@@ -764,6 +840,83 @@ func (c *BilibiliClient) rawGetURL(fullURL string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.RawMessage, error) {
+	query := buildSortedQuery(params)
+	cookie := c.buildCookie()
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		req, err := http.NewRequest("POST", apiURL, strings.NewReader(query))
+		if err != nil {
+			return nil, err
+		}
+		c.setHeaders(req)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+		req.Header.Set("Origin", "https://www.bilibili.com")
+		req.Header.Set("Referer", "https://www.bilibili.com/")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		req.Header.Set("Cookie", cookie)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			logWarn("webPost 请求失败 attempt=%d url=%s err=%s", attempt, apiURL, err.Error())
+			if attempt < 2 {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			return nil, err
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			logWarn("webPost 读取响应失败 attempt=%d url=%s err=%s", attempt, apiURL, readErr.Error())
+			if attempt < 2 {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			return nil, readErr
+		}
+
+		if resp.StatusCode == http.StatusForbidden {
+			sessdata, buvid3, biliJct, refreshToken := c.getAuth()
+			logWarn("webPost 命中403 attempt=%d url=%s sessdata=%t buvid3=%t bili_jct=%t refresh_token=%t body=%s",
+				attempt,
+				apiURL,
+				sessdata != "",
+				buvid3 != "",
+				biliJct != "",
+				refreshToken != "",
+				string(body))
+			lastErr = fmt.Errorf("HTTP 403 Forbidden")
+			if attempt < 2 {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		if resp.StatusCode >= 400 {
+			logWarn("webPost 非成功状态 attempt=%d url=%s status=%d body=%s", attempt, apiURL, resp.StatusCode, string(body))
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			if attempt < 2 {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		return body, nil
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("webPost unknown error")
+}
+
 // ==================== API 方法 ====================
 
 func (c *BilibiliClient) GetPopularVideos(pn, ps int) (json.RawMessage, error) {
@@ -812,6 +965,17 @@ func (c *BilibiliClient) GetVideoComments(oid, typ, sortVal, ps, pn int) (json.R
 			 "sort": strconv.Itoa(sortVal),
 			 "ps":   strconv.Itoa(ps),
 			 "pn":   strconv.Itoa(pn),
+	}, "GET")
+}
+
+func (c *BilibiliClient) GetCommentReplies(oid, root, typ, ps, pn int) (json.RawMessage, error) {
+	logInfo("获取子评论 oid=%d root=%d type=%d", oid, root, typ)
+	return c.request("https://api.bilibili.com/x/v2/reply/reply", map[string]string{
+		"type": strconv.Itoa(typ),
+		"oid":  strconv.Itoa(oid),
+		"root": strconv.Itoa(root),
+		"ps":   strconv.Itoa(ps),
+		"pn":   strconv.Itoa(pn),
 	}, "GET")
 }
 
@@ -996,6 +1160,70 @@ func (c *BilibiliClient) GetFavoriteStatus(aid int) (json.RawMessage, error) {
 	}, "GET")
 }
 
+func (c *BilibiliClient) GetCoinStatus(aid int) (json.RawMessage, error) {
+	logInfo("获取投币状态 aid=%d", aid)
+	return c.request("https://api.bilibili.com/x/web-interface/archive/coins", map[string]string{
+		"aid": strconv.Itoa(aid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) AddCoin(aid int, multiply int, selectLike bool, bvid string) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+	if multiply < 1 {
+		multiply = 1
+	}
+	if multiply > 2 {
+		multiply = 2
+	}
+	like := "0"
+	if selectLike {
+		like = "1"
+	}
+	params := map[string]string{
+		"aid":         strconv.Itoa(aid),
+		"multiply":    strconv.Itoa(multiply),
+		"select_like": like,
+		"csrf":        biliJct,
+	}
+	if bvid != "" {
+		params["bvid"] = bvid
+	}
+
+	apiURL := "https://api.bilibili.com/x/web-interface/coin/add"
+	return c.webPost(apiURL, params)
+}
+
+func (c *BilibiliClient) GetLikeStatus(aid int) (json.RawMessage, error) {
+	logInfo("获取点赞状态 aid=%d", aid)
+	return c.request("https://api.bilibili.com/x/web-interface/archive/has/like", map[string]string{
+		"aid": strconv.Itoa(aid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) ToggleLike(aid int, like int, bvid string) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+	if like != 1 && like != 2 {
+		like = 1
+	}
+	params := map[string]string{
+		"aid":  strconv.Itoa(aid),
+		"like": strconv.Itoa(like),
+		"csrf": biliJct,
+	}
+	if bvid != "" {
+		params["bvid"] = bvid
+	}
+
+	apiURL := "https://api.bilibili.com/x/web-interface/archive/like"
+	return c.webPost(apiURL, params)
+}
+
 func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.RawMessage, error) {
 	sessdata, _, biliJct, _ := c.getAuth()
 	if sessdata == "" || biliJct == "" {
@@ -1010,13 +1238,13 @@ func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.Ra
 		delMedia = strconv.Itoa(mediaId)
 	}
 
-	return c.request("https://api.bilibili.com/x/v3/fav/resource/deal", map[string]string{
+	return c.webPost("https://api.bilibili.com/x/v3/fav/resource/deal", map[string]string{
 		"rid":           strconv.Itoa(aid),
 		"type":          "2",
 		"add_media_ids": addMedia,
 		"del_media_ids": delMedia,
 		"csrf":          biliJct,
-	}, "POST")
+	})
 }
 
 func (c *BilibiliClient) ReportHeartbeat(aid, cid int, bvid string, playedTime int) (json.RawMessage, error) {
@@ -1211,6 +1439,11 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
     			"/fav/resource/list - 收藏夹内容",
 	    		"/fav/status - 收藏状态",
 		    	"/fav/toggle - 收藏切换",
+                "/coin/status - 投币状态",
+                "/coin/add - 投币",
+                "/like/status - 点赞状态",
+                "/like/toggle - 点赞/取消点赞",
+                "/video/comments/replies - 子评论",
 			},
 		},
 	})
@@ -1529,6 +1762,52 @@ func handleVideoDanmakuConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleVideoCommentsReplies(w http.ResponseWriter, r *http.Request) {
+	oid, err := intParam(r.URL.Query().Get("oid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if oid == 0 {
+		logWarn("oid 缺失")
+		writeError(w, 400, "oid 为必填参数")
+		return
+	}
+	root, err := intParam(r.URL.Query().Get("root"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if root == 0 {
+		logWarn("root 缺失")
+		writeError(w, 400, "root 为必填参数")
+		return
+	}
+	typ, err := intParam(r.URL.Query().Get("type"), 0, 1, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	client := getClient()
+	result, err := client.GetCommentReplies(oid, root, typ, ps, pn)
+	if err != nil {
+		logError("处理 /video/comments/replies 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
 func handleVideoComments(w http.ResponseWriter, r *http.Request) {
 	oid, err := intParam(r.URL.Query().Get("oid"), 1, 0, true)
 	if err != nil {
@@ -1783,6 +2062,125 @@ func handleFavStatus(w http.ResponseWriter, r *http.Request) {
 	result, err := client.GetFavoriteStatus(aid)
 	if err != nil {
 		logError("处理 /fav/status 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleCoinStatus(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	client := getClient()
+	result, err := client.GetCoinStatus(aid)
+	if err != nil {
+		logError("处理 /coin/status 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleCoinAdd(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	multiply, err := intParam(r.URL.Query().Get("multiply"), 1, 1, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if multiply > 2 {
+		multiply = 2
+	}
+	selectLike := r.URL.Query().Get("select_like") == "1"
+	bvid := r.URL.Query().Get("bvid")
+	client := getClient()
+	result, err := client.AddCoin(aid, multiply, selectLike, bvid)
+	if err != nil {
+		logError("处理 /coin/add 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	client := getClient()
+	result, err := client.GetLikeStatus(aid)
+	if err != nil {
+		logError("处理 /like/status 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	// 将 data 的数值包装为对象，保证客户端解析
+	var resp map[string]interface{}
+	if err := json.Unmarshal(result, &resp); err == nil {
+		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
+			liked := 0
+			if v, ok := resp["data"].(float64); ok {
+				liked = int(v)
+			}
+			writeJSON(w, 200, map[string]interface{}{
+				"code":    0,
+				"message": "success",
+				"data": map[string]interface{}{
+					"liked": liked,
+				},
+			})
+			return
+		}
+	}
+	writeJSON(w, 200, wrapResult(result))
+}
+
+func handleLikeToggle(w http.ResponseWriter, r *http.Request) {
+	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if aid == 0 {
+		logWarn("aid 缺失")
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	likeVal, err := intParam(r.URL.Query().Get("like"), 1, 1, true)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+	client := getClient()
+	result, err := client.ToggleLike(aid, likeVal, bvid)
+	if err != nil {
+		logError("处理 /like/toggle 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
 		return
 	}
@@ -2200,6 +2598,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/danmaku", handleVideoDanmaku)
 	mux.HandleFunc("/video/danmaku/config", handleVideoDanmakuConfig)
 	mux.HandleFunc("/video/comments", handleVideoComments)
+    mux.HandleFunc("/video/comments/replies", handleVideoCommentsReplies)
 	mux.HandleFunc("/video/subtitle/list", handleVideoSubtitleList)
 	mux.HandleFunc("/video/subtitle/ass", handleVideoSubtitleASS)
 	mux.HandleFunc("/user/info", handleUserInfo)
@@ -2213,6 +2612,10 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
 	mux.HandleFunc("/fav/status", handleFavStatus)
 	mux.HandleFunc("/fav/toggle", handleFavToggle)
+    mux.HandleFunc("/coin/status", handleCoinStatus)
+    mux.HandleFunc("/coin/add", handleCoinAdd)
+    mux.HandleFunc("/like/status", handleLikeStatus)
+    mux.HandleFunc("/like/toggle", handleLikeToggle)
 	mux.HandleFunc("/qrcode/generate", handleQrcodeGenerate)
 	mux.HandleFunc("/qrcode/poll", handleQrcodePoll)
 }
@@ -2268,31 +2671,36 @@ func main() {
 		os.Exit(0)
 	}()
 
-	fmt.Println()
-	fmt.Println(strings.Repeat("=", 60))
-	logSuccess("✅ 服务器运行于 http://0.0.0.0:%s", port)
-	logInfo("可用接口列表:")
-	fmt.Println("  GET  /popular          - 热门视频")
-	fmt.Println("  GET  /ranking          - 排行榜")
-	fmt.Println("  GET  /search           - 搜索视频")
-	fmt.Println("  GET  /video/info       - 视频详情")
-	fmt.Println("  GET  /video/playurl    - 播放地址")
-	fmt.Println("  GET  /video/danmaku    - 弹幕数据")
-	fmt.Println("  GET  /video/comments   - 评论列表")
-	fmt.Println("  GET  /video/subtitle/list - CC字幕列表")
-	fmt.Println("  GET  /video/subtitle/ass  - 生成ASS字幕")
-	fmt.Println("  GET  /user/info        - 用户信息")
-	fmt.Println("  GET  /login/info       - 登录信息")
-	fmt.Println("  GET  /hot/search       - 热搜榜")
-	fmt.Println("  GET  /recommend        - 首页推荐")
-	fmt.Println("  GET  /history/recent   - 最近观看")
+    fmt.Println()
+    fmt.Println(strings.Repeat("=", 60))
+    logSuccess("✅ 服务器运行于 http://0.0.0.0:%s", port)
+    logInfo("可用接口列表:")
+    fmt.Println("  GET  /popular          - 热门视频")
+    fmt.Println("  GET  /ranking          - 排行榜")
+    fmt.Println("  GET  /search           - 搜索视频")
+    fmt.Println("  GET  /video/info       - 视频详情")
+    fmt.Println("  GET  /video/playurl    - 播放地址")
+    fmt.Println("  GET  /video/danmaku    - 弹幕数据")
+    fmt.Println("  GET  /video/comments   - 评论列表")
+    fmt.Println("  GET  /video/comments/replies - 子评论")
+    fmt.Println("  GET  /video/subtitle/list - CC字幕列表")
+    fmt.Println("  GET  /video/subtitle/ass  - 生成ASS字幕")
+    fmt.Println("  GET  /user/info        - 用户信息")
+    fmt.Println("  GET  /login/info       - 登录信息")
+    fmt.Println("  GET  /hot/search       - 热搜榜")
+    fmt.Println("  GET  /recommend        - 首页推荐")
+    fmt.Println("  GET  /history/recent   - 最近观看")
     fmt.Println("  GET  /player/heartbeat - 回调心跳")
-	fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
-	fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
-	fmt.Println("  GET  /fav/status       - 收藏状态")
-	fmt.Println("  GET  /fav/toggle       - 收藏切换")
-	fmt.Println("  GET  /qrcode/generate  - 生成登录二维码")
-	fmt.Println("  GET  /qrcode/poll      - 轮询二维码状态")
+    fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
+    fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
+    fmt.Println("  GET  /fav/status       - 收藏状态")
+    fmt.Println("  GET  /fav/toggle       - 收藏切换")
+    fmt.Println("  GET  /coin/status      - 投币状态")
+    fmt.Println("  GET  /coin/add         - 投币")
+    fmt.Println("  GET  /like/status      - 点赞状态")
+    fmt.Println("  GET  /like/toggle      - 点赞/取消点赞")
+   	fmt.Println("  GET  /qrcode/generate  - 生成登录二维码")
+    fmt.Println("  GET  /qrcode/poll      - 轮询二维码状态")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println()
 	logInfo("服务器已就绪，等待请求...")

@@ -384,6 +384,116 @@ QString CommentListModel::formatTime(qint64 timestamp)
     return dt.toString("yyyy-MM-dd");
 }
 
+// ============ CommentReplyListModel ============
+
+CommentReplyListModel::CommentReplyListModel(QObject *parent)
+    : QAbstractListModel(parent)
+{
+}
+
+int CommentReplyListModel::rowCount(const QModelIndex &parent) const
+{
+    Q_UNUSED(parent)
+    return m_items.count();
+}
+
+QVariant CommentReplyListModel::data(const QModelIndex &index, int role) const
+{
+    if (index.row() < 0 || index.row() >= m_items.count())
+        return QVariant();
+
+    const CommentReplyItem &item = m_items[index.row()];
+
+    switch (role) {
+    case RpidRole: return item.rpid;
+    case UserNameRole: return item.userName;
+    case AvatarRole: return item.avatar;
+    case LevelRole: return item.level;
+    case ContentRole: return item.content;
+    case LikesRole: return item.likes;
+    case CtimeRole: return item.ctime;
+    case CtimeTextRole: return CommentListModel::formatTime(item.ctime);
+    case IsVipRole: return item.isVip;
+    default: return QVariant();
+    }
+}
+
+QHash<int, QByteArray> CommentReplyListModel::roleNames() const
+{
+    return {
+        {RpidRole, "rpid"},
+        {UserNameRole, "userName"},
+        {AvatarRole, "avatar"},
+        {LevelRole, "level"},
+        {ContentRole, "content"},
+        {LikesRole, "likes"},
+        {CtimeRole, "ctime"},
+        {CtimeTextRole, "ctimeText"},
+        {IsVipRole, "isVip"}
+    };
+}
+
+int CommentReplyListModel::count() const { return m_items.count(); }
+bool CommentReplyListModel::loading() const { return m_loading; }
+QString CommentReplyListModel::errorMessage() const { return m_errorMessage; }
+
+void CommentReplyListModel::clear()
+{
+    beginResetModel();
+    m_items.clear();
+    m_errorMessage.clear();
+    endResetModel();
+    emit countChanged();
+    emit errorMessageChanged();
+}
+
+void CommentReplyListModel::setItems(const QVector<CommentReplyItem> &items)
+{
+    beginResetModel();
+    m_items = items;
+    endResetModel();
+    emit countChanged();
+}
+
+void CommentReplyListModel::setLoading(bool loading)
+{
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit loadingChanged();
+    }
+}
+
+void CommentReplyListModel::setErrorMessage(const QString &msg)
+{
+    if (m_errorMessage != msg) {
+        m_errorMessage = msg;
+        emit errorMessageChanged();
+    }
+}
+
+CommentReplyItem CommentReplyListModel::parseCommentReplyItem(const QJsonObject &obj)
+{
+    CommentReplyItem item;
+    item.rpid = obj.value("rpid").toVariant().toLongLong();
+    item.ctime = obj.value("ctime").toVariant().toLongLong();
+    item.likes = obj.value("like").toVariant().toLongLong();
+
+    QJsonObject member = obj.value("member").toObject();
+    item.userName = member.value("uname").toString();
+    item.avatar = member.value("avatar").toString();
+
+    QJsonObject levelInfo = member.value("level_info").toObject();
+    item.level = levelInfo.value("current_level").toInt();
+
+    QJsonObject vip = member.value("vip").toObject();
+    item.isVip = (vip.value("vipStatus").toInt() == 1);
+
+    QJsonObject content = obj.value("content").toObject();
+    item.content = content.value("message").toString();
+
+    return item;
+}
+
 // ============ HotSearchModel ============
 
 HotSearchModel::HotSearchModel(QObject *parent)

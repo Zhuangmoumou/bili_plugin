@@ -29,7 +29,7 @@ static void stopApiServer();
 BiliController::BiliController(QObject *parent)
     : QObject(parent), m_network(BiliNetwork::instance()),
       m_currentPage("home"), m_playQuality(64), m_isDownloading(false),
-      m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false),
+      m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false), m_isCoined(false), m_isLiked(false),
       m_userName(""), m_userFace(""), m_qrcodeUrl(""), m_qrcodeKey(""),
       m_userId(0), m_userLevel(0), m_userExp(0), m_userExpMin(0), m_userExpNext(0), m_userCoins(0), m_userFans(0),
       m_userFollowing(0), m_userSign(""), m_userVipLabel(""),
@@ -40,6 +40,7 @@ BiliController::BiliController(QObject *parent)
       m_rankingModel(new VideoListModel(this)),
       m_searchModel(new SearchResultModel(this)),
       m_commentModel(new CommentListModel(this)),
+      m_commentReplyModel(new CommentReplyListModel(this)),
       m_hotSearchModel(new HotSearchModel(this)),
       m_videoPartModel(new VideoPartListModel(this)),
       m_searchHistoryModel(new QStringListModel(this)),
@@ -199,6 +200,7 @@ QObject *BiliController::popularModel() { return m_popularModel; }
 QObject *BiliController::rankingModel() { return m_rankingModel; }
 QObject *BiliController::searchModel() { return m_searchModel; }
 QObject *BiliController::commentModel() { return m_commentModel; }
+QObject *BiliController::commentReplyModel() { return m_commentReplyModel; }
 QObject *BiliController::hotSearchModel() { return m_hotSearchModel; }
 
 QObject *BiliController::videoPartModel() { return m_videoPartModel; }
@@ -526,21 +528,33 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
     return;
   }
 
-  // 切换视频时重置收藏状态
-  if (m_isFavorited) {
-    m_isFavorited = false;
-    emit favoriteStatusChanged();
-  }
+  bool sameVideoRefresh = (m_currentVideo.bvid == bvid && !bvid.isEmpty());
 
-  // 切换视频时重置字幕选择与列表
-  if (m_selectedSubtitleId != 0 || !m_selectedSubtitleLabel.isEmpty()) {
-    m_selectedSubtitleId = 0;
-    m_selectedSubtitleLabel.clear();
-    emit selectedSubtitleChanged();
-  }
-  if (!m_subtitleItems.isEmpty()) {
-    m_subtitleItems = QJsonArray();
-    emit subtitleListChanged();
+  // 仅在切换到新视频时重置收藏/投币/点赞/字幕状态，避免同视频刷新闪动
+  if (!sameVideoRefresh) {
+    if (m_isFavorited) {
+      m_isFavorited = false;
+      emit favoriteStatusChanged();
+    }
+    if (m_isCoined) {
+      m_isCoined = false;
+      emit coinStatusChanged();
+    }
+    if (m_isLiked) {
+      m_isLiked = false;
+      emit likeStatusChanged();
+    }
+
+    // 切换视频时重置字幕选择与列表
+    if (m_selectedSubtitleId != 0 || !m_selectedSubtitleLabel.isEmpty()) {
+      m_selectedSubtitleId = 0;
+      m_selectedSubtitleLabel.clear();
+      emit selectedSubtitleChanged();
+    }
+    if (!m_subtitleItems.isEmpty()) {
+      m_subtitleItems = QJsonArray();
+      emit subtitleListChanged();
+    }
   }
 
   // BV号格式校验
@@ -1158,6 +1172,7 @@ void BiliController::fetchComments(int page) {
   QMap<QString, QString> params;
   params["oid"] = QString::number(m_currentVideo.aid);
   params["type"] = "1";
+  params["sort"] = "2";
   params["pn"] = QString::number(page);
   params["ps"] = "10";
 
@@ -1201,6 +1216,59 @@ void BiliController::fetchComments(int page) {
           self->m_commentModel->setErrorMessage(msg);
           emit self->toastMessage(QString("评论加载失败：%1").arg(msg));
         }
+      });
+}
+
+void BiliController::fetchCommentReplies(qint64 rootRpid) {
+  if (m_currentVideo.aid <= 0 || rootRpid <= 0) {
+    emit toastMessage("评论信息不完整");
+    return;
+  }
+  if (m_commentReplyModel->loading())
+    return;
+
+  m_currentCommentRootRpid = rootRpid;
+  m_commentReplyModel->clear();
+  m_commentReplyModel->setLoading(true);
+  setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["oid"] = QString::number(m_currentVideo.aid);
+  params["type"] = "1";
+  params["root"] = QString::number(rootRpid);
+  params["ps"] = "20";
+  params["pn"] = "1";
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/video/comments/replies", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        QJsonArray replies = data.value("replies").toArray();
+        QVector<CommentReplyItem> items;
+        items.reserve(replies.size());
+        for (const QJsonValue &v : replies) {
+          if (v.isObject()) {
+            items.append(CommentReplyListModel::parseCommentReplyItem(v.toObject()));
+          }
+        }
+
+        self->m_commentReplyModel->setItems(items);
+        self->m_commentReplyModel->setLoading(false);
+        self->setIsLoading(false);
+        if (items.isEmpty()) {
+          self->m_commentReplyModel->setErrorMessage("暂无回复");
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        self->m_commentReplyModel->setLoading(false);
+        self->m_commentReplyModel->setErrorMessage(msg);
+        self->setIsLoading(false);
+        emit self->toastMessage(QString("回复加载失败：%1").arg(msg));
       });
 }
 
@@ -1423,6 +1491,171 @@ void BiliController::fetchFavoriteStatus() {
         if (!self)
           return;
         emit self->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
+      });
+}
+
+void BiliController::fetchCoinStatus() {
+  if (!m_loggedIn) {
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/coin/status", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        bool coined = false;
+        int multiply = data.value("multiply").toInt(0);
+        if (multiply > 0) {
+          coined = true;
+        } else if (data.value("multiply").isString()) {
+          coined = data.value("multiply").toString().toInt() > 0;
+        }
+        if (self->m_isCoined != coined) {
+          self->m_isCoined = coined;
+          emit self->coinStatusChanged();
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("获取投币状态失败：%1").arg(msg));
+      });
+}
+
+void BiliController::addCoin(int multiply, bool selectLike) {
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后再投币");
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    emit toastMessage("视频信息不完整");
+    return;
+  }
+  if (m_isCoined) {
+    emit toastMessage("已经投过币了");
+    return;
+  }
+
+  multiply = qBound(1, multiply, 2);
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  params["bvid"] = m_currentVideo.bvid;
+  params["multiply"] = QString::number(multiply);
+  params["select_like"] = selectLike ? "1" : "0";
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/coin/add", params,
+      [self, multiply, selectLike](const QJsonObject &) {
+        if (!self)
+          return;
+        self->m_isCoined = true;
+        if (selectLike) {
+          self->m_isLiked = true;
+          emit self->likeStatusChanged();
+        }
+        emit self->coinStatusChanged();
+        emit self->toastMessage(QString("投币成功（%1个）").arg(multiply));
+        self->fetchVideoDetail(self->m_currentVideo.bvid);
+        self->fetchCoinStatus();
+        self->fetchLikeStatus();
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("投币失败：%1").arg(msg));
+      });
+}
+
+void BiliController::fetchLikeStatus() {
+  if (!m_loggedIn) {
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+
+  QPointer<BiliController> self(this);
+
+  m_network->get(
+      "/like/status", params,
+      [self](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        int liked = 0;
+        if (data.value("liked").isBool()) {
+          liked = data.value("liked").toBool() ? 1 : 0;
+        } else if (data.value("liked").isString()) {
+          liked = data.value("liked").toString().toInt();
+        } else {
+          liked = data.value("liked").toInt(0);
+        }
+        bool isLiked = liked == 1;
+        if (self->m_isLiked != isLiked) {
+          self->m_isLiked = isLiked;
+          emit self->likeStatusChanged();
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("获取点赞状态失败：%1").arg(msg));
+      });
+}
+
+void BiliController::toggleLike() {
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后再点赞");
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    emit toastMessage("视频信息不完整");
+    return;
+  }
+
+  int likeAction = m_isLiked ? 2 : 1; // 1=点赞,2=取消
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  params["bvid"] = m_currentVideo.bvid;
+  params["like"] = QString::number(likeAction);
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/like/toggle", params,
+      [self, likeAction](const QJsonObject &) {
+        if (!self)
+          return;
+        bool newLiked = (likeAction == 1);
+        self->m_isLiked = newLiked;
+        if (newLiked) {
+          emit self->toastMessage("点赞成功");
+        } else {
+          emit self->toastMessage("已取消点赞");
+        }
+        emit self->likeStatusChanged();
+        self->fetchVideoDetail(self->m_currentVideo.bvid);
+        self->fetchLikeStatus();
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("点赞操作失败：%1").arg(msg));
       });
 }
 
@@ -2033,6 +2266,14 @@ void BiliController::clearLocalLoginState() {
   if (m_isFavorited) {
     m_isFavorited = false;
     emit favoriteStatusChanged();
+  }
+  if (m_isCoined) {
+    m_isCoined = false;
+    emit coinStatusChanged();
+  }
+  if (m_isLiked) {
+    m_isLiked = false;
+    emit likeStatusChanged();
   }
   emit loginStateChanged();
 }

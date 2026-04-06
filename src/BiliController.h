@@ -16,6 +16,7 @@
 class VideoPartListModel;
 class VideoListModel;
 class CommentListModel;
+class CommentReplyListModel;
 class HotSearchModel;
 class SearchResultModel;
 class QStringListModel;
@@ -72,8 +73,10 @@ class BiliController : public QObject {
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
-  // 收藏状态
+  // 收藏/投币/点赞状态
   Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
+  Q_PROPERTY(bool isCoined READ isCoined NOTIFY coinStatusChanged)
+  Q_PROPERTY(bool isLiked READ isLiked NOTIFY likeStatusChanged)
   Q_PROPERTY(QString userName READ userName NOTIFY loginStateChanged)
   Q_PROPERTY(QString userFace READ userFace NOTIFY loginStateChanged)
   Q_PROPERTY(QString qrcodeUrl READ qrcodeUrl NOTIFY qrcodeChanged)
@@ -140,6 +143,8 @@ public:
 
   bool loggedIn() const;
   bool isFavorited() const { return m_isFavorited; }
+  bool isCoined() const { return m_isCoined; }
+  bool isLiked() const { return m_isLiked; }
   QString userName() const;
   QString userFace() const;
   QString qrcodeUrl() const;
@@ -172,12 +177,17 @@ public:
   // 仅获取可用清晰度列表（不触发播放）
   Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
   Q_INVOKABLE void fetchComments(int page = 1);
+  Q_INVOKABLE void fetchCommentReplies(qint64 rootRpid);
   // 收藏夹
   Q_INVOKABLE void fetchFavoriteFolders();
   Q_INVOKABLE void fetchFavoriteItems(qint64 mediaId, int page = 1, int pageSize = 20);
   Q_INVOKABLE void fetchMoreFavoriteItems();
-  // 收藏状态
+  // 收藏/投币/点赞状态
   Q_INVOKABLE void fetchFavoriteStatus();
+  Q_INVOKABLE void fetchCoinStatus();
+  Q_INVOKABLE void fetchLikeStatus();
+  Q_INVOKABLE void addCoin(int multiply = 1, bool selectLike = false);
+  Q_INVOKABLE void toggleLike();
   Q_INVOKABLE void toggleFavorite();
   Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
   // 外部播放器
@@ -220,6 +230,7 @@ public:
   Q_INVOKABLE QObject *rankingModel();
   Q_INVOKABLE QObject *searchModel();
   Q_INVOKABLE QObject *commentModel();
+  Q_INVOKABLE QObject *commentReplyModel();
   Q_INVOKABLE QObject *hotSearchModel();
   Q_INVOKABLE QObject *videoPartModel();
   Q_INVOKABLE QObject *searchHistoryModel();
@@ -248,6 +259,8 @@ signals:
   void playbackReady(const QString &url);
   void downloadStateChanged();
   void favoriteStatusChanged();
+  void coinStatusChanged();
+  void likeStatusChanged();
 
 private:
   void fetchUserInfo(qint64 mid);
@@ -294,6 +307,8 @@ private:
 
   bool m_loggedIn;
   bool m_isFavorited;
+  bool m_isCoined;
+  bool m_isLiked;
   QString m_userName;
   QString m_userFace;
   QString m_qrcodeUrl;
@@ -315,6 +330,7 @@ private:
   int m_popularPage;
   int m_searchPage;
   int m_commentPage;
+  qint64 m_currentCommentRootRpid = 0;
   QString m_searchKeyword;
 
   QString m_globalError;
@@ -327,6 +343,7 @@ private:
   VideoListModel *m_rankingModel;
   SearchResultModel *m_searchModel;
   CommentListModel *m_commentModel;
+  CommentReplyListModel *m_commentReplyModel;
   HotSearchModel *m_hotSearchModel;
   VideoPartListModel *m_videoPartModel;
   QStringListModel *m_searchHistoryModel;

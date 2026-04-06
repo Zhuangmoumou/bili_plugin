@@ -10,18 +10,40 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
+    property int viewMode: 0 // 0=主评论列表,1=子评论详情
+    property real mainCommentContentY: 0
+    property var selectedComment: null
     signal backClicked()
+
+    function openCommentDetail(commentObj) {
+        selectedComment = commentObj
+        mainCommentContentY = commentList.contentY
+        viewMode = 1
+        if (controller) controller.fetchCommentReplies(commentObj.rpid)
+    }
+
+    function internalBack() {
+        if (viewMode === 1) {
+            viewMode = 0
+            Qt.callLater(function() {
+                commentList.contentY = mainCommentContentY
+            })
+            return
+        }
+        commentsPage.backClicked()
+    }
 
     Components.TitleBar {
         id: titleBar
         title: {
+            if (viewMode === 1) return "评论详情";
             var cm = controller ? controller.commentModel() : null;
             var total = cm ? cm.totalCount : 0;
             return "评论" + (total > 0 ? " (" + total + ")" : "");
         }
         showBack: true
         anchors.top: parent.top
-        onBackClicked: commentsPage.backClicked()
+        onBackClicked: commentsPage.internalBack()
     }
 
     ListView {
@@ -34,6 +56,7 @@ Rectangle {
         model: controller ? controller.commentModel() : null
         spacing: Theme.spacingSmall
         clip: true
+        visible: viewMode === 0
 
         delegate: Rectangle {
             width: commentList.width
@@ -142,6 +165,18 @@ Rectangle {
                                 return r > 0 ? r.toString() : "";
                             }
                             width: 30
+                            onClicked: {
+                                commentsPage.openCommentDetail({
+                                    rpid: model.rpid || 0,
+                                    userName: model.userName || "",
+                                    avatar: model.avatar || "",
+                                    level: model.level || 0,
+                                    content: model.content || "",
+                                    likes: model.likes || 0,
+                                    ctimeText: model.ctimeText || "",
+                                    isVip: model.isVip || false
+                                })
+                            }
                         }
                     }
                 }
@@ -206,6 +241,175 @@ Rectangle {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody
                 anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+    }
+
+    Item {
+        anchors.top: titleBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        visible: viewMode === 1
+
+        Flickable {
+            id: replyDetailFlick
+            anchors.fill: parent
+            anchors.margins: Theme.spacingSmall
+            contentHeight: replyDetailColumn.height + 8
+            clip: true
+            boundsBehavior: Flickable.DragOverBounds
+
+            Column {
+                id: replyDetailColumn
+                width: parent.width
+                spacing: Theme.spacingSmall
+
+                Rectangle {
+                    width: parent.width
+                    radius: Theme.radiusLarge
+                    color: Theme.bgCard
+                    height: mainCommentContent.height + Theme.spacingMedium * 2
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingMedium
+                        spacing: Theme.spacingMedium
+
+                        Rectangle {
+                            width: 22; height: 22
+                            radius: Theme.radiusRound
+                            color: Theme.bgTertiary
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: selectedComment && selectedComment.avatar
+                                ? "image://bili/" + encodeURIComponent(selectedComment.avatar) : ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                            }
+                        }
+
+                        Column {
+                            id: mainCommentContent
+                            width: parent.width - 22 - Theme.spacingMedium
+                            spacing: Theme.spacingTiny
+
+                            Row {
+                                spacing: Theme.spacingSmall
+
+                                Text {
+                                    text: selectedComment ? selectedComment.userName : ""
+                                    color: selectedComment && selectedComment.isVip ? Theme.accent : Theme.primary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSmall
+                                    font.bold: true
+                                }
+
+                                Text {
+                                    text: selectedComment ? selectedComment.ctimeText : ""
+                                    color: Theme.textTertiary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontTiny
+                                }
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: selectedComment ? selectedComment.content : ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                wrapMode: Text.Wrap
+                                lineHeight: 1.3
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: Theme.divider
+                    opacity: 0.6
+                }
+
+                Repeater {
+                    model: controller ? controller.commentReplyModel() : null
+
+                    Rectangle {
+                        width: replyDetailColumn.width
+                        height: replyContent.height + Theme.spacingMedium * 2
+                        color: Theme.bgCard
+                        radius: Theme.radiusLarge
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingMedium
+                            spacing: Theme.spacingMedium
+
+                            Rectangle {
+                                width: 22; height: 22
+                                radius: Theme.radiusRound
+                                color: Theme.bgTertiary
+                                clip: true
+
+                                Image {
+                                    anchors.fill: parent
+                                    source: model.avatar
+                                    ? "image://bili/" + encodeURIComponent(model.avatar) : ""
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                            }
+
+                            Column {
+                                id: replyContent
+                                width: parent.width - 22 - Theme.spacingMedium
+                                spacing: Theme.spacingTiny
+
+                                Row {
+                                    spacing: Theme.spacingSmall
+
+                                    Text {
+                                        text: model.userName || ""
+                                        color: model.isVip ? Theme.accent : Theme.primary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSmall
+                                        font.bold: true
+                                    }
+
+                                    Text {
+                                        text: model.ctimeText || ""
+                                        color: Theme.textTertiary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontTiny
+                                    }
+                                }
+
+                                Text {
+                                    width: parent.width
+                                    text: model.content || ""
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontBody
+                                    wrapMode: Text.Wrap
+                                    lineHeight: 1.3
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    visible: controller && controller.commentReplyModel() && controller.commentReplyModel().count === 0 && !controller.isLoading
+                    text: "暂无回复"
+                    color: Theme.textTertiary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
             }
         }
     }

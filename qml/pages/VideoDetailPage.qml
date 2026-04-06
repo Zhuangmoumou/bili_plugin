@@ -55,6 +55,8 @@ Rectangle {
     property real savedPartListX: 0
     property bool favoritePickerVisible: false
     property bool subtitlePickerVisible: false
+    property bool coinPickerVisible: false
+    property bool coinSelectLike: false
 
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
@@ -716,18 +718,118 @@ Rectangle {
                             iconColor: primaryLight
                         }
 
-                        // 点赞
-                        BadgeItem {
-                            iconType: "like"
-                            value: controller ? controller.videoLikes : "0"
-                            iconColor: "#f472b6"
+                        // 点赞（可点击）
+                        Rectangle {
+                            width: likeBadgeContent.width + 14
+                            height: 24
+                            radius: 12
+                            color: controller && controller.isLiked ? Qt.rgba(0.96, 0.45, 0.71, 0.2) : Qt.rgba(1, 1, 1, 0.07)
+                            border.color: controller && controller.isLiked ? Qt.rgba(0.96, 0.45, 0.71, 0.6) : Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Row {
+                                id: likeBadgeContent
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Canvas {
+                                    width: 12
+                                    height: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    property bool liked: controller ? controller.isLiked : false
+                                    onLikedChanged: requestPaint()
+
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.fillStyle = controller && controller.isLiked ? "#f472b6" : "#f472b6"
+                                        ctx.beginPath()
+                                        ctx.moveTo(6, 11)
+                                        ctx.bezierCurveTo(1, 7, 0, 4, 2.5, 2)
+                                        ctx.bezierCurveTo(4, 1, 6, 2, 6, 4)
+                                        ctx.bezierCurveTo(6, 2, 8, 1, 9.5, 2)
+                                        ctx.bezierCurveTo(12, 4, 11, 7, 6, 11)
+                                        ctx.fill()
+                                    }
+                                }
+
+                                Text {
+                                    text: controller ? controller.videoLikes : "0"
+                                    color: controller && controller.isLiked ? "#f472b6" : "#d1d5db"
+                                    font.family: fontFamily
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (!controller) return
+                                    controller.toggleLike()
+                                }
+                            }
                         }
 
-                        // 投币
-                        BadgeItem {
-                            iconType: "coin"
-                            value: controller ? controller.videoCoins : "0"
-                            iconColor: "#fbbf24"
+                        // 投币（可点击）
+                        Rectangle {
+                            width: coinBadgeContent.width + 14
+                            height: 24
+                            radius: 12
+                            color: controller && controller.isCoined ? Qt.rgba(0.98, 0.75, 0.14, 0.2) : Qt.rgba(1, 1, 1, 0.07)
+                            border.color: controller && controller.isCoined ? Qt.rgba(0.98, 0.75, 0.14, 0.6) : Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Row {
+                                id: coinBadgeContent
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Canvas {
+                                    width: 12
+                                    height: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    property bool coined: controller ? controller.isCoined : false
+                                    onCoinedChanged: requestPaint()
+
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = controller && controller.isCoined ? "#fbbf24" : "#fbbf24"
+                                        ctx.lineWidth = 1.3
+                                        ctx.beginPath()
+                                        ctx.arc(6, 6, 5, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.arc(6, 6, 2.5, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                    }
+                                }
+
+                                Text {
+                                    text: controller ? controller.videoCoins : "0"
+                                    color: controller && controller.isCoined ? "#fbbf24" : "#d1d5db"
+                                    font.family: fontFamily
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (!controller) return
+                                    if (controller.isCoined) {
+                                        controller.toastMessage("已经投过币了")
+                                    } else {
+                                        detailPage.coinPickerVisible = true
+                                    }
+                                }
+                            }
                         }
 
                         // 收藏（可点击）
@@ -1266,6 +1368,134 @@ Rectangle {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // 投币选择弹窗
+    // ═══════════════════════════════════════════════════════════
+    Item {
+        id: coinPickerOverlay
+        anchors.fill: parent
+        visible: detailPage.coinPickerVisible
+        z: 95
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.55)
+        }
+
+        Rectangle {
+            id: coinPickerDialog
+            anchors.centerIn: parent
+            width: 150
+            height: 110
+            radius: 10
+            color: Qt.rgba(0.08, 0.1, 0.14, 0.98)
+            border.color: Qt.rgba(1, 1, 1, 0.12)
+            border.width: 1
+            z: 2
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+
+                Text {
+                    text: "选择投币数量"
+                    color: "white"
+                    font.family: fontFamily
+                    font.pixelSize: 11
+                    font.bold: true
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 22
+                    radius: 6
+                    color: coinLikeArea.pressed ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
+
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Rectangle {
+                            width: 12
+                            height: 12
+                            radius: 3
+                            color: detailPage.coinSelectLike ? primaryColor : "transparent"
+                            border.color: detailPage.coinSelectLike ? primaryColor : Qt.rgba(1, 1, 1, 0.35)
+                            border.width: 1
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: detailPage.coinSelectLike ? "✓" : ""
+                                color: "white"
+                                font.pixelSize: 8
+                                font.bold: true
+                            }
+                        }
+
+                        Text {
+                            text: "同时点赞"
+                            color: "#cbd5e1"
+                            font.family: fontFamily
+                            font.pixelSize: 10
+                        }
+                    }
+
+                    MouseArea {
+                        id: coinLikeArea
+                        anchors.fill: parent
+                        onClicked: detailPage.coinSelectLike = !detailPage.coinSelectLike
+                    }
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 10
+
+                    Repeater {
+                        model: [1, 2]
+
+                        Rectangle {
+                            width: 44
+                            height: 28
+                            radius: 6
+                            color: coinChooseArea.pressed ? primaryDark : primaryColor
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData + "币"
+                                color: "white"
+                                font.family: fontFamily
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+
+                            MouseArea {
+                                id: coinChooseArea
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (controller) controller.addCoin(modelData, detailPage.coinSelectLike)
+                                    detailPage.coinPickerVisible = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            z: 1
+            onClicked: {
+                if (!coinPickerDialog.contains(mapToItem(coinPickerDialog, mouse.x, mouse.y))) {
+                    detailPage.coinPickerVisible = false
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // 收藏夹选择弹窗
     // ═══════════════════════════════════════════════════════════
     Item {
@@ -1540,6 +1770,8 @@ Rectangle {
             if (controller && controller.videoCid > 0) {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
                 controller.fetchFavoriteStatus()
+                controller.fetchCoinStatus()
+                controller.fetchLikeStatus()
                 controller.fetchSubtitleList()
             }
             detailPage.restorePartListPosition()
@@ -1547,6 +1779,8 @@ Rectangle {
         function onLoginStateChanged() {
             if (controller && controller.loggedIn && controller.videoCid > 0) {
                 controller.fetchFavoriteStatus()
+                controller.fetchCoinStatus()
+                controller.fetchLikeStatus()
             }
         }
     }
