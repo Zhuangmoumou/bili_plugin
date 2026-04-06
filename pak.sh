@@ -17,7 +17,6 @@ cp build/linux/arm64-v8a/release/libbili_plugin.so ./bili_plugin
 cp -r ./qml ./bili_plugin
 cp metadata.json ./bili_plugin
 cp icon.png ./bili_plugin
-cp -r FFmpegPlayer ./bili_plugin
 
 # 打包
 zip -r bili_plugin.zip bili_plugin/*
