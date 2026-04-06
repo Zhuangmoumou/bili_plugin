@@ -542,7 +542,11 @@ void BiliNetwork::handleReply(QNetworkReply *reply, SuccessCallback onSuccess,
     if (onError) {
       onError(errorCode, errorMsg);
     }
-    emit networkError(errorMsg);
+    // 用户主动取消/超时不再上抛全局错误，避免 UI 卡死或弹出误导错误
+    if (reply->error() != QNetworkReply::OperationCanceledError &&
+        reply->error() != QNetworkReply::TimeoutError) {
+      emit networkError(errorMsg);
+    }
     return;
   }
 

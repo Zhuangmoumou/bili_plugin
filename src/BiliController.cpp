@@ -235,11 +235,34 @@ void BiliController::cancelAll() {
   if (m_network) {
     m_network->cancelAllRequests();
   }
+
+  // 立即重置前端可见加载状态，避免取消后卡在 loading UI
   m_loadingCount = 0;
   if (m_isLoading) {
     m_isLoading = false;
     emit isLoadingChanged();
   }
+
+  // 重置各模型加载状态，避免它们因 abort 后未恢复而阻塞后续操作
+  if (m_popularModel) m_popularModel->setLoading(false);
+  if (m_rankingModel) m_rankingModel->setLoading(false);
+  if (m_searchModel) m_searchModel->setLoading(false);
+  if (m_commentModel) m_commentModel->setLoading(false);
+  if (m_commentReplyModel) m_commentReplyModel->setLoading(false);
+  if (m_hotSearchModel) m_hotSearchModel->setLoading(false);
+  if (m_favoriteFolderModel) m_favoriteFolderModel->setLoading(false);
+  if (m_favoriteItemModel) m_favoriteItemModel->setLoading(false);
+  if (m_recentHistoryModel) m_recentHistoryModel->setLoading(false);
+
+  // 下载中也允许中止显示状态
+  if (m_isDownloading) {
+    m_isDownloading = false;
+    m_downloadProgress = 0;
+    m_downloadStatus.clear();
+    emit downloadStateChanged();
+  }
+
+  emit toastMessage("已取消当前请求");
 }
 
 // ====== API: 热门视频 ======

@@ -288,6 +288,16 @@ func copyMap(m map[string]string) map[string]string {
 	return result
 }
 
+func maskSensitive(value string) string {
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:4] + "..." + value[len(value)-4:]
+}
+
 func extractKeyFromURL(rawURL string) string {
 	if rawURL == "" {
 		return ""
@@ -1174,18 +1184,26 @@ func (c *BilibiliClient) GetFavoriteStatus(aid int) (json.RawMessage, error) {
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetCoinStatus(aid int) (json.RawMessage, error) {
-	logInfo("获取投币状态 aid=%d", aid)
-	return c.request("https://api.bilibili.com/x/web-interface/archive/coins", map[string]string{
-		"aid": strconv.Itoa(aid),
-	}, "GET")
+func (c *BilibiliClient) GetCoinStatus(aid int, bvid string) (json.RawMessage, error) {
+	logInfo("获取投币状态 aid=%d bvid=%s", aid, bvid)
+	params := map[string]string{}
+	if bvid != "" {
+		params["bvid"] = bvid
+	} else if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
+	}
+	return c.request("https://api.bilibili.com/x/web-interface/archive/coins", params, "GET")
 }
 
 func (c *BilibiliClient) AddCoin(aid int, multiply int, selectLike bool, bvid string) (json.RawMessage, error) {
-	sessdata, _, biliJct, _ := c.getAuth()
+	sessdata, buvid3, biliJct, _ := c.getAuth()
 	if sessdata == "" || biliJct == "" {
 		return nil, fmt.Errorf("登录信息不完整")
 	}
+	if buvid3 == "" {
+		return nil, fmt.Errorf("缺少 buvid3，按文档该字段异常会触发风控")
+	}
+	logInfo("投币请求认证信息: buvid3=%s", maskSensitive(buvid3))
 	if multiply < 1 {
 		multiply = 1
 	}
@@ -1197,41 +1215,51 @@ func (c *BilibiliClient) AddCoin(aid int, multiply int, selectLike bool, bvid st
 		like = "1"
 	}
 	params := map[string]string{
-		"aid":         strconv.Itoa(aid),
 		"multiply":    strconv.Itoa(multiply),
 		"select_like": like,
 		"csrf":        biliJct,
 	}
 	if bvid != "" {
 		params["bvid"] = bvid
+	} else if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
 	}
 
 	apiURL := "https://api.bilibili.com/x/web-interface/coin/add"
 	return c.webPost(apiURL, params)
 }
 
-func (c *BilibiliClient) GetLikeStatus(aid int) (json.RawMessage, error) {
-	logInfo("获取点赞状态 aid=%d", aid)
-	return c.request("https://api.bilibili.com/x/web-interface/archive/has/like", map[string]string{
-		"aid": strconv.Itoa(aid),
-	}, "GET")
+func (c *BilibiliClient) GetLikeStatus(aid int, bvid string) (json.RawMessage, error) {
+	logInfo("获取点赞状态 aid=%d bvid=%s", aid, bvid)
+	params := map[string]string{}
+	if bvid != "" {
+		params["bvid"] = bvid
+	} else if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
+	}
+	return c.request("https://api.bilibili.com/x/web-interface/archive/has/like", params, "GET")
 }
 
 func (c *BilibiliClient) ToggleLike(aid int, like int, bvid string) (json.RawMessage, error) {
-	sessdata, _, biliJct, _ := c.getAuth()
+	sessdata, buvid3, biliJct, _ := c.getAuth()
 	if sessdata == "" || biliJct == "" {
 		return nil, fmt.Errorf("登录信息不完整")
 	}
+	if buvid3 == "" {
+		return nil, fmt.Errorf("缺少 buvid3，按文档该字段异常会触发风控")
+	}
+	logInfo("点赞请求认证信息: buvid3=%s", maskSensitive(buvid3))
 	if like != 1 && like != 2 {
 		like = 1
 	}
 	params := map[string]string{
-		"aid":  strconv.Itoa(aid),
 		"like": strconv.Itoa(like),
 		"csrf": biliJct,
 	}
 	if bvid != "" {
 		params["bvid"] = bvid
+	} else if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
 	}
 
 	apiURL := "https://api.bilibili.com/x/web-interface/archive/like"
@@ -2083,18 +2111,15 @@ func handleFavStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCoinStatus(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
-		return
-	}
-	if aid == 0 {
-		logWarn("aid 缺失")
-		writeError(w, 400, "aid 为必填参数")
+	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	bvid := r.URL.Query().Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 均缺失")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
 	client := getClient()
-	result, err := client.GetCoinStatus(aid)
+	result, err := client.GetCoinStatus(aid, bvid)
 	if err != nil {
 		logError("处理 /coin/status 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -2104,14 +2129,11 @@ func handleCoinStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCoinAdd(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
-		return
-	}
-	if aid == 0 {
-		logWarn("aid 缺失")
-		writeError(w, 400, "aid 为必填参数")
+	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	bvid := r.URL.Query().Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 均缺失")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
 	multiply, err := intParam(r.URL.Query().Get("multiply"), 1, 1, true)
@@ -2123,7 +2145,6 @@ func handleCoinAdd(w http.ResponseWriter, r *http.Request) {
 		multiply = 2
 	}
 	selectLike := r.URL.Query().Get("select_like") == "1"
-	bvid := r.URL.Query().Get("bvid")
 	client := getClient()
 	result, err := client.AddCoin(aid, multiply, selectLike, bvid)
 	if err != nil {
@@ -2135,18 +2156,15 @@ func handleCoinAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
-		return
-	}
-	if aid == 0 {
-		logWarn("aid 缺失")
-		writeError(w, 400, "aid 为必填参数")
+	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	bvid := r.URL.Query().Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 均缺失")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
 	client := getClient()
-	result, err := client.GetLikeStatus(aid)
+	result, err := client.GetLikeStatus(aid, bvid)
 	if err != nil {
 		logError("处理 /like/status 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -2175,14 +2193,11 @@ func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLikeToggle(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
-		return
-	}
-	if aid == 0 {
-		logWarn("aid 缺失")
-		writeError(w, 400, "aid 为必填参数")
+	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	bvid := r.URL.Query().Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 均缺失")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
 	likeVal, err := intParam(r.URL.Query().Get("like"), 1, 1, true)
@@ -2190,7 +2205,6 @@ func handleLikeToggle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
 	client := getClient()
 	result, err := client.ToggleLike(aid, likeVal, bvid)
 	if err != nil {
