@@ -908,6 +908,20 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 			return nil, lastErr
 		}
 
+		// 业务层错误日志（code != 0）
+		var respObj map[string]interface{}
+		if err := json.Unmarshal(body, &respObj); err == nil {
+			if c, ok := respObj["code"].(float64); ok && int(c) != 0 {
+				msg, _ := respObj["message"].(string)
+				logWarn("webPost 业务错误 url=%s code=%d message=%s", apiURL, int(c), msg)
+				if os.Getenv("DEBUG") == "true" {
+					logDebug("webPost 业务响应 body=%s", string(body))
+				}
+			}
+		} else if os.Getenv("DEBUG") == "true" {
+			logDebug("webPost 非JSON响应 body=%s", string(body))
+		}
+
 		return body, nil
 	}
 
