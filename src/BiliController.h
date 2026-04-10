@@ -96,6 +96,7 @@ class BiliController : public QObject {
   // 全局错误
   Q_PROPERTY(QString globalError READ globalError NOTIFY globalErrorChanged)
   Q_PROPERTY(bool isLoading READ isLoading NOTIFY isLoadingChanged)
+  Q_PROPERTY(bool replyHasMore READ replyHasMore NOTIFY replyHasMoreChanged)
 
 public:
   explicit BiliController(QObject *parent = nullptr);
@@ -163,6 +164,7 @@ public:
 
   QString globalError() const;
   bool isLoading() const;
+  bool replyHasMore() const { return m_commentReplyHasMore; }
 
   // ====== Q_INVOKABLE API 方法 ======
 
@@ -178,6 +180,7 @@ public:
   Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
   Q_INVOKABLE void fetchComments(int page = 1);
   Q_INVOKABLE void fetchCommentReplies(qint64 rootRpid);
+  Q_INVOKABLE void fetchMoreCommentReplies();
   // 收藏夹
   Q_INVOKABLE void fetchFavoriteFolders();
   Q_INVOKABLE void fetchFavoriteItems(qint64 mediaId, int page = 1, int pageSize = 20);
@@ -252,6 +255,7 @@ signals:
   void qrcodeChanged();
   void globalErrorChanged();
   void isLoadingChanged();
+  void replyHasMoreChanged();
 
   void toastMessage(const QString &message);
   void qrcodeLoginSuccess();
@@ -330,6 +334,8 @@ private:
   int m_popularPage;
   int m_searchPage;
   int m_commentPage;
+  int m_commentReplyPage = 1;
+  bool m_commentReplyHasMore = false;
   qint64 m_currentCommentRootRpid = 0;
   QString m_searchKeyword;
 

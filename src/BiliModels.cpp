@@ -455,6 +455,15 @@ void CommentReplyListModel::setItems(const QVector<CommentReplyItem> &items)
     emit countChanged();
 }
 
+void CommentReplyListModel::appendItems(const QVector<CommentReplyItem> &items)
+{
+    if (items.isEmpty()) return;
+    beginInsertRows(QModelIndex(), m_items.count(), m_items.count() + items.count() - 1);
+    m_items.append(items);
+    endInsertRows();
+    emit countChanged();
+}
+
 void CommentReplyListModel::setLoading(bool loading)
 {
     if (m_loading != loading) {

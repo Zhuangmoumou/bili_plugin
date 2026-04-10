@@ -64,9 +64,11 @@ Rectangle {
                     anchors.fill: parent
                     source: coverUrl
                     ? "image://bili/" + encodeURIComponent(coverUrl) : ""
+                    sourceSize: Qt.size(parent.width * 2, parent.height * 2)
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     smooth: true
+                    mipmap: true
                     cache: true
                     opacity: status === Image.Ready ? 1 : 0
 

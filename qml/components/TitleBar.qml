@@ -56,12 +56,13 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
+        }
 
-            MouseArea {
-                id: backArea
-                anchors.fill: parent
-                onClicked: titleBar.backClicked()
-            }
+        MouseArea {
+            id: backArea
+            anchors.fill: parent
+            anchors.margins: -10
+            onClicked: titleBar.backClicked()
         }
     }
 

@@ -234,6 +234,7 @@ public:
 
     Q_INVOKABLE void clear();
     void setItems(const QVector<CommentReplyItem> &items);
+    void appendItems(const QVector<CommentReplyItem> &items);
     void setLoading(bool loading);
     void setErrorMessage(const QString &msg);
 

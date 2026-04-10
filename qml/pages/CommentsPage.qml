@@ -402,6 +402,32 @@ Rectangle {
                     }
                 }
 
+                Rectangle {
+                    visible: controller && controller.replyHasMore
+                    width: replyDetailColumn.width
+                    height: 26
+                    radius: 13
+                    color: replyLoadMoreArea.pressed ? Theme.withAlpha(Theme.primary, 0.12) : Theme.bgSecondary
+                    border.color: Theme.borderLight
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: controller && controller.commentReplyModel() && controller.commentReplyModel().loading ? "加载中..." : "加载更多 ↓"
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
+                    }
+
+                    MouseArea {
+                        id: replyLoadMoreArea
+                        anchors.fill: parent
+                        onClicked: {
+                            if (controller) controller.fetchMoreCommentReplies()
+                        }
+                    }
+                }
+
                 Text {
                     visible: controller && controller.commentReplyModel() && controller.commentReplyModel().count === 0 && !controller.isLoading
                     text: "暂无回复"
