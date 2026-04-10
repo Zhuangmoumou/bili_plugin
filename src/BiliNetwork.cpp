@@ -30,7 +30,7 @@ void BiliNetwork::destroyInstance() {
 BiliNetwork::BiliNetwork(QObject *parent)
     : QObject(parent), m_nam(new QNetworkAccessManager(this)),
       m_apiBase("http://127.0.0.1:8000"), m_online(true),
-      m_requestTimeout(15000) {
+      m_requestTimeout(10000) {
   std::cout << "[BiliNet] Initialized with API base: "
             << m_apiBase.toStdString() << std::endl;
 
