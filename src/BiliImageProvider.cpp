@@ -34,6 +34,8 @@ BiliImageResponse::BiliImageResponse(const QString &id,
 void BiliImageResponse::cancel() { m_cancelled.storeRelaxed(1); }
 
 QImage BiliImageResponse::createPlaceholder(int w, int h) {
+  if (w <= 0) w = 160;
+  if (h <= 0) h = 100;
   QImage placeholder(w, h, QImage::Format_RGB32);
   placeholder.fill(QColor(50, 50, 50));
   return placeholder;
@@ -54,7 +56,7 @@ bool BiliImageResponse::isValidImageData(const QByteArray &data) {
     return true;
 
   // GIF: 47 49 46
-  if (d[0] == 'G' && d[1] == 'I' && d[2] == 'G')
+  if (d[0] == 'G' && d[1] == 'I' && d[2] == 'F')
     return true;
 
   // BMP: 42 4D
@@ -98,8 +100,13 @@ QImage BiliImageResponse::downloadImage(const QString &url) {
   QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
 
   QObject::connect(reply, &QNetworkReply::downloadProgress,
-                   [reply, &aborted](qint64 received, qint64) {
+                   [reply, this, &aborted](qint64 received, qint64) {
                      constexpr qint64 maxBytes = 10 * 1024 * 1024;
+                     if (m_cancelled.loadRelaxed()) {
+                       aborted = true;
+                       reply->abort();
+                       return;
+                     }
                      if (received > maxBytes) {
                        aborted = true;
                        reply->abort();
@@ -151,7 +158,7 @@ void BiliImageResponse::run() {
   }
 
   if (m_cancelled.loadRelaxed()) {
-    m_image = createPlaceholder();
+    m_image = createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
     emit finished();
     return;
   }
@@ -171,7 +178,7 @@ void BiliImageResponse::run() {
     }
     // 无论是否成功，都直接返回（不查缓存/不下载）
     if (m_image.isNull()) {
-      m_image = createPlaceholder();
+      m_image = createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
     }
     emit finished();
     return;
@@ -189,7 +196,7 @@ void BiliImageResponse::run() {
     if (imageUrl.startsWith("//"))
       imageUrl = "https:" + imageUrl;
     else {
-      m_image = createPlaceholder();
+      m_image = createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
       emit finished();
       return;
     }
@@ -210,7 +217,7 @@ void BiliImageResponse::run() {
   }
 
   if (m_image.isNull()) {
-    m_image = createPlaceholder();
+    m_image = createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
   }
 
   emit finished();

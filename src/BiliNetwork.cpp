@@ -115,14 +115,19 @@ void BiliNetwork::untrackReply(QNetworkReply *reply) {
 }
 
 void BiliNetwork::cancelAllRequests() {
-  QMutexLocker locker(&m_replyMutex);
-  for (QNetworkReply *reply : qAsConst(m_activeReplies)) {
+  QList<QNetworkReply *> replies;
+  {
+    QMutexLocker locker(&m_replyMutex);
+    replies = m_activeReplies.values();
+  }
+
+  for (QNetworkReply *reply : replies) {
     if (reply && reply->isRunning()) {
       reply->abort();
     }
   }
   // 不在这里删除，让 finished 信号处理清理
-  std::cout << "[BiliNet] Cancelled " << m_activeReplies.size()
+  std::cout << "[BiliNet] Cancelled " << replies.size()
             << " active requests" << std::endl;
 }
 
