@@ -89,6 +89,7 @@ class BiliController : public QObject {
   Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
   Q_PROPERTY(bool isCoined READ isCoined NOTIFY coinStatusChanged)
   Q_PROPERTY(bool isLiked READ isLiked NOTIFY likeStatusChanged)
+  Q_PROPERTY(bool isWatchLater READ isWatchLater NOTIFY watchLaterStatusChanged)
   Q_PROPERTY(QString userName READ userName NOTIFY loginStateChanged)
   Q_PROPERTY(QString userFace READ userFace NOTIFY loginStateChanged)
   Q_PROPERTY(QString qrcodeUrl READ qrcodeUrl NOTIFY qrcodeChanged)
@@ -167,6 +168,7 @@ public:
   bool isFavorited() const { return m_isFavorited; }
   bool isCoined() const { return m_isCoined; }
   bool isLiked() const { return m_isLiked; }
+  bool isWatchLater() const { return m_isWatchLater; }
   QString userName() const;
   QString userFace() const;
   QString qrcodeUrl() const;
@@ -210,10 +212,12 @@ public:
   Q_INVOKABLE void fetchFavoriteStatus();
   Q_INVOKABLE void fetchCoinStatus();
   Q_INVOKABLE void fetchLikeStatus();
+  Q_INVOKABLE void fetchWatchLaterStatus();
   Q_INVOKABLE void addCoin(int multiply = 1, bool selectLike = false);
   Q_INVOKABLE void toggleLike();
   Q_INVOKABLE void toggleFavorite();
   Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
+  Q_INVOKABLE void toggleWatchLater();
   // 外部播放器
   Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
@@ -261,9 +265,13 @@ public:
   Q_INVOKABLE QObject *favoriteFolderModel();
   Q_INVOKABLE QObject *favoriteItemModel();
   Q_INVOKABLE QObject *recentHistoryModel();
+  Q_INVOKABLE QObject *watchLaterModel();
   Q_INVOKABLE QObject *upVideoModel();
   Q_INVOKABLE void fetchRecentHistory();
   Q_INVOKABLE void fetchMoreRecentHistory();
+  Q_INVOKABLE void fetchWatchLater(int page = 1, int pageSize = 20);
+  Q_INVOKABLE void fetchMoreWatchLater();
+  Q_INVOKABLE void addToWatchLater();
   Q_INVOKABLE void refreshUserInfo();
 
   // UP 主主页
@@ -296,6 +304,7 @@ signals:
   void favoriteStatusChanged();
   void coinStatusChanged();
   void likeStatusChanged();
+  void watchLaterStatusChanged();
 
 private:
   void fetchUserInfo(qint64 mid);
@@ -344,6 +353,7 @@ private:
   bool m_isFavorited;
   bool m_isCoined;
   bool m_isLiked;
+  bool m_isWatchLater;
   QString m_userName;
   QString m_userFace;
   QString m_qrcodeUrl;
@@ -389,11 +399,14 @@ private:
   FavoriteFolderModel *m_favoriteFolderModel;
   VideoListModel *m_favoriteItemModel;
   VideoListModel *m_recentHistoryModel;
+  VideoListModel *m_watchLaterModel;
   VideoListModel *m_upVideoModel;
   int m_favoritePage;
   qint64 m_currentFavoriteId;
   int m_recentHistoryMax = 0;
   int m_recentHistoryViewAt = 0;
+  int m_watchLaterPage = 1;
+  bool m_watchLaterHasMore = true;
 
   // UP 主主页数据
   qint64 m_upUserMid = 0;

@@ -589,6 +589,10 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
       m_isLiked = false;
       emit likeStatusChanged();
     }
+    if (m_isWatchLater) {
+      m_isWatchLater = false;
+      emit watchLaterStatusChanged();
+    }
 
     // 切换视频时重置字幕选择与列表
     if (m_selectedSubtitleId != 0 || !m_selectedSubtitleLabel.isEmpty()) {
@@ -1405,6 +1409,49 @@ void BiliController::fetchLikeStatus() {
       });
 }
 
+void BiliController::fetchWatchLaterStatus() {
+  if (!m_loggedIn) {
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["pn"] = "1";
+  params["ps"] = "100";
+
+  apiGet(
+      "/toview/list", params,
+      [this](const QJsonObject &data) {
+        QJsonArray list = data.value("list").toArray();
+        if (list.isEmpty()) {
+          list = data.value("data").toArray();
+        }
+
+        bool found = false;
+        for (const QJsonValue &v : list) {
+          if (!v.isObject())
+            continue;
+          QJsonObject obj = v.toObject();
+          qint64 aid = obj.value("aid").toVariant().toLongLong();
+          QString bvid = obj.value("bvid").toString();
+          if ((aid > 0 && aid == m_currentVideo.aid) || (!bvid.isEmpty() && bvid == m_currentVideo.bvid)) {
+            found = true;
+            break;
+          }
+        }
+
+        if (m_isWatchLater != found) {
+          m_isWatchLater = found;
+          emit watchLaterStatusChanged();
+        }
+      },
+      [this](int, const QString &msg) {
+        emit toastMessage(QString("获取稍后再看状态失败：%1").arg(msg));
+      });
+}
+
 void BiliController::toggleLike() {
   if (!m_loggedIn) {
     emit toastMessage("请先登录后再点赞");
@@ -1518,6 +1565,44 @@ void BiliController::toggleFavoriteTo(qint64 mediaId) {
         if (!self)
           return;
         emit self->toastMessage(QString("收藏操作失败：%1").arg(msg));
+      });
+}
+
+void BiliController::toggleWatchLater() {
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后再添加稍后再看");
+    return;
+  }
+  if (m_currentVideo.aid <= 0) {
+    emit toastMessage("视频信息不完整");
+    return;
+  }
+
+  const QString apiPath = m_isWatchLater ? "/toview/del" : "/toview/add";
+  const QString okMsg = m_isWatchLater ? "已从稍后再看移除" : "已添加到稍后再看";
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  // 删除接口只支持 aid，添加接口支持 aid 和 bvid
+  if (!m_isWatchLater) {
+    params["bvid"] = m_currentVideo.bvid;
+  }
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      apiPath, params,
+      [self, okMsg](const QJsonObject &) {
+        if (!self)
+          return;
+        self->m_isWatchLater = !self->m_isWatchLater;
+        emit self->watchLaterStatusChanged();
+        emit self->toastMessage(okMsg);
+        self->fetchWatchLater(1, 20);
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("稍后再看操作失败：%1").arg(msg));
       });
 }
 
@@ -2169,6 +2254,111 @@ void BiliController::fetchMoreRecentHistory() {
             self->setIsLoading(false);
             emit self->toastMessage(QString("最近观看加载失败：%1").arg(msg));
         });
+}
+
+// ====== 稍后再看 ======
+
+void BiliController::fetchWatchLater(int page, int pageSize) {
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后查看稍后再看");
+    return;
+  }
+  if (m_watchLaterModel->loading())
+    return;
+
+  page = qBound(1, page, 1000);
+  pageSize = qBound(1, pageSize, 30);
+
+  m_watchLaterPage = page;
+  if (page == 1) {
+    m_watchLaterModel->clear();
+  }
+  m_watchLaterModel->setLoading(true);
+  m_watchLaterModel->setErrorMessage("");
+  setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/toview/list", params,
+      [self, pageSize](const QJsonObject &data) {
+        if (!self) return;
+
+        QJsonArray list = data.value("list").toArray();
+        if (list.isEmpty()) {
+          list = data.value("data").toArray();
+        }
+
+        QVector<VideoItem> items;
+        items.reserve(list.size());
+        for (const QJsonValue &v : list) {
+          if (!v.isObject())
+            continue;
+          QJsonObject obj = v.toObject();
+
+          VideoItem item;
+          item.aid = obj.value("aid").toVariant().toLongLong();
+          item.bvid = obj.value("bvid").toString();
+          item.title = obj.value("title").toString();
+          item.pic = obj.value("pic").toString();
+          if (item.pic.isEmpty()) {
+            item.pic = obj.value("cover").toString();
+          }
+          item.duration = obj.value("duration").toInt();
+
+          QJsonObject ownerObj = obj.value("owner").toObject();
+          item.ownerName = ownerObj.value("name").toString();
+          if (item.ownerName.isEmpty()) {
+            item.ownerName = obj.value("author_name").toString();
+          }
+          if (item.ownerName.isEmpty()) {
+            item.ownerName = obj.value("name").toString();
+          }
+
+          if (!item.bvid.isEmpty() || item.aid > 0) {
+            items.append(item);
+          }
+        }
+
+        bool hasMore = data.value("has_more").toBool(false);
+        if (!data.contains("has_more")) {
+          hasMore = items.size() >= pageSize;
+        }
+
+        self->m_watchLaterHasMore = hasMore;
+        self->m_watchLaterModel->appendItems(items);
+        self->m_watchLaterModel->setHasMore(hasMore);
+        self->m_watchLaterModel->setLoading(false);
+        self->setIsLoading(false);
+
+        if (items.isEmpty() && self->m_watchLaterPage == 1) {
+          self->m_watchLaterModel->setErrorMessage("暂无稍后再看");
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self) return;
+        self->m_watchLaterModel->setLoading(false);
+        self->setIsLoading(false);
+        self->m_watchLaterModel->setErrorMessage(msg);
+        emit self->toastMessage(QString("稍后再看加载失败：%1").arg(msg));
+      });
+}
+
+void BiliController::fetchMoreWatchLater() {
+  if (!m_watchLaterHasMore || m_watchLaterModel->loading())
+    return;
+  if (m_watchLaterModel->count() <= 0)
+    return;
+  m_watchLaterPage++;
+  fetchWatchLater(m_watchLaterPage, 20);
+}
+
+void BiliController::addToWatchLater() {
+  // 直接调用 toggleWatchLater，它会根据当前状态决定是添加还是删除
+  toggleWatchLater();
 }
 
 // ====== UP 主主页 ======

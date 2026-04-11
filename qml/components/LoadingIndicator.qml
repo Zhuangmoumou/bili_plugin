@@ -5,7 +5,7 @@ import ".."
 Item {
     id: loadingRoot
     width: parent ? parent.width : 100
-    height: 30
+    height: contentColumn.implicitHeight + Theme.spacingSmall * 2
     visible: running
     opacity: running ? 1 : 0
     z: 50
@@ -22,6 +22,7 @@ Item {
     }
 
     Column {
+        id: contentColumn
         anchors.centerIn: parent
         spacing: Theme.spacingSmall
 

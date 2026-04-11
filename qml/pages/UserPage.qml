@@ -14,7 +14,7 @@ Rectangle {
     signal backClicked()
     signal videoSelected(string bvid)
 
-    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置, 5=字幕设置
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置, 5=字幕设置, 6=稍后再看
     property int favView: 0
     property string currentFavTitle: ""
     property int currentFavId: 0
@@ -42,6 +42,10 @@ Rectangle {
             return
         }
         if (favView === 3) {
+            favView = 0
+            return
+        }
+        if (favView === 6) {
             favView = 0
             return
         }
@@ -83,6 +87,7 @@ Rectangle {
             if (favView === 1) return "我的收藏夹"
             if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
             if (favView === 3) return "最近观看"
+            if (favView === 6) return "稍后再看"
             if (favView === 4) return "设置"
             if (favView === 5) return "字幕设置"
             return "个人中心"
@@ -610,7 +615,7 @@ Rectangle {
                         }
                     }
 
-                    // 快捷入口：收藏夹 / 最近观看 / 设置
+                    // 快捷入口：收藏夹 / 稍后再看 / 最近观看 / 设置
                     Row {
                         anchors.horizontalCenter: parent.horizontalCenter
                         spacing: Theme.spacingLarge
@@ -665,6 +670,65 @@ Rectangle {
 
                             Text {
                                 text: "收藏夹"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: watchLaterEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = Theme.primary
+                                        ctx.lineWidth = 1.6
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(8, 8, 6, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(8, 8)
+                                        ctx.lineTo(8, 4.5)
+                                        ctx.moveTo(8, 8)
+                                        ctx.lineTo(11.2, 9.4)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(12.5, 3.5)
+                                        ctx.lineTo(14.5, 3.5)
+                                        ctx.moveTo(13.5, 2.2)
+                                        ctx.lineTo(13.5, 4.8)
+                                        ctx.stroke()
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: watchLaterEntryArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        favView = 6
+                                        if (controller) controller.fetchWatchLater(1, 20)
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "稍后再看"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
@@ -948,6 +1012,54 @@ Rectangle {
                     Qt.callLater(function() {
                         recentList.contentX = recentHistoryContentX
                     })
+                }
+            }
+        }
+
+        // ── 稍后再看 ──
+        Item {
+            id: watchLaterView
+            anchors.fill: parent
+            visible: favView === 6
+
+            ListView {
+                id: watchLaterList
+                anchors.fill: parent
+                anchors.margins: Theme.spacingSmall
+                model: controller ? controller.watchLaterModel() : null
+                orientation: ListView.Horizontal
+                spacing: Theme.spacingMedium
+                clip: true
+
+                onAtXEndChanged: {
+                    if (atXEnd && controller) controller.fetchMoreWatchLater()
+                }
+
+                delegate: Components.VideoCard {
+                    height: watchLaterList.height
+                    videoTitle: model.title || ""
+                    coverUrl: model.pic || ""
+                    upName: model.ownerName || ""
+                    viewCount: ""
+                    showViewCount: false
+                    durationText: model.durationText || ""
+                    bvid: model.bvid || ""
+                    onClicked: userPage.videoSelected(bvid)
+                }
+            }
+
+            Text {
+                visible: watchLaterList.count === 0 && controller && !controller.isLoading
+                text: "暂无稍后再看"
+                color: Theme.textTertiary
+                anchors.centerIn: parent
+            }
+
+            Components.LoadingIndicator {
+                anchors.centerIn: parent
+                running: controller ? controller.isLoading : false
+                onCancelRequested: {
+                    if (controller) controller.cancelAll();
                 }
             }
         }

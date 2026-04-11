@@ -1280,6 +1280,57 @@ func (c *BilibiliClient) GetRecentHistory(max, viewAt int) (json.RawMessage, err
 	return c.request("https://api.bilibili.com/x/web-interface/history/cursor", params, "GET")
 }
 
+func (c *BilibiliClient) GetWatchLaterList(pn, ps int) (json.RawMessage, error) {
+	if pn <= 0 {
+		pn = 1
+	}
+	if ps <= 0 {
+		ps = 20
+	}
+	if ps > 50 {
+		ps = 50
+	}
+	logInfo("获取稍后再看 pn=%d ps=%d", pn, ps)
+	params := map[string]string{
+		"pn": strconv.Itoa(pn),
+		"ps": strconv.Itoa(ps),
+	}
+	return c.request("https://api.bilibili.com/x/v2/history/toview", params, "GET")
+}
+
+func (c *BilibiliClient) AddToWatchLater(aid int, bvid string) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+	params := map[string]string{
+		"csrf": biliJct,
+	}
+	if bvid != "" {
+		params["bvid"] = bvid
+	} else if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
+	} else {
+		return nil, fmt.Errorf("aid 或 bvid 缺失")
+	}
+	return c.webPost("https://api.bilibili.com/x/v2/history/toview/add", params)
+}
+
+func (c *BilibiliClient) RemoveFromWatchLater(aid int) (json.RawMessage, error) {
+	sessdata, _, biliJct, _ := c.getAuth()
+	if sessdata == "" || biliJct == "" {
+		return nil, fmt.Errorf("登录信息不完整")
+	}
+	if aid <= 0 {
+		return nil, fmt.Errorf("aid 缺失")
+	}
+	params := map[string]string{
+		"csrf": biliJct,
+		"aid":  strconv.Itoa(aid),
+	}
+	return c.webPost("https://api.bilibili.com/x/v2/history/toview/del", params)
+}
+
 func (c *BilibiliClient) GetFavoriteFolders(mid int) (json.RawMessage, error) {
 	logInfo("获取收藏夹列表 mid=%d", mid)
 	return c.request("https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
@@ -1635,6 +1686,9 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/hot/search - 热搜",
 				"/recommend - 首页推荐",
 				"/history/recent - 最近观看",
+				"/toview/list - 稍后再看列表",
+				"/toview/add - 添加稍后再看",
+				"/toview/del - 取消稍后再看",
                 "/player/heartbeat - 回调心跳",
 			    "/fav/folder/list - 收藏夹列表",
     			"/fav/resource/list - 收藏夹内容",
@@ -2100,6 +2154,44 @@ func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	handleAPI(w, "/history/recent", func(c *BilibiliClient) (json.RawMessage, error) {
 		return c.GetRecentHistory(maxVal, viewAt)
+	})
+}
+
+func handleToviewList(w http.ResponseWriter, r *http.Request) {
+	pn, ok := getIntQuery(w, r, "pn", 1, 1, true)
+	if !ok {
+		return
+	}
+	ps, ok := getIntQuery(w, r, "ps", 1, 20, true)
+	if !ok {
+		return
+	}
+	handleAPI(w, "/toview/list", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetWatchLaterList(pn, ps)
+	})
+}
+
+func handleToviewAdd(w http.ResponseWriter, r *http.Request) {
+	aid, bvid, ok := requireAidOrBvid(w, r)
+	if !ok {
+		return
+	}
+	handleAPI(w, "/toview/add", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.AddToWatchLater(aid, bvid)
+	})
+}
+
+func handleToviewDel(w http.ResponseWriter, r *http.Request) {
+	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	if !ok {
+		return
+	}
+	if aid == 0 {
+		writeError(w, 400, "aid 为必填参数")
+		return
+	}
+	handleAPI(w, "/toview/del", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.RemoveFromWatchLater(aid)
 	})
 }
 
@@ -2703,6 +2795,9 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
 	mux.HandleFunc("/history/recent", handleRecentHistory)
+	mux.HandleFunc("/toview/list", handleToviewList)
+	mux.HandleFunc("/toview/add", handleToviewAdd)
+	mux.HandleFunc("/toview/del", handleToviewDel)
 	mux.HandleFunc("/player/heartbeat", handlePlayerHeartbeat)
 	mux.HandleFunc("/fav/folder/list", handleFavFolderList)
 	mux.HandleFunc("/fav/resource/list", handleFavResourceList)
@@ -2753,6 +2848,9 @@ func printEndpoints(port string) {
 		"GET  /hot/search            - 热搜榜",
 		"GET  /recommend             - 首页推荐",
 		"GET  /history/recent        - 最近观看",
+		"GET  /toview/list           - 稍后再看列表",
+		"GET  /toview/add            - 添加稍后再看",
+		"GET  /toview/del            - 取消稍后再看",
 		"GET  /player/heartbeat      - 回调心跳",
 		"GET  /fav/folder/list       - 收藏夹列表",
 		"GET  /fav/resource/list     - 收藏夹内容",

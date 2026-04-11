@@ -15,7 +15,7 @@
 BiliController::BiliController(QObject *parent)
     : QObject(parent), m_network(BiliNetwork::instance()),
       m_currentPage("home"), m_playQuality(64), m_isDownloading(false),
-      m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false), m_isCoined(false), m_isLiked(false),
+      m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false), m_isCoined(false), m_isLiked(false), m_isWatchLater(false),
       m_userName(""), m_userFace(""), m_qrcodeUrl(""), m_qrcodeKey(""),
       m_userId(0), m_userLevel(0), m_userExp(0), m_userExpMin(0), m_userExpNext(0), m_userCoins(0), m_userFans(0),
       m_userFollowing(0), m_userSign(""), m_userVipLabel(""),
@@ -34,6 +34,7 @@ BiliController::BiliController(QObject *parent)
       m_favoriteFolderModel(new FavoriteFolderModel(this)),
       m_favoriteItemModel(new VideoListModel(this)),
       m_recentHistoryModel(new VideoListModel(this)),
+      m_watchLaterModel(new VideoListModel(this)),
       m_upVideoModel(new VideoListModel(this)),
       m_favoritePage(1),
       m_currentFavoriteId(0),
@@ -199,6 +200,7 @@ QObject *BiliController::searchHistoryModel() { return m_searchHistoryModel; }
 QObject *BiliController::favoriteFolderModel() { return m_favoriteFolderModel; }
 QObject *BiliController::favoriteItemModel() { return m_favoriteItemModel; }
 QObject *BiliController::recentHistoryModel() { return m_recentHistoryModel; }
+QObject *BiliController::watchLaterModel() { return m_watchLaterModel; }
 QObject *BiliController::upVideoModel() { return m_upVideoModel; }
 
 // ====== Navigation ======
@@ -244,6 +246,7 @@ void BiliController::cancelAll() {
   if (m_favoriteFolderModel) m_favoriteFolderModel->setLoading(false);
   if (m_favoriteItemModel) m_favoriteItemModel->setLoading(false);
   if (m_recentHistoryModel) m_recentHistoryModel->setLoading(false);
+  if (m_watchLaterModel) m_watchLaterModel->setLoading(false);
   if (m_upVideoModel) m_upVideoModel->setLoading(false);
 
   // 下载中也允许中止显示状态
@@ -322,6 +325,10 @@ void BiliController::clearLocalLoginState() {
   if (m_isLiked) {
     m_isLiked = false;
     emit likeStatusChanged();
+  }
+  if (m_isWatchLater) {
+    m_isWatchLater = false;
+    emit watchLaterStatusChanged();
   }
   emit loginStateChanged();
 }

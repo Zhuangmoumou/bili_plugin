@@ -956,6 +956,76 @@ Rectangle {
                             }
                         }
 
+                        // 稍后再看
+                        Rectangle {
+                            width: toviewBadgeContent.width + 18
+                            height: 24
+                            radius: 12
+                            color: controller && controller.isWatchLater
+                                   ? Qt.rgba(0.23, 0.51, 0.96, 0.22)
+                                   : (toviewBadgeArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.25) : Qt.rgba(1, 1, 1, 0.07))
+                            border.color: controller && controller.isWatchLater
+                                          ? Qt.rgba(0.23, 0.51, 0.96, 0.6)
+                                          : Qt.rgba(0.23, 0.51, 0.96, 0.25)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            scale: toviewBadgeArea.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
+
+                            Row {
+                                id: toviewBadgeContent
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Canvas {
+                                    width: 12
+                                    height: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = controller && controller.isWatchLater ? primaryColor : primaryLight
+                                        ctx.lineWidth = 1.4
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(6, 6, 4.8, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(6, 6)
+                                        ctx.lineTo(6, 3.2)
+                                        ctx.moveTo(6, 6)
+                                        ctx.lineTo(8.6, 7.2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(9.5, 2.5)
+                                        ctx.lineTo(11.5, 2.5)
+                                        ctx.moveTo(10.5, 1.5)
+                                        ctx.lineTo(10.5, 3.5)
+                                        ctx.stroke()
+                                    }
+                                }
+
+                                Text {
+                                    text: controller && controller.isWatchLater ? "已加入" : "稍后再看"
+                                    color: controller && controller.isWatchLater ? primaryLight : "#cbd5e1"
+                                    font.family: fontFamily
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            MouseArea {
+                                id: toviewBadgeArea
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (controller) controller.toggleWatchLater()
+                                }
+                            }
+                        }
+
                         Rectangle {
                             visible: false
                         }
@@ -1723,7 +1793,7 @@ Rectangle {
         id: loadingOverlay
         anchors.centerIn: parent
         width: 72
-        height: 72
+        height: 86
         radius: 18
         color: "#ee0d1117"
         border.color: Qt.rgba(1, 1, 1, 0.1)
@@ -1838,6 +1908,7 @@ Rectangle {
         if (controller && controller.videoCid > 0) {
             controller.fetchAcceptQualities(selectedQuality)
             controller.fetchFavoriteStatus()
+            controller.fetchWatchLaterStatus()
         }
 
         enterAnimation.start()
@@ -1852,6 +1923,7 @@ Rectangle {
                 controller.fetchFavoriteStatus()
                 controller.fetchCoinStatus()
                 controller.fetchLikeStatus()
+                controller.fetchWatchLaterStatus()
                 controller.fetchSubtitleList()
             }
             detailPage.restorePartListPosition()
@@ -1861,6 +1933,7 @@ Rectangle {
                 controller.fetchFavoriteStatus()
                 controller.fetchCoinStatus()
                 controller.fetchLikeStatus()
+                controller.fetchWatchLaterStatus()
             }
         }
     }
