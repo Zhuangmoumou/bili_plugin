@@ -1,4 +1,5 @@
 import QtQuick 2.12
+import QtGraphicalEffects 1.12
 import BiliPlugin 1.0
 import "../components" as Components
 import ".."
@@ -57,6 +58,12 @@ Rectangle {
 
     Component.onCompleted: {
         console.log("[UserPage] Created");
+    }
+
+    onVisibleChanged: {
+        if (visible && controller && controller.loggedIn) {
+            controller.refreshUserInfo();
+        }
     }
 
     Component.onDestruction: {
@@ -384,15 +391,26 @@ Rectangle {
                             color: Theme.bgTertiary
                             border.color: Theme.primary
                             border.width: 2
-                            clip: true
 
                             Image {
+                                id: userAvatarImage
                                 anchors.fill: parent
                                 anchors.margins: 2
                                 source: controller && controller.userFace
                                 ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
+                                visible: false
+                            }
+
+                            OpacityMask {
+                                anchors.fill: userAvatarImage
+                                source: userAvatarImage
+                                maskSource: Rectangle {
+                                    width: userAvatarImage.width
+                                    height: userAvatarImage.height
+                                    radius: Math.min(width, height) / 2
+                                }
                             }
                         }
 

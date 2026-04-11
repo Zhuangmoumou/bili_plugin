@@ -34,6 +34,7 @@ BiliController::BiliController(QObject *parent)
       m_favoriteFolderModel(new FavoriteFolderModel(this)),
       m_favoriteItemModel(new VideoListModel(this)),
       m_recentHistoryModel(new VideoListModel(this)),
+      m_upVideoModel(new VideoListModel(this)),
       m_favoritePage(1),
       m_currentFavoriteId(0),
       m_destroying(false) {
@@ -98,6 +99,9 @@ QString BiliController::videoPic() const { return m_currentVideo.pic; }
 QString BiliController::videoOwner() const { return m_currentVideo.ownerName; }
 QString BiliController::videoOwnerFace() const {
   return m_currentVideo.ownerFace;
+}
+qint64 BiliController::videoOwnerMid() const {
+  return m_currentVideo.ownerMid;
 }
 QString BiliController::videoViews() const {
   return VideoListModel::formatCount(m_currentVideo.views);
@@ -195,6 +199,7 @@ QObject *BiliController::searchHistoryModel() { return m_searchHistoryModel; }
 QObject *BiliController::favoriteFolderModel() { return m_favoriteFolderModel; }
 QObject *BiliController::favoriteItemModel() { return m_favoriteItemModel; }
 QObject *BiliController::recentHistoryModel() { return m_recentHistoryModel; }
+QObject *BiliController::upVideoModel() { return m_upVideoModel; }
 
 // ====== Navigation ======
 
@@ -239,6 +244,7 @@ void BiliController::cancelAll() {
   if (m_favoriteFolderModel) m_favoriteFolderModel->setLoading(false);
   if (m_favoriteItemModel) m_favoriteItemModel->setLoading(false);
   if (m_recentHistoryModel) m_recentHistoryModel->setLoading(false);
+  if (m_upVideoModel) m_upVideoModel->setLoading(false);
 
   // 下载中也允许中止显示状态
   if (m_isDownloading) {
@@ -255,6 +261,13 @@ void BiliController::clearSearchHistory() {
     m_searchHistory.clear();
     m_searchHistoryModel->setStringList(m_searchHistory);
     saveSearchHistory();
+}
+
+void BiliController::refreshUserInfo() {
+  if (!m_loggedIn || m_userId <= 0) {
+    return;
+  }
+  fetchUserInfo(m_userId);
 }
 
 // ====== 登录状态持久化 ======

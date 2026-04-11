@@ -155,22 +155,28 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.desc = obj.value("desc").toString();
 
     // duration 可能是数字字符串，或 mm:ss / hh:mm:ss
-    if (obj.value("duration").isString()) {
-        QString durationStr = obj.value("duration").toString().trimmed();
-        if (durationStr.contains(':')) {
-            QStringList parts = durationStr.split(':');
+    auto parseDurationString = [](const QString &durationStr) -> int {
+        QString s = durationStr.trimmed();
+        if (s.contains(':')) {
+            QStringList parts = s.split(':');
             if (parts.size() == 2) {
-                item.duration = parts[0].toInt() * 60 + parts[1].toInt();
+                return parts[0].toInt() * 60 + parts[1].toInt();
             } else if (parts.size() == 3) {
-                item.duration = parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt();
-            } else {
-                item.duration = 0;
+                return parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt();
             }
-        } else {
-            item.duration = durationStr.toInt();
+            return 0;
         }
+        return s.toInt();
+    };
+
+    if (obj.value("duration").isString()) {
+        item.duration = parseDurationString(obj.value("duration").toString());
     } else {
         item.duration = obj.value("duration").toInt();
+    }
+
+    if (item.duration <= 0 && obj.value("length").isString()) {
+        item.duration = parseDurationString(obj.value("length").toString());
     }
 
     item.cid = obj.value("cid").toVariant().toLongLong();
@@ -277,6 +283,7 @@ QVariant CommentListModel::data(const QModelIndex &index, int role) const
     case CtimeRole:    return item.ctime;
     case CtimeTextRole: return formatTime(item.ctime);
     case IsVipRole:    return item.isVip;
+    case IsTopRole:    return item.isTop;
     default: return QVariant();
     }
 }
@@ -293,7 +300,8 @@ QHash<int, QByteArray> CommentListModel::roleNames() const
         {RcountRole, "rcount"},
         {CtimeRole, "ctime"},
         {CtimeTextRole, "ctimeText"},
-        {IsVipRole, "isVip"}
+        {IsVipRole, "isVip"},
+        {IsTopRole, "isTop"}
     };
 }
 
@@ -366,6 +374,8 @@ CommentItem CommentListModel::parseCommentItem(const QJsonObject &obj)
 
     QJsonObject content = obj.value("content").toObject();
     item.content = content.value("message").toString();
+
+    item.isTop = obj.value("is_top").toInt(0) == 1 || obj.value("is_top").toBool(false);
 
     return item;
 }

@@ -23,6 +23,7 @@ Rectangle {
     property var pageStack: []
     property string detailBvid: ""
     property string lastPage: "home"
+    property var upUserMid: 0
     property bool _animating: false
     property real rankingPageX: 0
     property bool restoreRankingPageOnShow: false
@@ -48,6 +49,7 @@ Rectangle {
         lastPage = currentPage;
         if (props) {
             if (props.bvid) detailBvid = props.bvid;
+            if (props.mid) upUserMid = props.mid;
         }
         _animating = true;
         currentPage = page;
@@ -221,6 +223,9 @@ Rectangle {
                         root.navigateTo("player")
                     }
                     onCommentsRequested: root.navigateTo("comments")
+                    onUpRequested: {
+                        if (mid > 0) root.navigateTo("up", { mid: mid });
+                    }
                 }
             }
         }
@@ -286,6 +291,26 @@ Rectangle {
             sourceComponent: Component {
                 Pages.UserPage {
                     controller: root.rootController
+                    onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
+                }
+            }
+        }
+
+        Loader {
+            active: currentPage === "up"
+            visible: currentPage === "up"
+            enabled: visible
+            anchors.fill: parent
+            sourceComponent: Component {
+                Pages.UpUserPage {
+                    controller: root.rootController
+                    upMid: root.upUserMid
                     onBackClicked: root.goBack()
                     onVideoSelected: {
                         if (!bvid || bvid.length < 2) return;

@@ -10,6 +10,7 @@
 #include <QNetworkReply>
 #include <QVariantList>
 #include <QJsonArray>
+#include <functional>
 
 #include "BiliModels.h"
 
@@ -37,6 +38,7 @@ class BiliController : public QObject {
   Q_PROPERTY(QString videoOwner READ videoOwner NOTIFY videoDetailChanged)
   Q_PROPERTY(
       QString videoOwnerFace READ videoOwnerFace NOTIFY videoDetailChanged)
+  Q_PROPERTY(qint64 videoOwnerMid READ videoOwnerMid NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoViews READ videoViews NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoLikes READ videoLikes NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoCoins READ videoCoins NOTIFY videoDetailChanged)
@@ -73,6 +75,16 @@ class BiliController : public QObject {
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
+
+  // UP 主主页
+  Q_PROPERTY(qint64 upUserMid READ upUserMid NOTIFY upUserChanged)
+  Q_PROPERTY(QString upUserName READ upUserName NOTIFY upUserChanged)
+  Q_PROPERTY(QString upUserFace READ upUserFace NOTIFY upUserChanged)
+  Q_PROPERTY(int upUserLevel READ upUserLevel NOTIFY upUserChanged)
+  Q_PROPERTY(int upUserFans READ upUserFans NOTIFY upUserChanged)
+  Q_PROPERTY(int upUserFollowing READ upUserFollowing NOTIFY upUserChanged)
+  Q_PROPERTY(QString upUserSign READ upUserSign NOTIFY upUserChanged)
+  Q_PROPERTY(bool upIsFollowing READ upIsFollowing NOTIFY upFollowChanged)
   // 收藏/投币/点赞状态
   Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
   Q_PROPERTY(bool isCoined READ isCoined NOTIFY coinStatusChanged)
@@ -111,6 +123,7 @@ public:
   QString videoPic() const;
   QString videoOwner() const;
   QString videoOwnerFace() const;
+  qint64 videoOwnerMid() const;
   QString videoViews() const;
   QString videoLikes() const;
   QString videoCoins() const;
@@ -143,6 +156,14 @@ public:
   int subtitleBold() const { return m_subtitleBold; }
 
   bool loggedIn() const;
+  qint64 upUserMid() const { return m_upUserMid; }
+  QString upUserName() const { return m_upUserName; }
+  QString upUserFace() const { return m_upUserFace; }
+  int upUserLevel() const { return m_upUserLevel; }
+  int upUserFans() const { return m_upUserFans; }
+  int upUserFollowing() const { return m_upUserFollowing; }
+  QString upUserSign() const { return m_upUserSign; }
+  bool upIsFollowing() const { return m_upIsFollowing; }
   bool isFavorited() const { return m_isFavorited; }
   bool isCoined() const { return m_isCoined; }
   bool isLiked() const { return m_isLiked; }
@@ -240,8 +261,16 @@ public:
   Q_INVOKABLE QObject *favoriteFolderModel();
   Q_INVOKABLE QObject *favoriteItemModel();
   Q_INVOKABLE QObject *recentHistoryModel();
+  Q_INVOKABLE QObject *upVideoModel();
   Q_INVOKABLE void fetchRecentHistory();
   Q_INVOKABLE void fetchMoreRecentHistory();
+  Q_INVOKABLE void refreshUserInfo();
+
+  // UP 主主页
+  Q_INVOKABLE void fetchUpInfo(qint64 mid);
+  Q_INVOKABLE void fetchUpVideos(qint64 mid, int page = 1, int pageSize = 20);
+  Q_INVOKABLE void fetchMoreUpVideos();
+  Q_INVOKABLE void toggleUpFollow();
 
 signals:
   void currentPageChanged();
@@ -256,6 +285,8 @@ signals:
   void globalErrorChanged();
   void isLoadingChanged();
   void replyHasMoreChanged();
+  void upUserChanged();
+  void upFollowChanged();
 
   void toastMessage(const QString &message);
   void qrcodeLoginSuccess();
@@ -358,10 +389,44 @@ private:
   FavoriteFolderModel *m_favoriteFolderModel;
   VideoListModel *m_favoriteItemModel;
   VideoListModel *m_recentHistoryModel;
+  VideoListModel *m_upVideoModel;
   int m_favoritePage;
   qint64 m_currentFavoriteId;
   int m_recentHistoryMax = 0;
   int m_recentHistoryViewAt = 0;
+
+  // UP 主主页数据
+  qint64 m_upUserMid = 0;
+  QString m_upUserName;
+  QString m_upUserFace;
+  int m_upUserLevel = 0;
+  int m_upUserFans = 0;
+  int m_upUserFollowing = 0;
+  QString m_upUserSign;
+  bool m_upIsFollowing = false;
+  int m_upVideoPage = 1;
+  bool m_upVideoHasMore = true;
+
+  struct DashResult {
+    QString videoUrl;
+    QString audioUrl;
+    int finalQuality = 0;
+  };
+
+  void updateAcceptQualities(const QJsonObject &data);
+  DashResult pickDashUrls(const QJsonObject &data, int requestedQuality) const;
+  QString pickMp4Url(const QJsonObject &data) const;
+
+  void apiGet(const QString &path, const QMap<QString, QString> &params,
+              std::function<void(const QJsonObject &)> onSuccess,
+              std::function<void(int, const QString &)> onError = nullptr,
+              bool withLoading = false);
+
+  void startDownloadTask(const QString &videoUrl, const QString &audioUrl,
+                         const QString &videoPath, const QString &audioPath,
+                         int finalQuality, bool playAfter,
+                         const QString &successToastPrefix = QString(),
+                         const QString &errorToastPrefix = QStringLiteral("下载失败："));
 
   // 标记对象是否正在销毁
   bool m_destroying;

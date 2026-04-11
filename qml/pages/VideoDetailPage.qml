@@ -1,4 +1,5 @@
 import QtQuick 2.12
+import QtGraphicalEffects 1.12
 import BiliPlugin 1.0
 import "../components" as Components
 import ".."
@@ -51,6 +52,7 @@ Rectangle {
     signal backClicked()
     signal playRequested(int quality)
     signal commentsRequested()
+    signal upRequested(var mid)
 
     property real savedPartListX: 0
     property bool favoritePickerVisible: false
@@ -194,7 +196,7 @@ Rectangle {
                     color: backArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.4) : Qt.rgba(1, 1, 1, 0.1)
 
                     Behavior on color { ColorAnimation { duration: 150 } }
-                    scale: backArea.pressed ? 0.88 : 1.0
+                    scale: backArea.pressed ? 0.85 : 1.0
                     Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
                     // iOS 风格返回箭头
@@ -251,6 +253,8 @@ Rectangle {
                             ? "image://bili/" + encodeURIComponent(controller.videoPic) : ""
                             fillMode: Image.PreserveAspectCrop
                             asynchronous: true
+                            smooth: true
+                            mipmap: true
                             opacity: status === Image.Ready ? 1 : 0
                             Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
                         }
@@ -276,7 +280,7 @@ Rectangle {
                         border.color: Qt.rgba(1, 1, 1, 0.25)
                         border.width: 2
 
-                        scale: playArea.pressed ? 0.85 : 1.0
+                        scale: playArea.pressed ? 0.82 : 1.0
                         Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
                         Behavior on color { ColorAnimation { duration: 120 } }
 
@@ -416,10 +420,24 @@ Rectangle {
                                 Rectangle {
                                     height: 20
                                     radius: 10
-                                    color: Qt.rgba(0.23, 0.51, 0.96, 0.15)
+                                    color: upArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.25) : Qt.rgba(0.23, 0.51, 0.96, 0.15)
                                     border.color: Qt.rgba(0.23, 0.51, 0.96, 0.25)
                                     border.width: 1
                                     width: upRow.implicitWidth + 12
+
+                                    scale: upArea.pressed ? 0.9 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                                    MouseArea {
+                                        id: upArea
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (controller && controller.videoOwnerMid > 0) {
+                                                detailPage.upRequested(controller.videoOwnerMid)
+                                            }
+                                        }
+                                    }
 
                                     Row {
                                         id: upRow
@@ -431,15 +449,28 @@ Rectangle {
                                             height: 16
                                             radius: 8
                                             color: "#1e293b"
-                                            clip: true
                                             anchors.verticalCenter: parent.verticalCenter
 
                                             Image {
+                                                id: ownerAvatarImage
                                                 anchors.fill: parent
+                                                smooth: true
+                                                mipmap: true
                                                 source: controller && controller.videoOwnerFace
                                                 ? "image://bili/" + encodeURIComponent(controller.videoOwnerFace) : ""
                                                 fillMode: Image.PreserveAspectCrop
                                                 asynchronous: true
+                                                visible: false
+                                            }
+
+                                            OpacityMask {
+                                                anchors.fill: ownerAvatarImage
+                                                source: ownerAvatarImage
+                                                maskSource: Rectangle {
+                                                    width: ownerAvatarImage.width
+                                                    height: ownerAvatarImage.height
+                                                    radius: Math.min(width, height) / 2
+                                                }
                                             }
                                         }
 
@@ -463,7 +494,7 @@ Rectangle {
                                     radius: 10
                                     color: commentArea.pressed ? primaryDark : primaryColor
 
-                                    scale: commentArea.pressed ? 0.92 : 1.0
+                                    scale: commentArea.pressed ? 0.88 : 1.0
                                     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                                     Behavior on color { ColorAnimation { duration: 100 } }
 
@@ -524,7 +555,7 @@ Rectangle {
                                     radius: 10
                                     color: downloadArea.pressed ? primaryDark : primaryColor
 
-                                    scale: downloadArea.pressed ? 0.92 : 1.0
+                                    scale: downloadArea.pressed ? 0.88 : 1.0
                                     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                                     Behavior on color { ColorAnimation { duration: 100 } }
 
@@ -555,7 +586,7 @@ Rectangle {
                                     radius: 10
                                     color: subtitleArea.pressed ? primaryDark : primaryColor
 
-                                    scale: subtitleArea.pressed ? 0.92 : 1.0
+                                    scale: subtitleArea.pressed ? 0.88 : 1.0
                                     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                                     Behavior on color { ColorAnimation { duration: 100 } }
 
@@ -631,6 +662,10 @@ Rectangle {
                             border.width: 1
                             border.color: Qt.rgba(1, 1, 1, 0.12)
 
+                            scale: refreshArea.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
+
                             Text {
                                 anchors.centerIn: parent
                                 text: "刷新"
@@ -655,6 +690,7 @@ Rectangle {
                             model: detailPage.availableQualities
 
                             Rectangle {
+                                id: qualityItem
                                 height: 18
                                 width: Math.max(38, qualityText.implicitWidth + 10)
                                 radius: 9
@@ -665,6 +701,10 @@ Rectangle {
                                 border.color: detailPage.selectedQuality === modelData
                                                ? primaryLight
                                                : Qt.rgba(1, 1, 1, 0.12)
+
+                                scale: qualityArea.pressed ? 0.9 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                Behavior on color { ColorAnimation { duration: 100 } }
 
                                 Text {
                                     id: qualityText
@@ -679,6 +719,7 @@ Rectangle {
                                 }
 
                                 MouseArea {
+                                    id: qualityArea
                                     anchors.fill: parent
                                     onClicked: {
                                         detailPage.selectedQuality = modelData
@@ -728,6 +769,10 @@ Rectangle {
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
+                            scale: likeBadgeArea.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
+
                             Row {
                                 id: likeBadgeContent
                                 anchors.centerIn: parent
@@ -765,6 +810,7 @@ Rectangle {
                             }
 
                             MouseArea {
+                                id: likeBadgeArea
                                 anchors.fill: parent
                                 onClicked: {
                                     if (!controller) return
@@ -782,6 +828,10 @@ Rectangle {
                             border.color: controller && controller.isCoined ? Qt.rgba(0.98, 0.75, 0.14, 0.6) : Qt.rgba(1, 1, 1, 0.08)
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
+
+                            scale: coinBadgeArea.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
 
                             Row {
                                 id: coinBadgeContent
@@ -820,6 +870,7 @@ Rectangle {
                             }
 
                             MouseArea {
+                                id: coinBadgeArea
                                 anchors.fill: parent
                                 onClicked: {
                                     if (!controller) return
@@ -841,6 +892,10 @@ Rectangle {
                             border.color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.6) : Qt.rgba(1, 1, 1, 0.08)
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
+
+                            scale: favBadgeArea.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
 
                             Row {
                                 id: badgeContent
@@ -887,6 +942,7 @@ Rectangle {
                             }
 
                             MouseArea {
+                                id: favBadgeArea
                                 anchors.fill: parent
                                 onClicked: {
                                     if (!controller) return
@@ -1295,6 +1351,10 @@ Rectangle {
                             radius: 6
                             color: noSubArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
 
+                            scale: noSubArea.pressed ? 0.92 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
+
                             Text {
                                 anchors.centerIn: parent
                                 width: parent.width - 12
@@ -1322,6 +1382,10 @@ Rectangle {
                         height: 34
                         radius: 6
                         color: subChooseArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
+
+                        scale: subChooseArea.pressed ? 0.92 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                        Behavior on color { ColorAnimation { duration: 100 } }
 
                         Text {
                             anchors.centerIn: parent
@@ -1412,6 +1476,10 @@ Rectangle {
                     radius: 6
                     color: coinLikeArea.pressed ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
 
+                    scale: coinLikeArea.pressed ? 0.92 : 1.0
+                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: 100 } }
+
                     Row {
                         anchors.centerIn: parent
                         spacing: 6
@@ -1460,6 +1528,10 @@ Rectangle {
                             height: 28
                             radius: 6
                             color: coinChooseArea.pressed ? primaryDark : primaryColor
+
+                            scale: coinChooseArea.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 100 } }
 
                             Text {
                                 anchors.centerIn: parent
@@ -1548,6 +1620,10 @@ Rectangle {
                         height: 34
                         radius: 6
                         color: favChooseArea.pressed ? Qt.rgba(1,1,1,0.12) : Qt.rgba(1,1,1,0.04)
+
+                        scale: favChooseArea.pressed ? 0.92 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                        Behavior on color { ColorAnimation { duration: 100 } }
 
                         Text {
                             anchors.centerIn: parent
@@ -1717,6 +1793,10 @@ Rectangle {
                 border.color: Qt.rgba(0.23, 0.51, 0.96, 0.35)
                 border.width: 1
                 anchors.horizontalCenter: parent.horizontalCenter
+
+                scale: cancelArea.pressed ? 0.9 : 1.0
+                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                Behavior on color { ColorAnimation { duration: 100 } }
 
                 Text {
                     id: cancelTextItem

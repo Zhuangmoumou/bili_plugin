@@ -128,6 +128,27 @@ Rectangle {
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontTiny
                         }
+
+                        Rectangle {
+                            visible: model.isTop === true
+                            height: 12
+                            radius: 6
+                            color: Theme.withAlpha(Theme.primary, 0.2)
+                            border.color: Theme.withAlpha(Theme.primary, 0.45)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: topLabel.implicitWidth + 8
+
+                            Text {
+                                id: topLabel
+                                anchors.centerIn: parent
+                                text: "置顶"
+                                color: Theme.primary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTiny
+                                font.bold: true
+                            }
+                        }
                     }
 
                     // 评论内容

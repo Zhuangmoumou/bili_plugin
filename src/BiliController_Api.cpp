@@ -16,10 +16,276 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <iostream>
+#include <algorithm>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
+
+// ====== 内部辅助方法 ======
+
+void BiliController::apiGet(const QString &path,
+                            const QMap<QString, QString> &params,
+                            std::function<void(const QJsonObject &)> onSuccess,
+                            std::function<void(int, const QString &)> onError,
+                            bool withLoading) {
+  if (withLoading) {
+    setIsLoading(true);
+  }
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      path, params,
+      [self, onSuccess, withLoading](const QJsonObject &data) {
+        if (!self)
+          return;
+        if (withLoading) {
+          self->setIsLoading(false);
+        }
+        if (onSuccess) {
+          onSuccess(data);
+        }
+      },
+      [self, onError, withLoading](int code, const QString &msg) {
+        if (!self)
+          return;
+        if (withLoading) {
+          self->setIsLoading(false);
+        }
+        if (onError) {
+          onError(code, msg);
+        }
+      });
+}
+
+void BiliController::updateAcceptQualities(const QJsonObject &data) {
+  QVector<int> newAccepts;
+  QJsonArray accept = data.value("accept_quality").toArray();
+  for (const QJsonValue &v : accept) {
+    int q = v.toInt(0);
+    if (q > 0)
+      newAccepts.append(q);
+  }
+  // 兼容 support_formats（仅保留可观看清晰度，作为补充）
+  QJsonArray supportFormats = data.value("support_formats").toArray();
+  for (const QJsonValue &v : supportFormats) {
+    QJsonObject obj = v.toObject();
+    int q = obj.value("quality").toInt(0);
+    int canWatch = obj.value("can_watch_qn_reason").toInt(0);
+    int limit = obj.value("limit_watch_reason").toInt(0);
+    if (q > 0 && canWatch == 0 && limit == 0 && !newAccepts.contains(q)) {
+      newAccepts.append(q);
+    }
+  }
+
+  if (!newAccepts.isEmpty() && newAccepts != m_acceptQualities) {
+    m_acceptQualities = newAccepts;
+    emit acceptQualitiesChanged();
+  }
+}
+
+BiliController::DashResult
+BiliController::pickDashUrls(const QJsonObject &data, int requestedQuality) const {
+  DashResult result;
+  result.finalQuality = requestedQuality;
+
+  QJsonObject dash = data.value("dash").toObject();
+  if (dash.isEmpty()) {
+    return result;
+  }
+
+  QJsonArray videoArray = dash.value("video").toArray();
+  QJsonArray audioArray = dash.value("audio").toArray();
+
+  auto pickVideoByQn = [&](int qn, bool preferAvc) -> bool {
+    for (const QJsonValue &v : videoArray) {
+      QJsonObject videoObj = v.toObject();
+      if (videoObj.value("id").toInt(0) == qn) {
+        QString codecs = videoObj.value("codecs").toString();
+        if (preferAvc && !codecs.startsWith("avc")) {
+          continue;
+        }
+        QString url = videoObj.value("base_url").toString();
+        if (url.isEmpty())
+          url = videoObj.value("baseUrl").toString();
+        if (!url.isEmpty()) {
+          result.videoUrl = url;
+          result.finalQuality = qn;
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // 优先用户选择的清晰度（优先 AVC）
+  if (!pickVideoByQn(requestedQuality, true)) {
+    pickVideoByQn(requestedQuality, false);
+  }
+
+  if (result.videoUrl.isEmpty()) {
+    QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
+    for (int qn : qualityOrder) {
+      if (qn == requestedQuality)
+        continue;
+      if (pickVideoByQn(qn, true))
+        break;
+      if (pickVideoByQn(qn, false))
+        break;
+    }
+  }
+
+  if (!audioArray.isEmpty()) {
+    QVector<int> audioOrder = {30280, 30232, 30216};
+    for (int audioQn : audioOrder) {
+      for (const QJsonValue &a : audioArray) {
+        QJsonObject audioObj = a.toObject();
+        if (audioObj.value("id").toInt(0) == audioQn) {
+          QString url = audioObj.value("base_url").toString();
+          if (url.isEmpty())
+            url = audioObj.value("baseUrl").toString();
+          if (!url.isEmpty()) {
+            result.audioUrl = url;
+            break;
+          }
+        }
+      }
+      if (!result.audioUrl.isEmpty())
+        break;
+    }
+  }
+
+  return result;
+}
+
+QString BiliController::pickMp4Url(const QJsonObject &data) const {
+  QJsonArray durl = data.value("durl").toArray();
+  if (durl.isEmpty())
+    return "";
+
+  QJsonObject first = durl.first().toObject();
+  QString url = first.value("url").toString();
+  if (url.isEmpty()) {
+    QJsonArray backup = first.value("backup_url").toArray();
+    if (!backup.isEmpty()) {
+      url = backup.first().toString();
+    }
+  }
+  return url;
+}
+
+void BiliController::startDownloadTask(const QString &videoUrl,
+                                       const QString &audioUrl,
+                                       const QString &videoPath,
+                                       const QString &audioPath,
+                                       int finalQuality, bool playAfter,
+                                       const QString &successToastPrefix,
+                                       const QString &errorToastPrefix) {
+  if (videoUrl.isEmpty() || videoPath.isEmpty()) {
+    emit toastMessage("未获取到下载地址");
+    setIsLoading(false);
+    return;
+  }
+
+  m_isDownloading = true;
+  m_downloadProgress = 0;
+  m_downloadStatus = "正在下载视频...";
+  emit downloadStateChanged();
+
+  QPointer<BiliController> self(this);
+
+  m_network->downloadVideo(
+      videoUrl, videoPath,
+      [self, audioUrl, audioPath, videoPath, finalQuality, playAfter, successToastPrefix](const QString &path) {
+        if (!self)
+          return;
+
+        if (!audioUrl.isEmpty() && !audioPath.isEmpty()) {
+          self->m_downloadStatus = "正在下载音频...";
+          emit self->downloadStateChanged();
+
+          self->m_network->downloadVideo(
+              audioUrl, audioPath,
+              [self, videoPath, finalQuality, playAfter, successToastPrefix](const QString &) {
+                if (!self)
+                  return;
+
+                self->m_isDownloading = false;
+                self->m_downloadProgress = 1.0;
+                self->m_downloadStatus = "下载完成";
+                if (playAfter) {
+                  self->m_playUrl = videoPath;
+                  self->m_playQuality = finalQuality;
+                  emit self->playUrlChanged();
+                }
+                emit self->downloadStateChanged();
+                self->setIsLoading(false);
+                if (!successToastPrefix.isEmpty()) {
+                  emit self->toastMessage(successToastPrefix + videoPath);
+                }
+              },
+              [self](int, const QString &msg) {
+                if (!self)
+                  return;
+                self->m_isDownloading = false;
+                self->m_downloadProgress = 0;
+                self->m_downloadStatus.clear();
+                emit self->downloadStateChanged();
+                self->setIsLoading(false);
+                emit self->toastMessage(QString("音频下载失败：%1").arg(msg));
+              });
+          return;
+        }
+
+        self->m_isDownloading = false;
+        self->m_downloadProgress = 1.0;
+        self->m_downloadStatus = "下载完成";
+        if (playAfter) {
+          self->m_playUrl = path;
+          self->m_playQuality = finalQuality;
+          emit self->playUrlChanged();
+        }
+        emit self->downloadStateChanged();
+        self->setIsLoading(false);
+        if (!successToastPrefix.isEmpty()) {
+          emit self->toastMessage(successToastPrefix + path);
+        }
+      },
+      [self, errorToastPrefix](int, const QString &msg) {
+        if (!self)
+          return;
+
+        self->m_isDownloading = false;
+        self->m_downloadProgress = 0;
+        self->m_downloadStatus.clear();
+        emit self->downloadStateChanged();
+        self->setIsLoading(false);
+        emit self->toastMessage(errorToastPrefix + msg);
+      },
+      [self](qint64 received, qint64 total) {
+        if (!self)
+          return;
+
+        double progress = total > 0 ? static_cast<double>(received) / total : 0;
+        self->m_downloadProgress = progress;
+        QString sizeStr;
+        if (total > 0) {
+          double mb = received / (1024.0 * 1024.0);
+          double totalMb = total / (1024.0 * 1024.0);
+          sizeStr = QString("%1MB / %2MB")
+                        .arg(mb, 0, 'f', 1)
+                        .arg(totalMb, 0, 'f', 1);
+        } else {
+          double mb = received / (1024.0 * 1024.0);
+          sizeStr = QString("%1MB").arg(mb, 0, 'f', 1);
+        }
+        self->m_downloadStatus =
+            QString("正在下载... %1 (%2%)")
+                .arg(sizeStr)
+                .arg(static_cast<int>(progress * 100));
+        emit self->downloadStateChanged();
+      });
+}
 
 // ====== API: 热门视频 ======
 
@@ -430,110 +696,14 @@ void BiliController::fetchPlayUrl(int quality) {
           finalQuality = apiQuality;
         }
 
-        // 解析可用清晰度（以 accept_quality 为准）
-        QVector<int> newAccepts;
-        QJsonArray accept = data.value("accept_quality").toArray();
-        for (const QJsonValue &v : accept) {
-          int q = v.toInt(0);
-          if (q > 0) newAccepts.append(q);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
-        QJsonArray supportFormats = data.value("support_formats").toArray();
-        for (const QJsonValue &v : supportFormats) {
-          QJsonObject obj = v.toObject();
-          int q = obj.value("quality").toInt(0);
-          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
-          int limit = obj.value("limit_watch_reason").toInt(0);
-          if (q > 0 && canWatch == 0 && limit == 0 &&
-              !newAccepts.contains(q)) {
-            newAccepts.append(q);
-          }
-        }
+        self->updateAcceptQualities(data);
 
-        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
-          self->m_acceptQualities = newAccepts;
-          emit self->acceptQualitiesChanged();
-        }
-
-        // 优先 durl 格式（MP4）
-        QJsonArray durl = data.value("durl").toArray();
-        if (!durl.isEmpty()) {
-          QJsonObject first = durl.first().toObject();
-          videoUrl = first.value("url").toString();
-          if (videoUrl.isEmpty()) {
-            QJsonArray backup = first.value("backup_url").toArray();
-            if (!backup.isEmpty()) {
-              videoUrl = backup.first().toString();
-            }
-          }
-        }
-
-        // 回退到 dash 格式
+        videoUrl = self->pickMp4Url(data);
         if (videoUrl.isEmpty()) {
-          QJsonObject dash = data.value("dash").toObject();
-          if (!dash.isEmpty()) {
-            QJsonArray videoArray = dash.value("video").toArray();
-            QJsonArray audioArray = dash.value("audio").toArray();
-
-            // 按画质优先级选择（优先用户选择）
-            auto pickVideoByQn = [&](int qn, bool preferAvc) -> bool {
-              for (const QJsonValue &v : videoArray) {
-                QJsonObject videoObj = v.toObject();
-                if (videoObj.value("id").toInt(0) == qn) {
-                  QString codecs = videoObj.value("codecs").toString();
-                  if (preferAvc && !codecs.startsWith("avc")) {
-                    continue;
-                  }
-                  QString url = videoObj.value("base_url").toString();
-                  if (url.isEmpty())
-                    url = videoObj.value("baseUrl").toString();
-                  if (!url.isEmpty()) {
-                    videoUrl = url;
-                    finalQuality = qn;
-                    return true;
-                  }
-                }
-              }
-              return false;
-            };
-
-            // 先尝试用户选择的清晰度（优先 AVC/H.264）
-            if (!pickVideoByQn(requestedQuality, true)) {
-              pickVideoByQn(requestedQuality, false);
-            }
-
-            // 回退到其他画质
-            if (videoUrl.isEmpty()) {
-              QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
-              for (int qn : qualityOrder) {
-                if (qn == requestedQuality)
-                  continue;
-                if (pickVideoByQn(qn, true))
-                  break;
-                if (pickVideoByQn(qn, false))
-                  break;
-              }
-            }
-
-            // 获取音频流
-            if (!audioArray.isEmpty()) {
-              QVector<int> audioOrder = {30280, 30232, 30216};
-              for (int audioQn : audioOrder) {
-                for (const QJsonValue &a : audioArray) {
-                  QJsonObject audioObj = a.toObject();
-                  if (audioObj.value("id").toInt(0) == audioQn) {
-                    audioUrl = audioObj.value("base_url").toString();
-                    if (audioUrl.isEmpty())
-                      audioUrl = audioObj.value("baseUrl").toString();
-                    if (!audioUrl.isEmpty())
-                      break;
-                  }
-                }
-                if (!audioUrl.isEmpty())
-                  break;
-              }
-            }
-          }
+          auto dash = self->pickDashUrls(data, requestedQuality);
+          videoUrl = dash.videoUrl;
+          audioUrl = dash.audioUrl;
+          finalQuality = dash.finalQuality;
         }
 
         // 保存 DASH 直链，供外部播放器流式播放
@@ -608,31 +778,7 @@ void BiliController::fetchAcceptQualities(int quality) {
         if (!self)
           return;
 
-        // 解析可用清晰度（以 accept_quality 为准）
-        QVector<int> newAccepts;
-        QJsonArray accept = data.value("accept_quality").toArray();
-        for (const QJsonValue &v : accept) {
-          int q = v.toInt(0);
-          if (q > 0) newAccepts.append(q);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
-        QJsonArray supportFormats = data.value("support_formats").toArray();
-        for (const QJsonValue &v : supportFormats) {
-          QJsonObject obj = v.toObject();
-          int q = obj.value("quality").toInt(0);
-          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
-          int limit = obj.value("limit_watch_reason").toInt(0);
-          if (q > 0 && canWatch == 0 && limit == 0 &&
-              !newAccepts.contains(q)) {
-            newAccepts.append(q);
-          }
-        }
-
-        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
-          self->m_acceptQualities = newAccepts;
-          emit self->acceptQualitiesChanged();
-        }
-
+        self->updateAcceptQualities(data);
         self->setIsLoading(false);
       },
       [self](int, const QString &msg) {
@@ -695,107 +841,16 @@ void BiliController::downloadAndPlay(int quality) {
           finalQuality = apiQuality;
         }
 
-        // 解析可用清晰度（以 accept_quality 为准）
-        QVector<int> newAccepts;
-        QJsonArray accept = data.value("accept_quality").toArray();
-        for (const QJsonValue &v : accept) {
-          int q = v.toInt(0);
-          if (q > 0) newAccepts.append(q);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
-        QJsonArray supportFormats = data.value("support_formats").toArray();
-        for (const QJsonValue &v : supportFormats) {
-          QJsonObject obj = v.toObject();
-          int q = obj.value("quality").toInt(0);
-          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
-          int limit = obj.value("limit_watch_reason").toInt(0);
-          if (q > 0 && canWatch == 0 && limit == 0 &&
-              !newAccepts.contains(q)) {
-            newAccepts.append(q);
-          }
-        }
+        self->updateAcceptQualities(data);
 
-        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
-          self->m_acceptQualities = newAccepts;
-          emit self->acceptQualitiesChanged();
-        }
-
-        // DASH：优先选择视频流与音频流
-        QJsonObject dash = data.value("dash").toObject();
-        if (!dash.isEmpty()) {
-          QJsonArray videoArray = dash.value("video").toArray();
-          QJsonArray audioArray = dash.value("audio").toArray();
-
-          auto pickVideoByQn = [&](int qn, bool preferAvc) -> bool {
-            for (const QJsonValue &v : videoArray) {
-              QJsonObject videoObj = v.toObject();
-              if (videoObj.value("id").toInt(0) == qn) {
-                QString codecs = videoObj.value("codecs").toString();
-                if (preferAvc && !codecs.startsWith("avc")) {
-                  continue;
-                }
-                videoUrl = videoObj.value("base_url").toString();
-                if (videoUrl.isEmpty())
-                  videoUrl = videoObj.value("baseUrl").toString();
-                if (!videoUrl.isEmpty()) {
-                  finalQuality = qn;
-                  return true;
-                }
-              }
-            }
-            return false;
-          };
-
-          // 先尝试用户选择的清晰度（优先 AVC/H.264）
-          if (!pickVideoByQn(requestedQuality, true)) {
-            pickVideoByQn(requestedQuality, false);
-          }
-
-          if (videoUrl.isEmpty()) {
-            QVector<int> qualityOrder = {16, 32, 64, 80, 112, 116, 120, 125};
-            for (int qn : qualityOrder) {
-              if (qn == requestedQuality)
-                continue;
-              if (pickVideoByQn(qn, true))
-                break;
-              if (pickVideoByQn(qn, false))
-                break;
-            }
-          }
-
-          // 获取音频流（优先高码率）
-          if (!audioArray.isEmpty()) {
-            QVector<int> audioOrder = {30280, 30232, 30216};
-            for (int audioQn : audioOrder) {
-              for (const QJsonValue &a : audioArray) {
-                QJsonObject audioObj = a.toObject();
-                if (audioObj.value("id").toInt(0) == audioQn) {
-                  audioUrl = audioObj.value("base_url").toString();
-                  if (audioUrl.isEmpty())
-                    audioUrl = audioObj.value("baseUrl").toString();
-                  if (!audioUrl.isEmpty())
-                    break;
-                }
-              }
-              if (!audioUrl.isEmpty())
-                break;
-            }
-          }
-        }
+        auto dash = self->pickDashUrls(data, requestedQuality);
+        videoUrl = dash.videoUrl;
+        audioUrl = dash.audioUrl;
+        finalQuality = dash.finalQuality;
 
         // 回退到 MP4（durl）
         if (videoUrl.isEmpty()) {
-          QJsonArray durl = data.value("durl").toArray();
-          if (!durl.isEmpty()) {
-            QJsonObject first = durl.first().toObject();
-            videoUrl = first.value("url").toString();
-            if (videoUrl.isEmpty()) {
-              QJsonArray backup = first.value("backup_url").toArray();
-              if (!backup.isEmpty()) {
-                videoUrl = backup.first().toString();
-              }
-            }
-          }
+          videoUrl = self->pickMp4Url(data);
         }
 
         if (videoUrl.isEmpty()) {
@@ -804,98 +859,8 @@ void BiliController::downloadAndPlay(int quality) {
           return;
         }
 
-        // 开始下载视频
-        self->m_isDownloading = true;
-        self->m_downloadProgress = 0;
-        self->m_downloadStatus = "正在下载视频...";
-        emit self->downloadStateChanged();
-
-        self->m_network->downloadVideo(
-            videoUrl, self->m_tempVideoPath,
-            // 视频成功回调
-            [self, audioUrl, finalQuality](const QString &path) {
-              if (!self)
-                return;
-
-              // 如果有音频流，继续下载音频
-              if (!audioUrl.isEmpty()) {
-                self->m_downloadStatus = "正在下载音频...";
-                emit self->downloadStateChanged();
-
-                self->m_network->downloadVideo(
-                    audioUrl, self->m_tempAudioPath,
-                    [self, finalQuality](const QString &) {
-                      if (!self)
-                        return;
-
-                      self->m_isDownloading = false;
-                      self->m_downloadProgress = 1.0;
-                      self->m_downloadStatus = "下载完成";
-                      self->m_playUrl = self->m_tempVideoPath;
-                      self->m_playQuality = finalQuality;
-                      emit self->downloadStateChanged();
-                      emit self->playUrlChanged();
-                      self->setIsLoading(false);
-                    },
-                    [self](int, const QString &msg) {
-                      if (!self)
-                        return;
-                      self->m_isDownloading = false;
-                      self->m_downloadProgress = 0;
-                      self->m_downloadStatus.clear();
-                      emit self->downloadStateChanged();
-                      self->setIsLoading(false);
-                      emit self->toastMessage(QString("音频下载失败：%1").arg(msg));
-                    });
-              } else {
-                self->m_isDownloading = false;
-                self->m_downloadProgress = 1.0;
-                self->m_downloadStatus = "下载完成";
-                self->m_playUrl = path;
-                self->m_playQuality = finalQuality;
-                emit self->downloadStateChanged();
-                emit self->playUrlChanged();
-                self->setIsLoading(false);
-              }
-            },
-            // 错误回调
-            [self](int code, const QString &msg) {
-              Q_UNUSED(code)
-              if (!self)
-                return;
-
-              self->m_isDownloading = false;
-              self->m_downloadProgress = 0;
-              self->m_downloadStatus.clear();
-              emit self->downloadStateChanged();
-              self->setIsLoading(false);
-              emit self->toastMessage(QString("下载失败：%1").arg(msg));
-            },
-            // 进度回调
-            [self](qint64 received, qint64 total) {
-              if (!self)
-                return;
-
-              double progress =
-                  total > 0 ? static_cast<double>(received) / total : 0;
-              self->m_downloadProgress = progress;
-              QString sizeStr;
-              if (total > 0) {
-                double mb = received / (1024.0 * 1024.0);
-                double totalMb = total / (1024.0 * 1024.0);
-                sizeStr = QString("%1MB / %2MB")
-                              .arg(mb, 0, 'f', 1)
-                              .arg(totalMb, 0, 'f', 1);
-              } else {
-                double mb = received / (1024.0 * 1024.0);
-                sizeStr = QString("%1MB").arg(mb, 0, 'f', 1);
-              }
-              self->m_downloadStatus =
-                  QString("正在下载... %1 (%2%)")
-                      .arg(sizeStr)
-                      .arg(static_cast<int>(progress * 100));
-              emit self->downloadStateChanged();
-            });
+        self->startDownloadTask(videoUrl, audioUrl, self->m_tempVideoPath,
+                                self->m_tempAudioPath, finalQuality, true);
       },
       [self](int code, const QString &msg) {
         Q_UNUSED(code)
@@ -971,45 +936,53 @@ void BiliController::fetchComments(int page) {
   params["pn"] = QString::number(page);
   params["ps"] = "10";
 
-  QPointer<BiliController> self(this);
-
-  m_network->get(
+  apiGet(
       "/video/comments", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         QJsonObject pageObj = data.value("page").toObject();
         int total = pageObj.value("count").toInt();
-        self->m_commentModel->setTotalCount(total);
+        m_commentModel->setTotalCount(total);
 
         QJsonArray replies = data.value("replies").toArray();
 
         QVector<CommentItem> items;
-        items.reserve(replies.size());
+
+        // 置顶评论（可能存在 upper/admin/vote 等）
+        if (m_commentPage == 1) {
+          QJsonObject topObj = data.value("top").toObject();
+          QStringList topKeys = {"upper", "admin", "vote"};
+          for (const QString &key : topKeys) {
+            QJsonObject topItem = topObj.value(key).toObject();
+            if (!topItem.isEmpty()) {
+              CommentItem topComment = CommentListModel::parseCommentItem(topItem);
+              topComment.isTop = true;
+              items.append(topComment);
+            }
+          }
+        }
+
+        items.reserve(items.size() + replies.size());
         for (const QJsonValue &v : replies) {
           if (v.isObject()) {
             items.append(CommentListModel::parseCommentItem(v.toObject()));
           }
         }
 
-        self->m_commentModel->appendItems(items);
-        self->m_commentModel->setLoading(false);
+        m_commentModel->appendItems(items);
+        m_commentModel->setLoading(false);
 
-        if (items.isEmpty() && self->m_commentPage == 1) {
-          self->m_commentModel->setErrorMessage("暂无评论");
+        if (items.isEmpty() && m_commentPage == 1) {
+          m_commentModel->setErrorMessage("暂无评论");
         }
       },
-      [self](int code, const QString &msg) {
-        if (!self)
-          return;
-
-        self->m_commentModel->setLoading(false);
+      [this](int code, const QString &msg) {
+        m_commentModel->setLoading(false);
         if (code == -404 || msg == "啥都木有") {
-          self->m_commentModel->setErrorMessage("暂无评论");
+          m_commentModel->setErrorMessage("暂无评论");
         } else {
-          self->m_commentModel->setErrorMessage(msg);
-          emit self->toastMessage(QString("评论加载失败：%1").arg(msg));
+          m_commentModel->setErrorMessage(msg);
+          emit toastMessage(QString("评论加载失败：%1").arg(msg));
         }
       });
 }
@@ -1029,7 +1002,6 @@ void BiliController::fetchCommentReplies(qint64 rootRpid) {
 
   m_commentReplyModel->clear();
   m_commentReplyModel->setLoading(true);
-  setIsLoading(true);
 
   QMap<QString, QString> params;
   params["oid"] = QString::number(m_currentVideo.aid);
@@ -1038,12 +1010,9 @@ void BiliController::fetchCommentReplies(qint64 rootRpid) {
   params["ps"] = "20";
   params["pn"] = QString::number(m_commentReplyPage);
 
-  QPointer<BiliController> self(this);
-  m_network->get(
+  apiGet(
       "/video/comments/replies", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         QJsonArray replies = data.value("replies").toArray();
         QVector<CommentReplyItem> items;
@@ -1056,30 +1025,27 @@ void BiliController::fetchCommentReplies(qint64 rootRpid) {
 
         QJsonObject pageObj = data.value("page").toObject();
         int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("num").toInt(self->m_commentReplyPage);
+        int num = pageObj.value("num").toInt(m_commentReplyPage);
         int size = pageObj.value("size").toInt(20);
         bool hasMore = (count > 0) ? (num * size < count) : (items.size() >= size);
 
-        self->m_commentReplyHasMore = hasMore;
-        emit self->replyHasMoreChanged();
+        m_commentReplyHasMore = hasMore;
+        emit replyHasMoreChanged();
 
-        self->m_commentReplyModel->setItems(items);
-        self->m_commentReplyModel->setLoading(false);
-        self->setIsLoading(false);
+        m_commentReplyModel->setItems(items);
+        m_commentReplyModel->setLoading(false);
         if (items.isEmpty()) {
-          self->m_commentReplyModel->setErrorMessage("暂无回复");
+          m_commentReplyModel->setErrorMessage("暂无回复");
         }
       },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-        self->m_commentReplyHasMore = false;
-        emit self->replyHasMoreChanged();
-        self->m_commentReplyModel->setLoading(false);
-        self->m_commentReplyModel->setErrorMessage(msg);
-        self->setIsLoading(false);
-        emit self->toastMessage(QString("回复加载失败：%1").arg(msg));
-      });
+      [this](int, const QString &msg) {
+        m_commentReplyHasMore = false;
+        emit replyHasMoreChanged();
+        m_commentReplyModel->setLoading(false);
+        m_commentReplyModel->setErrorMessage(msg);
+        emit toastMessage(QString("回复加载失败：%1").arg(msg));
+      },
+      true);
 }
 
 void BiliController::fetchMoreCommentReplies() {
@@ -1089,7 +1055,6 @@ void BiliController::fetchMoreCommentReplies() {
 
   m_commentReplyPage++;
   m_commentReplyModel->setLoading(true);
-  setIsLoading(true);
 
   QMap<QString, QString> params;
   params["oid"] = QString::number(m_currentVideo.aid);
@@ -1098,11 +1063,9 @@ void BiliController::fetchMoreCommentReplies() {
   params["ps"] = "20";
   params["pn"] = QString::number(m_commentReplyPage);
 
-  QPointer<BiliController> self(this);
-  m_network->get(
+  apiGet(
       "/video/comments/replies", params,
-      [self](const QJsonObject &data) {
-        if (!self) return;
+      [this](const QJsonObject &data) {
 
         QJsonArray replies = data.value("replies").toArray();
         QVector<CommentReplyItem> items;
@@ -1115,23 +1078,21 @@ void BiliController::fetchMoreCommentReplies() {
 
         QJsonObject pageObj = data.value("page").toObject();
         int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("num").toInt(self->m_commentReplyPage);
+        int num = pageObj.value("num").toInt(m_commentReplyPage);
         int size = pageObj.value("size").toInt(20);
         bool hasMore = (count > 0) ? (num * size < count) : (items.size() >= size);
 
-        self->m_commentReplyHasMore = hasMore;
-        emit self->replyHasMoreChanged();
+        m_commentReplyHasMore = hasMore;
+        emit replyHasMoreChanged();
 
-        self->m_commentReplyModel->appendItems(items);
-        self->m_commentReplyModel->setLoading(false);
-        self->setIsLoading(false);
+        m_commentReplyModel->appendItems(items);
+        m_commentReplyModel->setLoading(false);
       },
-      [self](int, const QString &msg) {
-        if (!self) return;
-        self->m_commentReplyModel->setLoading(false);
-        self->setIsLoading(false);
-        emit self->toastMessage(QString("回复加载失败：%1").arg(msg));
-      });
+      [this](int, const QString &msg) {
+        m_commentReplyModel->setLoading(false);
+        emit toastMessage(QString("回复加载失败：%1").arg(msg));
+      },
+      true);
 }
 
 void BiliController::fetchMoreComments() {
@@ -1152,18 +1113,13 @@ void BiliController::fetchFavoriteFolders() {
     return;
 
   m_favoriteFolderModel->setLoading(true);
-  setIsLoading(true);
 
   QMap<QString, QString> params;
   params["mid"] = QString::number(m_userId);
 
-  QPointer<BiliController> self(this);
-
-  m_network->get(
+  apiGet(
       "/fav/folder/list", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         QJsonArray list = data.value("list").toArray();
         QVector<FavoriteFolderItem> items;
@@ -1174,9 +1130,8 @@ void BiliController::fetchFavoriteFolders() {
           }
         }
 
-        self->m_favoriteFolderModel->setItems(items);
-        self->m_favoriteFolderModel->setLoading(false);
-        self->setIsLoading(false);
+        m_favoriteFolderModel->setItems(items);
+        m_favoriteFolderModel->setLoading(false);
 
         // 更新封面为每个收藏夹的首个视频封面
         for (const FavoriteFolderItem &folder : items) {
@@ -1189,8 +1144,8 @@ void BiliController::fetchFavoriteFolders() {
           p["order"] = "mtime";
           p["type"] = "0";
 
-          QPointer<BiliController> self2(self);
-          self->m_network->get(
+          QPointer<BiliController> self2(this);
+          m_network->get(
               "/fav/resource/list", p,
               [self2, mediaId](const QJsonObject &data2) {
                 if (!self2) return;
@@ -1207,17 +1162,14 @@ void BiliController::fetchFavoriteFolders() {
         }
 
         if (items.isEmpty()) {
-          emit self->toastMessage("暂无收藏夹");
+          emit toastMessage("暂无收藏夹");
         }
       },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-
-        self->m_favoriteFolderModel->setLoading(false);
-        self->setIsLoading(false);
-        emit self->toastMessage(QString("收藏夹加载失败：%1").arg(msg));
-      });
+      [this](int, const QString &msg) {
+        m_favoriteFolderModel->setLoading(false);
+        emit toastMessage(QString("收藏夹加载失败：%1").arg(msg));
+      },
+      true);
 }
 
 void BiliController::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) {
@@ -1239,7 +1191,6 @@ void BiliController::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) 
   }
   m_favoriteItemModel->setLoading(true);
   m_favoriteItemModel->setErrorMessage("");
-  setIsLoading(true);
 
   QMap<QString, QString> params;
   params["media_id"] = QString::number(mediaId);
@@ -1248,13 +1199,9 @@ void BiliController::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) 
   params["order"] = "mtime";
   params["type"] = "0";
 
-  QPointer<BiliController> self(this);
-
-  m_network->get(
+  apiGet(
       "/fav/resource/list", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         QJsonArray list = data.value("medias").toArray();
         QVector<VideoItem> items;
@@ -1287,25 +1234,21 @@ void BiliController::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) 
           items.append(item);
         }
 
-        self->m_favoriteItemModel->appendItems(items);
+        m_favoriteItemModel->appendItems(items);
         bool hasMore = data.value("has_more").toBool(false);
-        self->m_favoriteItemModel->setHasMore(hasMore ? true : !items.isEmpty());
-        self->m_favoriteItemModel->setLoading(false);
-        self->setIsLoading(false);
+        m_favoriteItemModel->setHasMore(hasMore ? true : !items.isEmpty());
+        m_favoriteItemModel->setLoading(false);
 
-        if (items.isEmpty() && self->m_favoritePage == 1) {
-          self->m_favoriteItemModel->setErrorMessage("收藏夹为空");
+        if (items.isEmpty() && m_favoritePage == 1) {
+          m_favoriteItemModel->setErrorMessage("收藏夹为空");
         }
       },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-
-        self->m_favoriteItemModel->setLoading(false);
-        self->m_favoriteItemModel->setErrorMessage(msg);
-        self->setIsLoading(false);
-        emit self->toastMessage(QString("收藏夹加载失败：%1").arg(msg));
-      });
+      [this](int, const QString &msg) {
+        m_favoriteItemModel->setLoading(false);
+        m_favoriteItemModel->setErrorMessage(msg);
+        emit toastMessage(QString("收藏夹加载失败：%1").arg(msg));
+      },
+      true);
 }
 
 void BiliController::fetchMoreFavoriteItems() {
@@ -1330,13 +1273,9 @@ void BiliController::fetchFavoriteStatus() {
   QMap<QString, QString> params;
   params["aid"] = QString::number(m_currentVideo.aid);
 
-  QPointer<BiliController> self(this);
-
-  m_network->get(
+  apiGet(
       "/fav/status", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         bool fav = false;
         if (data.value("favoured").isBool()) {
@@ -1344,15 +1283,13 @@ void BiliController::fetchFavoriteStatus() {
         } else {
           fav = data.value("favoured").toInt(0) == 1;
         }
-        if (self->m_isFavorited != fav) {
-          self->m_isFavorited = fav;
-          emit self->favoriteStatusChanged();
+        if (m_isFavorited != fav) {
+          m_isFavorited = fav;
+          emit favoriteStatusChanged();
         }
       },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-        emit self->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
+      [this](int, const QString &msg) {
+        emit toastMessage(QString("获取收藏状态失败：%1").arg(msg));
       });
 }
 
@@ -1367,13 +1304,9 @@ void BiliController::fetchCoinStatus() {
   QMap<QString, QString> params;
   params["aid"] = QString::number(m_currentVideo.aid);
 
-  QPointer<BiliController> self(this);
-
-  m_network->get(
+  apiGet(
       "/coin/status", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         bool coined = false;
         int multiply = data.value("multiply").toInt(0);
@@ -1382,15 +1315,13 @@ void BiliController::fetchCoinStatus() {
         } else if (data.value("multiply").isString()) {
           coined = data.value("multiply").toString().toInt() > 0;
         }
-        if (self->m_isCoined != coined) {
-          self->m_isCoined = coined;
-          emit self->coinStatusChanged();
+        if (m_isCoined != coined) {
+          m_isCoined = coined;
+          emit coinStatusChanged();
         }
       },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-        emit self->toastMessage(QString("获取投币状态失败：%1").arg(msg));
+      [this](int, const QString &msg) {
+        emit toastMessage(QString("获取投币状态失败：%1").arg(msg));
       });
 }
 
@@ -1451,13 +1382,9 @@ void BiliController::fetchLikeStatus() {
   QMap<QString, QString> params;
   params["aid"] = QString::number(m_currentVideo.aid);
 
-  QPointer<BiliController> self(this);
-
-  m_network->get(
+  apiGet(
       "/like/status", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
+      [this](const QJsonObject &data) {
 
         int liked = 0;
         if (data.value("liked").isBool()) {
@@ -1468,15 +1395,13 @@ void BiliController::fetchLikeStatus() {
           liked = data.value("liked").toInt(0);
         }
         bool isLiked = liked == 1;
-        if (self->m_isLiked != isLiked) {
-          self->m_isLiked = isLiked;
-          emit self->likeStatusChanged();
+        if (m_isLiked != isLiked) {
+          m_isLiked = isLiked;
+          emit likeStatusChanged();
         }
       },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-        emit self->toastMessage(QString("获取点赞状态失败：%1").arg(msg));
+      [this](int, const QString &msg) {
+        emit toastMessage(QString("获取点赞状态失败：%1").arg(msg));
       });
 }
 
@@ -1506,7 +1431,7 @@ void BiliController::toggleLike() {
         bool newLiked = (likeAction == 1);
         self->m_isLiked = newLiked;
         if (newLiked) {
-          emit self->toastMessage("点赞成功");
+          emit self->toastMessage("点赞爆棚，感谢推荐！");
         } else {
           emit self->toastMessage("已取消点赞");
         }
@@ -2246,6 +2171,181 @@ void BiliController::fetchMoreRecentHistory() {
         });
 }
 
+// ====== UP 主主页 ======
+
+void BiliController::fetchUpInfo(qint64 mid) {
+  if (mid <= 0) {
+    return;
+  }
+
+  if (m_upUserMid != mid) {
+    m_upUserMid = mid;
+    m_upVideoPage = 1;
+    m_upVideoHasMore = true;
+    if (m_upVideoModel) {
+      m_upVideoModel->clear();
+      m_upVideoModel->setHasMore(true);
+    }
+    if (m_upIsFollowing) {
+      m_upIsFollowing = false;
+      emit upFollowChanged();
+    }
+  }
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(mid);
+
+  apiGet(
+      "/user/info", params,
+      [this, mid](const QJsonObject &data) {
+        if (m_upUserMid != mid)
+          return;
+
+        QJsonObject obj = data;
+        if (data.value("data").isObject()) {
+          obj = data.value("data").toObject();
+        }
+
+        m_upUserName = obj.value("name").toString();
+        if (m_upUserName.isEmpty()) {
+          m_upUserName = obj.value("uname").toString();
+        }
+        m_upUserFace = obj.value("face").toString();
+        m_upUserSign = obj.value("sign").toString();
+
+        int level = obj.value("level").toInt(0);
+        if (level <= 0) {
+          QJsonObject levelInfo = obj.value("level_info").toObject();
+          level = levelInfo.value("current_level").toInt(0);
+        }
+        m_upUserLevel = level;
+
+        auto toIntSafe = [](const QJsonValue &v) -> int {
+          if (v.isDouble())
+            return v.toInt();
+          if (v.isString())
+            return v.toString().toInt();
+          return 0;
+        };
+        m_upUserFans = toIntSafe(obj.value("follower"));
+        m_upUserFollowing = toIntSafe(obj.value("following"));
+
+        emit upUserChanged();
+      },
+      [this](int, const QString &msg) {
+        emit toastMessage(QString("获取UP主信息失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
+  if (mid <= 0) {
+    return;
+  }
+  if (m_upVideoModel->loading())
+    return;
+
+  page = qBound(1, page, 9999);
+  pageSize = qBound(1, pageSize, 30);
+
+  if (m_upUserMid != mid) {
+    m_upUserMid = mid;
+    m_upVideoPage = 1;
+    m_upVideoHasMore = true;
+    m_upVideoModel->clear();
+  }
+
+  m_upVideoPage = page;
+  if (page == 1) {
+    m_upVideoModel->clear();
+  }
+  m_upVideoModel->setLoading(true);
+  m_upVideoModel->setErrorMessage("");
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(mid);
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+
+  apiGet(
+      "/user/videos", params,
+      [this, page, pageSize](const QJsonObject &data) {
+        QJsonArray list;
+        if (data.value("list").isObject()) {
+          QJsonObject listObj = data.value("list").toObject();
+          list = listObj.value("vlist").toArray();
+        }
+        if (list.isEmpty()) {
+          list = data.value("vlist").toArray();
+        }
+        if (list.isEmpty()) {
+          list = data.value("item").toArray();
+        }
+
+        QVector<VideoItem> items;
+        items.reserve(list.size());
+        for (const QJsonValue &v : list) {
+          if (v.isObject()) {
+            QJsonObject obj = v.toObject();
+            QJsonObject archiveObj = obj.value("archive").toObject();
+            VideoItem item = archiveObj.isEmpty()
+                                 ? VideoListModel::parseVideoItem(obj)
+                                 : VideoListModel::parseVideoItem(archiveObj);
+            if (item.pubdate <= 0) {
+              item.pubdate = obj.value("created").toVariant().toLongLong();
+            }
+            if (item.pubdate <= 0 && !archiveObj.isEmpty()) {
+              item.pubdate = archiveObj.value("created").toVariant().toLongLong();
+            }
+            items.append(item);
+          }
+        }
+
+        std::sort(items.begin(), items.end(),
+                  [](const VideoItem &a, const VideoItem &b) {
+                    return a.pubdate > b.pubdate;
+                  });
+
+        m_upVideoModel->appendItems(items);
+
+        bool hasMore = !items.isEmpty();
+        QJsonObject pageObj = data.value("page").toObject();
+        int count = pageObj.value("count").toInt(0);
+        int num = pageObj.value("pn").toInt(page);
+        int size = pageObj.value("ps").toInt(pageSize);
+        if (count > 0 && size > 0) {
+          hasMore = (num * size < count);
+        } else if (data.contains("has_next")) {
+          hasMore = data.value("has_next").toBool(false);
+        }
+        m_upVideoHasMore = hasMore;
+        m_upVideoModel->setHasMore(hasMore);
+        m_upVideoModel->setLoading(false);
+
+        if (items.isEmpty() && m_upVideoPage == 1) {
+          m_upVideoModel->setErrorMessage("暂无投稿");
+        }
+      },
+      [this](int, const QString &msg) {
+        m_upVideoModel->setLoading(false);
+        m_upVideoModel->setErrorMessage(msg);
+        emit toastMessage(QString("加载投稿失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliController::fetchMoreUpVideos() {
+  if (!m_upVideoHasMore || m_upVideoModel->loading())
+    return;
+  m_upVideoPage++;
+  fetchUpVideos(m_upUserMid, m_upVideoPage);
+}
+
+void BiliController::toggleUpFollow() {
+  m_upIsFollowing = !m_upIsFollowing;
+  emit upFollowChanged();
+}
+
 void BiliController::playVideoPart(int index) {
     if (!m_videoPartModel || index < 0 || index >= m_videoPartModel->count()) {
         return;
@@ -2347,39 +2447,12 @@ void BiliController::downloadVideoToDisk(int quality) {
 
   m_network->get(
       "/video/playurl", params,
-      [self, targetPath](const QJsonObject &data) {
+      [self, targetPath, quality](const QJsonObject &data) {
         if (!self) return;
 
-        // 解析可用清晰度（以 accept_quality 为准）
-        QVector<int> newAccepts;
-        QJsonArray accept = data.value("accept_quality").toArray();
-        for (const QJsonValue &v : accept) {
-          int q = v.toInt(0);
-          if (q > 0) newAccepts.append(q);
-        }
-        // 兼容 support_formats（仅保留可观看清晰度，作为补充）
-        QJsonArray supportFormats = data.value("support_formats").toArray();
-        for (const QJsonValue &v : supportFormats) {
-          QJsonObject obj = v.toObject();
-          int q = obj.value("quality").toInt(0);
-          int canWatch = obj.value("can_watch_qn_reason").toInt(0);
-          int limit = obj.value("limit_watch_reason").toInt(0);
-          if (q > 0 && canWatch == 0 && limit == 0 &&
-              !newAccepts.contains(q)) {
-            newAccepts.append(q);
-          }
-        }
-        if (!newAccepts.isEmpty() && newAccepts != self->m_acceptQualities) {
-          self->m_acceptQualities = newAccepts;
-          emit self->acceptQualitiesChanged();
-        }
+        self->updateAcceptQualities(data);
 
-        QString videoUrl;
-        QJsonArray durl = data.value("durl").toArray();
-        if (!durl.isEmpty()) {
-          QJsonObject first = durl.first().toObject();
-          videoUrl = first.value("url").toString();
-        }
+        QString videoUrl = self->pickMp4Url(data);
 
         if (videoUrl.isEmpty()) {
           emit self->toastMessage("未获取到下载地址");
@@ -2387,48 +2460,14 @@ void BiliController::downloadVideoToDisk(int quality) {
           return;
         }
 
-        // 开始下载
-        self->m_isDownloading = true;
-        self->m_downloadProgress = 0;
         self->m_downloadStatus = "准备下载...";
         emit self->downloadStateChanged();
         emit self->toastMessage("开始下载...");
 
-        self->m_network->downloadVideo(
-            videoUrl, targetPath,
-            // 成功回调
-            [self](const QString &path) {
-              if (!self) return;
-              self->m_isDownloading = false;
-              self->m_downloadProgress = 1.0;
-              self->m_downloadStatus = "下载完成";
-              emit self->downloadStateChanged();
-              self->setIsLoading(false);
-              emit self->toastMessage("下载完成: " + path);
-            },
-            // 错误回调
-            [self](int, const QString &msg) {
-              if (!self) return;
-              self->m_isDownloading = false;
-              self->m_downloadProgress = 0;
-              self->m_downloadStatus = "下载失败";
-              emit self->downloadStateChanged();
-              self->setIsLoading(false);
-              emit self->toastMessage("下载失败: " + msg);
-            },
-            // 进度回调
-            [self](qint64 received, qint64 total) {
-              if (!self) return;
-              double progress = total > 0 ? static_cast<double>(received) / total : 0;
-              self->m_downloadProgress = progress;
-              
-              double mb = received / (1024.0 * 1024.0);
-              double totalMb = total / (1024.0 * 1024.0);
-              QString sizeStr = QString("%1MB / %2MB").arg(mb, 0, 'f', 1).arg(totalMb, 0, 'f', 1);
-              
-              self->m_downloadStatus = QString("下载中 %1 (%2%)").arg(sizeStr).arg(static_cast<int>(progress * 100));
-              emit self->downloadStateChanged();
-            });
+        self->startDownloadTask(videoUrl, QString(), targetPath, QString(),
+                                quality, false,
+                                QStringLiteral("下载完成: "),
+                                QStringLiteral("下载失败: "));
       },
       [self](int, const QString &msg) {
         if (!self) return;

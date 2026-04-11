@@ -176,7 +176,10 @@ Rectangle {
                 MouseArea {
                     id: searchInputArea
                     anchors.fill: parent
-                    anchors.rightMargin: searchInput.text.length > 0 ? 26 : 0
+                    anchors.leftMargin: -4
+                    anchors.rightMargin: (searchInput.text.length > 0 ? 26 : 0) - 4
+                    anchors.topMargin: -6
+                    anchors.bottomMargin: -6
                     onClicked: requestKeyboard()
                 }
             }

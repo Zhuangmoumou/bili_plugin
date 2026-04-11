@@ -17,6 +17,9 @@ Item {
     property bool showCollection: false
     property bool showRank: false
     property string fontFamily: "Microsoft YaHei"
+    property real fontScale: 1.0
+    property real titleScale: 1.0
+    property real subScale: 1.0
 
     signal clicked()
 
@@ -80,7 +83,7 @@ Item {
                     text: durationText
                     color: "#FFFFFF"
                     font.family: card.fontFamily
-                    font.pixelSize: 9
+                    font.pixelSize: 9 * card.fontScale
                     font.bold: true
                     anchors.centerIn: parent
                 }
@@ -146,7 +149,7 @@ Item {
                 text: videoTitle
                 color: Theme.textPrimary
                 font.family: card.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: 10 * card.fontScale * card.titleScale
                 font.bold: true
                 maximumLineCount: 2
                 wrapMode: Text.Wrap
@@ -160,7 +163,7 @@ Item {
                 text: upName + (viewCount ? " · " + viewCount : "")
                 color: Theme.textTertiary
                 font.family: card.fontFamily
-                font.pixelSize: 8
+                font.pixelSize: 8 * card.fontScale * card.subScale
                 elide: Text.ElideRight
             }
         }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
@@ -23,9 +24,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
-    "sync"
 
 	"github.com/skip2/go-qrcode"
 )
@@ -266,6 +267,9 @@ func getBiliTicket() string {
 	code, _ := result["code"].(float64)
 	if int(code) == 0 {
 		data, _ := result["data"].(map[string]interface{})
+	if data == nil {
+		data = map[string]interface{}{}
+	}
 		ticket, _ := data["ticket"].(string)
 		if len(ticket) > 20 {
 			logSuccess("bili_ticket 获取成功: %s...", ticket[:20])
@@ -313,6 +317,31 @@ func (c *BilibiliClient) getAuth() (string, string, string, string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.sessdata, c.buvid3, c.biliJct, c.refreshToken
+}
+
+func (c *BilibiliClient) getWbiKeys() (string, string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.imgKey, c.subKey
+}
+
+func (c *BilibiliClient) setWbiKeys(imgKey, subKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.imgKey = imgKey
+	c.subKey = subKey
+}
+
+func (c *BilibiliClient) getBiliTicket() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.biliTicket
+}
+
+func (c *BilibiliClient) setBiliTicket(ticket string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.biliTicket = ticket
 }
 
 func (c *BilibiliClient) UpdateAuth(sessdata, buvid3, biliJct, refreshToken string) {
@@ -392,11 +421,10 @@ func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
 
 func (c *BilibiliClient) Init() {
 	logInfo("初始化 Bilibili 客户端...")
-	c.biliTicket = getBiliTicket()
+	c.setBiliTicket(getBiliTicket())
 	c.updateWbiKeys()
 	c.ensureBuvid3()
 	c.refreshCookies()
-	c.startCookieRefreshLoop()
 	logSuccess("客户端初始化完成")
 }
 
@@ -413,8 +441,8 @@ func (c *BilibiliClient) buildCookie() string {
 	if biliJct != "" {
 		parts = append(parts, "bili_jct="+biliJct)
 	}
-	if c.biliTicket != "" {
-		parts = append(parts, "bili_ticket="+c.biliTicket)
+	if biliTicket := c.getBiliTicket(); biliTicket != "" {
+		parts = append(parts, "bili_ticket="+biliTicket)
 	}
 	return strings.Join(parts, "; ")
 }
@@ -469,14 +497,15 @@ func (c *BilibiliClient) updateWbiKeys() {
 	imgURL, _ := wbiImg["img_url"].(string)
 	subURL, _ := wbiImg["sub_url"].(string)
 
-	c.imgKey = extractKeyFromURL(imgURL)
-	c.subKey = extractKeyFromURL(subURL)
+	imgKey := extractKeyFromURL(imgURL)
+	subKey := extractKeyFromURL(subURL)
+	c.setWbiKeys(imgKey, subKey)
 
-	imgKeyDisplay := c.imgKey
+	imgKeyDisplay := imgKey
 	if len(imgKeyDisplay) > 8 {
 		imgKeyDisplay = imgKeyDisplay[:8] + "..."
 	}
-	subKeyDisplay := c.subKey
+	subKeyDisplay := subKey
 	if len(subKeyDisplay) > 8 {
 		subKeyDisplay = subKeyDisplay[:8] + "..."
 	}
@@ -484,8 +513,7 @@ func (c *BilibiliClient) updateWbiKeys() {
 }
 
 func (c *BilibiliClient) setDefaultWbiKeys() {
-	c.imgKey = "7cd084941338484aae1ad9425b84077c"
-	c.subKey = "4932caff0ff746eab6f01bf08b70ac45"
+	c.setWbiKeys("7cd084941338484aae1ad9425b84077c", "4932caff0ff746eab6f01bf08b70ac45")
 }
 
 func (c *BilibiliClient) ensureBuvid3() {
@@ -524,15 +552,8 @@ func (c *BilibiliClient) ensureBuvid3() {
 	}
 }
 
-func (c *BilibiliClient) startCookieRefreshLoop() {
-	go func() {
-		ticker := time.NewTicker(6 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			c.refreshCookies()
-		}
-	}()
-}
+// 仅启动时刷新一次，避免高频刷新触发风控
+func (c *BilibiliClient) startCookieRefreshLoop() {}
 
 func buildCorrespondPath(ts int64) (string, error) {
 	// 对 refresh_{timestamp} 进行 RSA-OAEP(SHA256) 加密，输出小写 hex
@@ -718,34 +739,33 @@ func (c *BilibiliClient) refreshCookies() {
 	}
 }
 
-func (c *BilibiliClient) wbiRequest(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
-	signed := encWbi(copyMap(params), c.imgKey, c.subKey)
-	logDebug("WBI 请求 %s %s", method, apiURL)
-
+func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	startTime := time.Now()
-	var resp *http.Response
-	var err error
+	query := buildSortedQuery(params)
+	fullURL := apiURL
+	var bodyReader io.Reader
 
-	if method == "GET" {
-		query := buildSortedQuery(signed)
-		fullURL := apiURL + "?" + query
-		req, e := http.NewRequest("GET", fullURL, nil)
-		if e != nil {
-			return nil, e
+	switch method {
+	case http.MethodGet:
+		if query != "" {
+			fullURL += "?" + query
 		}
-		c.setHeaders(req)
-		resp, err = c.httpClient.Do(req)
-	} else {
-		query := buildSortedQuery(signed)
-		req, e := http.NewRequest("POST", apiURL, strings.NewReader(query))
-		if e != nil {
-			return nil, e
-		}
-		c.setHeaders(req)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err = c.httpClient.Do(req)
+	case http.MethodPost:
+		bodyReader = strings.NewReader(query)
+	default:
+		return nil, fmt.Errorf("不支持的请求方法: %s", method)
 	}
 
+	req, err := http.NewRequest(method, fullURL, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(req)
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+
+	resp, err := c.httpClient.Do(req)
 	duration := time.Since(startTime)
 	if err != nil {
 		logError("API 请求失败 (%dms): %s", duration.Milliseconds(), err.Error())
@@ -758,54 +778,19 @@ func (c *BilibiliClient) wbiRequest(apiURL string, params map[string]string, met
 		return nil, err
 	}
 
-	logDebug("API 响应 (%dms)", duration.Milliseconds())
+	logDebug("API 响应 %s %s (%dms)", method, apiURL, duration.Milliseconds())
 	return json.RawMessage(body), nil
+}
+
+func (c *BilibiliClient) wbiRequest(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
+	imgKey, subKey := c.getWbiKeys()
+	logDebug("WBI 请求 %s %s", method, apiURL)
+	return c.doRequest(apiURL, encWbi(copyMap(params), imgKey, subKey), method)
 }
 
 func (c *BilibiliClient) request(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	logDebug("普通请求 %s %s", method, apiURL)
-
-	startTime := time.Now()
-	var resp *http.Response
-	var err error
-
-	if method == "GET" {
-		fullURL := apiURL
-		if len(params) > 0 {
-			query := buildSortedQuery(params)
-			fullURL = apiURL + "?" + query
-		}
-		req, e := http.NewRequest("GET", fullURL, nil)
-		if e != nil {
-			return nil, e
-		}
-		c.setHeaders(req)
-		resp, err = c.httpClient.Do(req)
-	} else {
-		query := buildSortedQuery(params)
-		req, e := http.NewRequest("POST", apiURL, strings.NewReader(query))
-		if e != nil {
-			return nil, e
-		}
-		c.setHeaders(req)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err = c.httpClient.Do(req)
-	}
-
-	duration := time.Since(startTime)
-	if err != nil {
-		logError("API 请求失败 (%dms): %s", duration.Milliseconds(), err.Error())
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	logDebug("API 响应 (%dms)", duration.Milliseconds())
-	return json.RawMessage(body), nil
+	return c.doRequest(apiURL, params, method)
 }
 
 func (c *BilibiliClient) rawRequest(apiURL string, params map[string]string) ([]byte, error) {
@@ -852,10 +837,10 @@ func (c *BilibiliClient) rawGetURL(fullURL string) ([]byte, error) {
 
 func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.RawMessage, error) {
 	query := buildSortedQuery(params)
-	cookie := c.buildCookie()
 
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
+		cookie := c.buildCookie()
 		req, err := http.NewRequest("POST", apiURL, strings.NewReader(query))
 		if err != nil {
 			return nil, err
@@ -1053,6 +1038,142 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 		return nil, err
 	}
 	return merged, nil
+}
+
+func (c *BilibiliClient) GetUserVideosApp(mid, pn, ps int) (json.RawMessage, error) {
+	if pn <= 0 {
+		pn = 1
+	}
+	if ps <= 0 {
+		ps = 20
+	}
+	if ps > 30 {
+		ps = 30
+	}
+	logInfo("获取用户投稿(APP) mid=%d pn=%d ps=%d", mid, pn, ps)
+	// APP 接口为游标模式，pn 容易触发异常，这里固定为 1 以保证稳定
+	params := map[string]string{
+		"vmid":     strconv.Itoa(mid),
+		"pn":       "1",
+		"ps":       strconv.Itoa(ps),
+		"order":    "pubdate",
+		"platform": "android",
+		"mobi_app": "android",
+		"device":   "android",
+		"ts":       strconv.FormatInt(time.Now().Unix(), 10),
+	}
+	params = appSign(params)
+	raw, err := c.request("https://app.biliapi.com/x/v2/space/archive/cursor", params, "GET")
+	if err != nil {
+		return nil, err
+	}
+
+	// 修正偶发返回列表顺序异常（旧稿件在前）的问题
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err == nil {
+		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
+			data, _ := resp["data"].(map[string]interface{})
+			if data != nil {
+				list, listKey := data["item"], "item"
+				if list == nil {
+					list = data["archives"]
+					listKey = "archives"
+				}
+				if arr, ok := list.([]interface{}); ok && len(arr) > 1 {
+					sort.SliceStable(arr, func(i, j int) bool {
+						getTime := func(v interface{}) int64 {
+							obj, _ := v.(map[string]interface{})
+							if obj == nil {
+								return 0
+							}
+							if t, ok := obj["pubdate"].(float64); ok {
+								return int64(t)
+							}
+							if t, ok := obj["ctime"].(float64); ok {
+								return int64(t)
+							}
+							if t, ok := obj["created"].(float64); ok {
+								return int64(t)
+							}
+							if arc, ok := obj["archive"].(map[string]interface{}); ok {
+								if t, ok := arc["pubdate"].(float64); ok {
+									return int64(t)
+								}
+								if t, ok := arc["ctime"].(float64); ok {
+									return int64(t)
+								}
+								if t, ok := arc["created"].(float64); ok {
+									return int64(t)
+								}
+							}
+							return 0
+						}
+						return getTime(arr[i]) > getTime(arr[j])
+					})
+					data[listKey] = arr
+					resp["data"] = data
+					if merged, mErr := json.Marshal(resp); mErr == nil {
+						return merged, nil
+					}
+				}
+			}
+		}
+	}
+
+	return raw, nil
+}
+
+func (c *BilibiliClient) GetUserVideos(mid, pn, ps int) (json.RawMessage, error) {
+	logInfo("获取用户投稿 mid=%d pn=%d ps=%d", mid, pn, ps)
+
+	requestOnce := func() (json.RawMessage, error) {
+		return c.wbiRequest("https://api.bilibili.com/x/space/wbi/arc/search", map[string]string{
+			"mid":            strconv.Itoa(mid),
+			"pn":             strconv.Itoa(pn),
+			"ps":             strconv.Itoa(ps),
+			"order":          "pubdate",
+			"dm_img_list":    "[]",
+			"dm_img_str":     "",
+			"dm_cover_img_str": "",
+		}, "GET")
+	}
+
+	raw, err := requestOnce()
+	if err != nil {
+		logWarn("投稿接口请求失败，降级到 APP: %s", err.Error())
+		return c.GetUserVideosApp(mid, pn, ps)
+	}
+
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '<' {
+		logWarn("投稿接口命中风控，降级到 APP")
+		return c.GetUserVideosApp(mid, pn, ps)
+	}
+
+	// 处理业务错误，重点修复偶发 -400
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err == nil {
+		if code, ok := resp["code"].(float64); ok && int(code) != 0 {
+			codeInt := int(code)
+			msg, _ := resp["message"].(string)
+			logWarn("投稿接口返回异常 code=%d message=%s", codeInt, msg)
+			// -400/-412 可能由 wbi key 过期或签名失效导致，刷新后重试一次
+			if codeInt == -400 || codeInt == -412 {
+				logInfo("检测到投稿接口 code=%d，刷新 WBI Keys 并重试", codeInt)
+				c.updateWbiKeys()
+				retryRaw, retryErr := requestOnce()
+				if retryErr == nil {
+					return retryRaw, nil
+				}
+				logWarn("投稿接口重试失败，降级到 APP: %s", retryErr.Error())
+				return c.GetUserVideosApp(mid, pn, ps)
+			}
+			// 其他非 0 状态，直接降级到 APP，避免前端收到 -400
+			return c.GetUserVideosApp(mid, pn, ps)
+		}
+	}
+
+	return raw, nil
 }
 
 func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
@@ -1327,10 +1448,28 @@ func writeError(w http.ResponseWriter, statusCode int, message string) {
 func wrapResult(raw json.RawMessage) map[string]interface{} {
 	var result map[string]interface{}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return map[string]interface{}{
-			"code":    -1,
-			"message": "解析响应失败",
-			"data":    nil,
+		// 尝试截取首尾 JSON 对象，避免上游返回多余前后缀导致解析失败
+		start := bytes.IndexByte(raw, '{')
+		end := bytes.LastIndexByte(raw, '}')
+		if start >= 0 && end > start {
+			trimmed := raw[start : end+1]
+			if json.Unmarshal(trimmed, &result) == nil {
+				raw = trimmed
+			} else {
+				logWarn("wrapResult JSON 解析失败: %s, raw=%s", err.Error(), string(raw))
+				return map[string]interface{}{
+					"code":    -1,
+					"message": "上游返回非 JSON",
+					"data":    nil,
+				}
+			}
+		} else {
+			logWarn("wrapResult JSON 解析失败: %s, raw=%s", err.Error(), string(raw))
+			return map[string]interface{}{
+				"code":    -1,
+				"message": "解析响应失败",
+				"data":    nil,
+			}
 		}
 	}
 
@@ -1386,6 +1525,25 @@ func intParam(val string, min int, defaultVal int, hasMin bool) (int, error) {
 		return 0, fmt.Errorf("参数不得小于 %d，收到: %d", min, n)
 	}
 	return n, nil
+}
+
+func getIntQuery(w http.ResponseWriter, r *http.Request, name string, min, def int, hasMin bool) (int, bool) {
+	n, err := intParam(r.URL.Query().Get(name), min, def, hasMin)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return 0, false
+	}
+	return n, true
+}
+
+func handleAPI(w http.ResponseWriter, action string, call func(*BilibiliClient) (json.RawMessage, error)) {
+	result, err := call(getClient())
+	if err != nil {
+		logError("处理 %s 请求失败: %s", action, err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, wrapResult(result))
 }
 
 // ==================== 全局客户端 ====================
@@ -1472,6 +1630,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 				"/video/subtitle/list - CC字幕列表",
 				"/video/subtitle/ass - 生成ASS字幕",
 				"/user/info - 用户信息",
+				"/user/videos - 用户投稿",
 				"/login/info - 登录信息",
 				"/hot/search - 热搜",
 				"/recommend - 首页推荐",
@@ -1492,44 +1651,31 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePopular(w http.ResponseWriter, r *http.Request) {
-	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	pn, ok := getIntQuery(w, r, "pn", 1, 1, true)
+	if !ok {
 		return
 	}
-	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	ps, ok := getIntQuery(w, r, "ps", 1, 20, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetPopularVideos(pn, ps)
-	if err != nil {
-		logError("处理 /popular 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/popular", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetPopularVideos(pn, ps)
+	})
 }
 
 func handleRanking(w http.ResponseWriter, r *http.Request) {
-	rid, err := intParam(r.URL.Query().Get("rid"), 0, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	rid, ok := getIntQuery(w, r, "rid", 0, 0, true)
+	if !ok {
 		return
 	}
 	typ := r.URL.Query().Get("type")
 	if typ == "" {
 		typ = "all"
 	}
-	client := getClient()
-	result, err := client.GetRanking(rid, typ)
-	if err != nil {
-		logError("处理 /ranking 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/ranking", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetRanking(rid, typ)
+	})
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -1539,30 +1685,22 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "keyword 不能为空")
 		return
 	}
-	page, err := intParam(r.URL.Query().Get("page"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	page, ok := getIntQuery(w, r, "page", 1, 1, true)
+	if !ok {
 		return
 	}
-	pageSize, err := intParam(r.URL.Query().Get("page_size"), 1, 20, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	pageSize, ok := getIntQuery(w, r, "page_size", 1, 20, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.SearchVideos(keyword, page, pageSize)
-	if err != nil {
-		logError("处理 /search 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/search", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.SearchVideos(keyword, page, pageSize)
+	})
 }
 
 func handleVideoInfo(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	if !ok {
 		return
 	}
 	bvid := r.URL.Query().Get("bvid")
@@ -1571,25 +1709,18 @@ func handleVideoInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
-	client := getClient()
-	result, err := client.GetVideoInfo(aid, bvid)
-	if err != nil {
-		logError("处理 /video/info 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/video/info", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetVideoInfo(aid, bvid)
+	})
 }
 
 func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	if !ok {
 		return
 	}
-	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	cid, ok := getIntQuery(w, r, "cid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if aid == 0 || cid == 0 {
@@ -1597,14 +1728,12 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "aid 和 cid 为必填参数")
 		return
 	}
-	qn, err := intParam(r.URL.Query().Get("qn"), 0, 64, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	qn, ok := getIntQuery(w, r, "qn", 0, 64, true)
+	if !ok {
 		return
 	}
-	fnval, err := intParam(r.URL.Query().Get("fnval"), 0, 1, false)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	fnval, ok := getIntQuery(w, r, "fnval", 0, 1, false)
+	if !ok {
 		return
 	}
 	platform := r.URL.Query().Get("platform")
@@ -1678,9 +1807,8 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVideoDanmaku(w http.ResponseWriter, r *http.Request) {
-	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	cid, ok := getIntQuery(w, r, "cid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if cid == 0 {
@@ -1688,9 +1816,8 @@ func handleVideoDanmaku(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "cid 为必填参数")
 		return
 	}
-	segment, err := intParam(r.URL.Query().Get("segment"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	segment, ok := getIntQuery(w, r, "segment", 1, 1, true)
+	if !ok {
 		return
 	}
 	client := getClient()
@@ -1779,9 +1906,8 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64,
 }
 
 func handleVideoDanmakuConfig(w http.ResponseWriter, r *http.Request) {
-	oid, err := intParam(r.URL.Query().Get("oid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	oid, ok := getIntQuery(w, r, "oid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if oid == 0 {
@@ -1789,25 +1915,18 @@ func handleVideoDanmakuConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "oid 为必填参数")
 		return
 	}
-	pid, err := intParam(r.URL.Query().Get("pid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	pid, ok := getIntQuery(w, r, "pid", 1, 0, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetDanmakuConfig(oid, pid)
-	if err != nil {
-		logError("处理 /video/danmaku/config 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/video/danmaku/config", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetDanmakuConfig(oid, pid)
+	})
 }
 
 func handleVideoCommentsReplies(w http.ResponseWriter, r *http.Request) {
-	oid, err := intParam(r.URL.Query().Get("oid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	oid, ok := getIntQuery(w, r, "oid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if oid == 0 {
@@ -1815,9 +1934,8 @@ func handleVideoCommentsReplies(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "oid 为必填参数")
 		return
 	}
-	root, err := intParam(r.URL.Query().Get("root"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	root, ok := getIntQuery(w, r, "root", 1, 0, true)
+	if !ok {
 		return
 	}
 	if root == 0 {
@@ -1825,35 +1943,26 @@ func handleVideoCommentsReplies(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "root 为必填参数")
 		return
 	}
-	typ, err := intParam(r.URL.Query().Get("type"), 0, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	typ, ok := getIntQuery(w, r, "type", 0, 1, true)
+	if !ok {
 		return
 	}
-	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	ps, ok := getIntQuery(w, r, "ps", 1, 20, true)
+	if !ok {
 		return
 	}
-	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	pn, ok := getIntQuery(w, r, "pn", 1, 1, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetCommentReplies(oid, root, typ, ps, pn)
-	if err != nil {
-		logError("处理 /video/comments/replies 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/video/comments/replies", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetCommentReplies(oid, root, typ, ps, pn)
+	})
 }
 
 func handleVideoComments(w http.ResponseWriter, r *http.Request) {
-	oid, err := intParam(r.URL.Query().Get("oid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	oid, ok := getIntQuery(w, r, "oid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if oid == 0 {
@@ -1861,40 +1970,30 @@ func handleVideoComments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "oid 为必填参数")
 		return
 	}
-	typ, err := intParam(r.URL.Query().Get("type"), 0, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	typ, ok := getIntQuery(w, r, "type", 0, 1, true)
+	if !ok {
 		return
 	}
-	sortVal, err := intParam(r.URL.Query().Get("sort"), 0, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	sortVal, ok := getIntQuery(w, r, "sort", 0, 0, true)
+	if !ok {
 		return
 	}
-	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	ps, ok := getIntQuery(w, r, "ps", 1, 20, true)
+	if !ok {
 		return
 	}
-	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	pn, ok := getIntQuery(w, r, "pn", 1, 1, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetVideoComments(oid, typ, sortVal, ps, pn)
-	if err != nil {
-		logError("处理 /video/comments 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/video/comments", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetVideoComments(oid, typ, sortVal, ps, pn)
+	})
 }
 
-func handleUserInfo(w http.ResponseWriter, r *http.Request) {
-	mid, err := intParam(r.URL.Query().Get("mid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+func handleUserVideos(w http.ResponseWriter, r *http.Request) {
+	mid, ok := getIntQuery(w, r, "mid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if mid == 0 {
@@ -1902,14 +2001,32 @@ func handleUserInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "mid 为必填参数")
 		return
 	}
-	client := getClient()
-	result, err := client.GetUserInfo(mid)
-	if err != nil {
-		logError("处理 /user/info 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
+	pn, ok := getIntQuery(w, r, "pn", 1, 1, true)
+	if !ok {
 		return
 	}
-	writeJSON(w, 200, wrapResult(result))
+	ps, ok := getIntQuery(w, r, "ps", 1, 20, true)
+	if !ok {
+		return
+	}
+	handleAPI(w, "/user/videos", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetUserVideos(mid, pn, ps)
+	})
+}
+
+func handleUserInfo(w http.ResponseWriter, r *http.Request) {
+	mid, ok := getIntQuery(w, r, "mid", 1, 0, true)
+	if !ok {
+		return
+	}
+	if mid == 0 {
+		logWarn("mid 缺失")
+		writeError(w, 400, "mid 为必填参数")
+		return
+	}
+	handleAPI(w, "/user/info", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetUserInfo(mid)
+	})
 }
 
 func handleLoginInfo(w http.ResponseWriter, r *http.Request) {
@@ -1953,56 +2070,37 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHotSearch(w http.ResponseWriter, r *http.Request) {
-	limit, err := intParam(r.URL.Query().Get("limit"), 1, 10, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	limit, ok := getIntQuery(w, r, "limit", 1, 10, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetHotSearch(limit)
-	if err != nil {
-		logError("处理 /hot/search 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/hot/search", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetHotSearch(limit)
+	})
 }
 
 func handleRecommend(w http.ResponseWriter, r *http.Request) {
-	freshType, err := intParam(r.URL.Query().Get("fresh_type"), 0, 3, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	freshType, ok := getIntQuery(w, r, "fresh_type", 0, 3, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetRecommend(freshType)
-	if err != nil {
-		logError("处理 /recommend 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/recommend", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetRecommend(freshType)
+	})
 }
 
 func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
-	maxVal, err := intParam(r.URL.Query().Get("max"), 0, 0, false)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	maxVal, ok := getIntQuery(w, r, "max", 0, 0, false)
+	if !ok {
 		return
 	}
-	viewAt, err := intParam(r.URL.Query().Get("view_at"), 0, 0, false)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	viewAt, ok := getIntQuery(w, r, "view_at", 0, 0, false)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetRecentHistory(maxVal, viewAt)
-	if err != nil {
-		logError("处理 /history/recent 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/history/recent", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetRecentHistory(maxVal, viewAt)
+	})
 }
 
 func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -2038,9 +2136,8 @@ func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
-	mid, err := intParam(r.URL.Query().Get("mid"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	mid, ok := getIntQuery(w, r, "mid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if mid == 0 {
@@ -2048,20 +2145,14 @@ func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "mid 为必填参数")
 		return
 	}
-	client := getClient()
-	result, err := client.GetFavoriteFolders(mid)
-	if err != nil {
-		logError("处理 /fav/folder/list 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/fav/folder/list", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetFavoriteFolders(mid)
+	})
 }
 
 func handleFavResourceList(w http.ResponseWriter, r *http.Request) {
-	mediaId, err := intParam(r.URL.Query().Get("media_id"), 1, 0, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	mediaId, ok := getIntQuery(w, r, "media_id", 1, 0, true)
+	if !ok {
 		return
 	}
 	if mediaId == 0 {
@@ -2069,30 +2160,37 @@ func handleFavResourceList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "media_id 为必填参数")
 		return
 	}
-	pn, err := intParam(r.URL.Query().Get("pn"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	pn, ok := getIntQuery(w, r, "pn", 1, 1, true)
+	if !ok {
 		return
 	}
-	ps, err := intParam(r.URL.Query().Get("ps"), 1, 20, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	ps, ok := getIntQuery(w, r, "ps", 1, 20, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetFavoriteResources(mediaId, pn, ps)
-	if err != nil {
-		logError("处理 /fav/resource/list 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/fav/resource/list", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetFavoriteResources(mediaId, pn, ps)
+	})
 }
 
-func handleFavStatus(w http.ResponseWriter, r *http.Request) {
+func requireAidOrBvid(w http.ResponseWriter, r *http.Request) (int, string, bool) {
 	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
+		return 0, "", false
+	}
+	bvid := r.URL.Query().Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 均缺失")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
+		return 0, "", false
+	}
+	return aid, bvid, true
+}
+
+func handleFavStatus(w http.ResponseWriter, r *http.Request) {
+	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	if !ok {
 		return
 	}
 	if aid == 0 {
@@ -2100,67 +2198,42 @@ func handleFavStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "aid 为必填参数")
 		return
 	}
-	client := getClient()
-	result, err := client.GetFavoriteStatus(aid)
-	if err != nil {
-		logError("处理 /fav/status 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/fav/status", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetFavoriteStatus(aid)
+	})
 }
 
 func handleCoinStatus(w http.ResponseWriter, r *http.Request) {
-	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	bvid := r.URL.Query().Get("bvid")
-	if aid == 0 && bvid == "" {
-		logWarn("aid 和 bvid 均缺失")
-		writeError(w, 400, "aid 或 bvid 至少提供一个")
+	aid, bvid, ok := requireAidOrBvid(w, r)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.GetCoinStatus(aid, bvid)
-	if err != nil {
-		logError("处理 /coin/status 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/coin/status", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetCoinStatus(aid, bvid)
+	})
 }
 
 func handleCoinAdd(w http.ResponseWriter, r *http.Request) {
-	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	bvid := r.URL.Query().Get("bvid")
-	if aid == 0 && bvid == "" {
-		logWarn("aid 和 bvid 均缺失")
-		writeError(w, 400, "aid 或 bvid 至少提供一个")
+	aid, bvid, ok := requireAidOrBvid(w, r)
+	if !ok {
 		return
 	}
-	multiply, err := intParam(r.URL.Query().Get("multiply"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	multiply, ok := getIntQuery(w, r, "multiply", 1, 1, true)
+	if !ok {
 		return
 	}
 	if multiply > 2 {
 		multiply = 2
 	}
 	selectLike := r.URL.Query().Get("select_like") == "1"
-	client := getClient()
-	result, err := client.AddCoin(aid, multiply, selectLike, bvid)
-	if err != nil {
-		logError("处理 /coin/add 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/coin/add", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.AddCoin(aid, multiply, selectLike, bvid)
+	})
 }
 
 func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
-	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	bvid := r.URL.Query().Get("bvid")
-	if aid == 0 && bvid == "" {
-		logWarn("aid 和 bvid 均缺失")
-		writeError(w, 400, "aid 或 bvid 至少提供一个")
+	aid, bvid, ok := requireAidOrBvid(w, r)
+	if !ok {
 		return
 	}
 	client := getClient()
@@ -2193,26 +2266,17 @@ func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLikeToggle(w http.ResponseWriter, r *http.Request) {
-	aid, _ := intParam(r.URL.Query().Get("aid"), 1, 0, true)
-	bvid := r.URL.Query().Get("bvid")
-	if aid == 0 && bvid == "" {
-		logWarn("aid 和 bvid 均缺失")
-		writeError(w, 400, "aid 或 bvid 至少提供一个")
+	aid, bvid, ok := requireAidOrBvid(w, r)
+	if !ok {
 		return
 	}
-	likeVal, err := intParam(r.URL.Query().Get("like"), 1, 1, true)
-	if err != nil {
-		writeError(w, 400, err.Error())
+	likeVal, ok := getIntQuery(w, r, "like", 1, 1, true)
+	if !ok {
 		return
 	}
-	client := getClient()
-	result, err := client.ToggleLike(aid, likeVal, bvid)
-	if err != nil {
-		logError("处理 /like/toggle 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, wrapResult(result))
+	handleAPI(w, "/like/toggle", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.ToggleLike(aid, likeVal, bvid)
+	})
 }
 
 func handleFavToggle(w http.ResponseWriter, r *http.Request) {
@@ -2322,6 +2386,9 @@ func handleQrcodeGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data, _ := result["data"].(map[string]interface{})
+	if data == nil {
+		data = map[string]interface{}{}
+	}
 	qrURL, _ := data["url"].(string)
 
 	// 生成二维码 base64
@@ -2630,6 +2697,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/subtitle/list", handleVideoSubtitleList)
 	mux.HandleFunc("/video/subtitle/ass", handleVideoSubtitleASS)
 	mux.HandleFunc("/user/info", handleUserInfo)
+	mux.HandleFunc("/user/videos", handleUserVideos)
 	mux.HandleFunc("/login/info", handleLoginInfo)
 	mux.HandleFunc("/logout", handleLogout)
 	mux.HandleFunc("/hot/search", handleHotSearch)
@@ -2650,13 +2718,7 @@ func setupRoutes(mux *http.ServeMux) {
 
 // ==================== 主函数 ====================
 
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8000"
-	}
-	debug := os.Getenv("DEBUG") == "true"
-
+func printBanner(debug bool) {
 	fmt.Println()
 	fmt.Println(strings.Repeat("=", 60))
 	logInfo("🚀 Bilibili API Server 启动中...")
@@ -2667,21 +2729,74 @@ func main() {
 	}
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println()
+}
+
+func printEndpoints(port string) {
+	fmt.Println()
+	fmt.Println(strings.Repeat("=", 60))
+	logSuccess("✅ 服务器运行于 http://0.0.0.0:%s", port)
+	logInfo("可用接口列表:")
+	endpoints := []string{
+		"GET  /popular               - 热门视频",
+		"GET  /ranking               - 排行榜",
+		"GET  /search                - 搜索视频",
+		"GET  /video/info            - 视频详情",
+		"GET  /video/playurl         - 播放地址",
+		"GET  /video/danmaku         - 弹幕数据",
+		"GET  /video/comments        - 评论列表",
+		"GET  /video/comments/replies- 子评论",
+		"GET  /video/subtitle/list   - CC字幕列表",
+		"GET  /video/subtitle/ass    - 生成ASS字幕",
+		"GET  /user/info             - 用户信息",
+		"GET  /user/videos           - 用户投稿",
+		"GET  /login/info            - 登录信息",
+		"GET  /hot/search            - 热搜榜",
+		"GET  /recommend             - 首页推荐",
+		"GET  /history/recent        - 最近观看",
+		"GET  /player/heartbeat      - 回调心跳",
+		"GET  /fav/folder/list       - 收藏夹列表",
+		"GET  /fav/resource/list     - 收藏夹内容",
+		"GET  /fav/status            - 收藏状态",
+		"GET  /fav/toggle            - 收藏切换",
+		"GET  /coin/status           - 投币状态",
+		"GET  /coin/add              - 投币",
+		"GET  /like/status           - 点赞状态",
+		"GET  /like/toggle           - 点赞/取消点赞",
+		"GET  /qrcode/generate       - 生成登录二维码",
+		"GET  /qrcode/poll           - 轮询二维码状态",
+	}
+	for _, e := range endpoints {
+		fmt.Println("  " + e)
+	}
+	fmt.Println(strings.Repeat("=", 60))
+	fmt.Println()
+	logInfo("服务器已就绪，等待请求...")
+	fmt.Println()
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+	debug := os.Getenv("DEBUG") == "true"
+
+	printBanner(debug)
 
 	globalClient = NewBilibiliClient("", "")
 
-    // 启动时加载本地 Cookie 缓存
-    if cs, err := loadCookies(); err == nil {
-    	globalClient.sessdata = cs.Sessdata
-    	globalClient.buvid3 = cs.Buvid3
-    	globalClient.biliJct = cs.BiliJct
-    	globalClient.refreshToken = cs.RefreshToken
-    	logInfo("已加载本地 Cookie 缓存")
-    } else {
-    	logWarn("未加载到本地 Cookie 缓存: %s", err.Error())
-    }
-    
-    globalClient.Init()
+	// 启动时加载本地 Cookie 缓存
+	if cs, err := loadCookies(); err == nil {
+		globalClient.sessdata = cs.Sessdata
+		globalClient.buvid3 = cs.Buvid3
+		globalClient.biliJct = cs.BiliJct
+		globalClient.refreshToken = cs.RefreshToken
+		logInfo("已加载本地 Cookie 缓存")
+	} else {
+		logWarn("未加载到本地 Cookie 缓存: %s", err.Error())
+	}
+
+	globalClient.Init()
 
 	mux := http.NewServeMux()
 	setupRoutes(mux)
@@ -2699,40 +2814,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-    fmt.Println()
-    fmt.Println(strings.Repeat("=", 60))
-    logSuccess("✅ 服务器运行于 http://0.0.0.0:%s", port)
-    logInfo("可用接口列表:")
-    fmt.Println("  GET  /popular          - 热门视频")
-    fmt.Println("  GET  /ranking          - 排行榜")
-    fmt.Println("  GET  /search           - 搜索视频")
-    fmt.Println("  GET  /video/info       - 视频详情")
-    fmt.Println("  GET  /video/playurl    - 播放地址")
-    fmt.Println("  GET  /video/danmaku    - 弹幕数据")
-    fmt.Println("  GET  /video/comments   - 评论列表")
-    fmt.Println("  GET  /video/comments/replies - 子评论")
-    fmt.Println("  GET  /video/subtitle/list - CC字幕列表")
-    fmt.Println("  GET  /video/subtitle/ass  - 生成ASS字幕")
-    fmt.Println("  GET  /user/info        - 用户信息")
-    fmt.Println("  GET  /login/info       - 登录信息")
-    fmt.Println("  GET  /hot/search       - 热搜榜")
-    fmt.Println("  GET  /recommend        - 首页推荐")
-    fmt.Println("  GET  /history/recent   - 最近观看")
-    fmt.Println("  GET  /player/heartbeat - 回调心跳")
-    fmt.Println("  GET  /fav/folder/list  - 收藏夹列表")
-    fmt.Println("  GET  /fav/resource/list- 收藏夹内容")
-    fmt.Println("  GET  /fav/status       - 收藏状态")
-    fmt.Println("  GET  /fav/toggle       - 收藏切换")
-    fmt.Println("  GET  /coin/status      - 投币状态")
-    fmt.Println("  GET  /coin/add         - 投币")
-    fmt.Println("  GET  /like/status      - 点赞状态")
-    fmt.Println("  GET  /like/toggle      - 点赞/取消点赞")
-   	fmt.Println("  GET  /qrcode/generate  - 生成登录二维码")
-    fmt.Println("  GET  /qrcode/poll      - 轮询二维码状态")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println()
-	logInfo("服务器已就绪，等待请求...")
-	fmt.Println()
+	printEndpoints(port)
 
 	if err := http.ListenAndServe("0.0.0.0:"+port, handler); err != nil {
 		logError("❌ 启动失败: %s", err.Error())

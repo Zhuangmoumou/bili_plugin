@@ -205,8 +205,11 @@ void BiliImageResponse::run() {
   // 3. 同步下载（在线程池线程中，不阻塞渲染）
   m_image = downloadImage(imageUrl);
 
+  const QImage placeholder =
+      createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
+
   // 4. 存缓存（仅成功时，且不是 placeholder）
-  if (!m_image.isNull() && m_image != createPlaceholder()) {
+  if (!m_image.isNull() && m_image != placeholder) {
     QWriteLocker locker(m_cacheLock);
     qint64 bytes = (qint64)m_image.bytesPerLine() * m_image.height();
     int cost = qMax((int)qMin(bytes, (qint64)INT_MAX), 1024);
@@ -217,7 +220,7 @@ void BiliImageResponse::run() {
   }
 
   if (m_image.isNull()) {
-    m_image = createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
+    m_image = placeholder;
   }
 
   emit finished();

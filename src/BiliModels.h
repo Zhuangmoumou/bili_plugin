@@ -41,6 +41,7 @@ struct CommentItem {
     qint64 rcount = 0;
     qint64 ctime = 0;
     bool isVip = false;
+    bool isTop = false;
 };
 
 struct CommentReplyItem {
@@ -162,7 +163,8 @@ public:
         RcountRole,
         CtimeRole,
         CtimeTextRole,
-        IsVipRole
+        IsVipRole,
+        IsTopRole
     };
     Q_ENUM(Roles)
 
