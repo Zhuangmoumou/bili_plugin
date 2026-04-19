@@ -73,7 +73,7 @@ func main() {
     http.HandleFunc("/api/login/sms", handleSMSLogin)
     http.HandleFunc("/pull", handlePull)
 
-    log.Println("服务启动：http://192.168.1.3:8666/verify.html")
+    log.Println("服务启动，监听于：http://0.0.0.0:8666/verify.html")
     log.Fatal(http.ListenAndServe("0.0.0.0:8666", nil))
 }
 
