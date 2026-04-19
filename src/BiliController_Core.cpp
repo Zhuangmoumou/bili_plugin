@@ -7,6 +7,7 @@
 #include <QStringListModel>
 #include <QTimer>
 #include <QDebug>
+#include <QNetworkReply>
 
 // 安全回调包装宏 - 在回调执行前检查对象是否仍存在
 #define SAFE_CALLBACK(controller, ...)                                         \
@@ -61,6 +62,10 @@ BiliController::BiliController(QObject *parent)
 
 BiliController::~BiliController() {
   m_destroying = true;
+
+  // 停止短信登录轮询与进程
+  stopSmsLogin();
+
   // 取消所有正在进行的请求，防止回调访问已销毁的对象
   if (m_network) {
     m_network->cancelAllRequests();

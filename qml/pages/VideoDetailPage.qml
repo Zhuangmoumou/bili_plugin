@@ -54,7 +54,24 @@ Rectangle {
     signal commentsRequested()
     signal upRequested(var mid)
 
-    property real savedPartListX: 0
+    // 分P列表横向滚动位置（同时会同步到 rootRef.detailPartListXCache[bvid]）
+    property real savedPartListX: (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
+                              ? rootRef.detailPartListXCache[bvid]
+                              : 0
+
+    // 记录用户当前选中的分P index（用于在 refreshDetail 后恢复选择）
+    property int savedPartIndex: 0
+    // 记录进入刷新前的 cid（用于判断是否被重置到第一集）
+    property int savedPartCid: 0
+    // 标记：本次 refreshDetail 后需要尝试恢复分P
+    property bool _needRestorePartAfterRefresh: false
+    property bool _restoringPartNow: false
+
+    onSavedPartListXChanged: {
+        if (rootRef && bvid && rootRef.detailPartListXCache) {
+            rootRef.detailPartListXCache[bvid] = savedPartListX
+        }
+    }
     property bool favoritePickerVisible: false
     property bool subtitlePickerVisible: false
     property bool coinPickerVisible: false
@@ -63,10 +80,14 @@ Rectangle {
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
         if (savedPartListX <= 0) return;
+        // 三次延后恢复：详情页会在返回时触发 refreshDetail() 导致 model 重置，ListView 可能多次抛光覆盖 contentX
         Qt.callLater(function() {
             videoPartList.contentX = savedPartListX;
             Qt.callLater(function() {
                 videoPartList.contentX = savedPartListX;
+                Qt.callLater(function() {
+                    videoPartList.contentX = savedPartListX;
+                })
             })
         })
     }
@@ -1222,6 +1243,7 @@ Rectangle {
                             onClicked: {
                                 if (!controller) return
                                 detailPage.savedPartListX = videoPartList.contentX
+                                detailPage.savedPartIndex = index
                                 if (controller.videoCid === model.cid) {
                                     detailPage.fullPartTitleText = model.part || ""
                                     detailPage.fullPartTitleVisible = true
@@ -1891,12 +1913,20 @@ Rectangle {
     // ═══════════════════════════════════════════════════════════
     // 入场动画
     // ═══════════════════════════════════════════════════════════
+    // 记录最后一次刷新时间，避免 visible 变化导致的短时间重复刷新
+    property double _lastRefreshMs: 0
+
+    function refreshDetail(force) {
+        if (!controller || bvid.length === 0) return;
+        var nowMs = Date.now();
+        if (!force && (nowMs - _lastRefreshMs) < 400) return;
+        _lastRefreshMs = nowMs;
+        controller.fetchVideoDetail(bvid);
+    }
+
     Component.onCompleted: {
-        // 仅当需要加载的 bvid 与控制器中当前的 bvid 不同时，才重新获取数据
-        // 这可以防止从播放页返回时，状态被重置回 P1
-        if (controller && bvid.length > 0 && controller.videoBvid !== bvid) {
-            controller.fetchVideoDetail(bvid)
-        }
+        // 初次进入详情页：拉取一次数据
+        refreshDetail(true)
 
         // 默认清晰度
         if (rootRef && rootRef.playQualitySelected > 0) {
@@ -1914,6 +1944,25 @@ Rectangle {
         enterAnimation.start()
     }
 
+    onVisibleChanged: {
+        if (visible) {
+            // 返回详情页：先尝试恢复滚动位置（即使后面刷新导致模型重置，onVideoDetailChanged 里还会再恢复一次）
+            restorePartListPosition()
+
+            // 兼容“每次重进详情都更新”需求：仍然 refreshDetail
+            // 但在刷新前缓存当前 cid，并在刷新完成后尝试恢复分P选择
+            if (controller) {
+                savedPartCid = controller.videoCid || 0
+            }
+            _needRestorePartAfterRefresh = true
+            refreshDetail(false)
+        } else {
+            // 离开详情页时缓存分P列表位置
+            if (videoPartList) savedPartListX = videoPartList.contentX
+            if (controller) savedPartCid = controller.videoCid || 0
+        }
+    }
+
     Connections {
         target: controller
         function onAcceptQualitiesChanged() { detailPage.updateQualities(); }
@@ -1926,6 +1975,29 @@ Rectangle {
                 controller.fetchWatchLaterStatus()
                 controller.fetchSubtitleList()
             }
+
+            // 详情数据刷新后：如发现 cid 被重置（常见为第一集），则恢复到用户之前选择的 index。
+            // 兼容“每次重进详情都更新”，但尽量不改变用户当前分P。
+            if (detailPage._needRestorePartAfterRefresh && !detailPage._restoringPartNow) {
+                detailPage._needRestorePartAfterRefresh = false
+
+                var partModel = controller ? controller.videoPartModel() : null
+                var canRestore = partModel && partModel.count > detailPage.savedPartIndex
+
+                // 只有在 refresh 后 current cid 与 refresh 前 cid 不一致时才恢复，避免无意义重复 playVideoPart
+                if (canRestore && detailPage.savedPartIndex > 0
+                        && (controller.videoCid || 0) !== (detailPage.savedPartCid || 0)) {
+                    detailPage._restoringPartNow = true
+                    Qt.callLater(function() {
+                        controller.playVideoPart(detailPage.savedPartIndex)
+                        Qt.callLater(function() {
+                            detailPage._restoringPartNow = false
+                            detailPage.restorePartListPosition()
+                        })
+                    })
+                }
+            }
+
             detailPage.restorePartListPosition()
         }
         function onLoginStateChanged() {

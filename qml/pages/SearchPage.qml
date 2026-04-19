@@ -11,6 +11,8 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
+    // 由 main.qml 传入，用于跨页面（即使 SearchPage 被销毁重建也能恢复滚动位置）
+    property var rootRef: null
     readonly property string fontFamily: "Microsoft YaHei"  // 微软雅黑
 
     signal backClicked()
@@ -32,6 +34,14 @@ Rectangle {
                 id_page_pop_helper.inputPageCreated(incubator.object);
             }
         }
+    }
+
+    function videoCoverSource(url) {
+        if (!url) return ""
+        // 兼容 data url / 已经是 image provider
+        if (String(url).indexOf("data:image/") === 0) return url
+        if (String(url).indexOf("image://") === 0) return url
+        return "image://bili/" + encodeURIComponent(url)
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -234,14 +244,22 @@ Rectangle {
     // 搜索逻辑
     // ═══════════════════════════════════════════════════════════
     property bool showResults: false
-    property real savedResultContentX: 0
+    property real savedResultContentX: (rootRef && rootRef.searchSavedResultX > 0) ? rootRef.searchSavedResultX : 0
+
+    onSavedResultContentXChanged: {
+        if (rootRef) rootRef.searchSavedResultX = savedResultContentX
+    }
 
     function restoreSearchPosition() {
         if (!showResults) return;
         if (searchResultList.count <= 0) return;
         if (savedResultContentX <= 0) return;
+        // 恢复滚动位置：双重延后，防止 visible/size/model 变化触发布局后覆盖 contentX
         Qt.callLater(function() {
             searchResultList.contentX = savedResultContentX;
+            Qt.callLater(function() {
+                searchResultList.contentX = savedResultContentX;
+            });
         });
     }
 
@@ -503,15 +521,21 @@ Rectangle {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
-        delegate: Components.VideoCard {
+        delegate: Components.VideoCardCompact {
             height: searchResultList.height
             videoTitle: model.title || ""
-            coverUrl: model.pic || ""
+            coverUrl: searchPage.videoCoverSource(model.pic || "")
             upName: model.ownerName || ""
             viewCount: model.views || ""
             durationText: model.durationText || ""
             bvid: model.bvid || ""
             showCollection: model.partCount > 1
+            fontFamily: searchPage.fontFamily
+
+            // 标题稍微更小 + 标题与 UP 信息间距更小
+            titleScale: 0.95
+            infoSpacing: 0.5
+
             onClicked: {
                 searchPage.savedResultContentX = searchResultList.contentX
                 searchPage.videoSelected(bvid)

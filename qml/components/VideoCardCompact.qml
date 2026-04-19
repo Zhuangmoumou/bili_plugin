@@ -20,6 +20,11 @@ Item {
     property real fontScale: 1.0
     property real titleScale: 1.0
     property real subScale: 1.0
+    property bool titleBold: true
+    // 标题与UP信息之间的垂直间距（默认 2）
+    property real infoSpacing: 2
+    // 注意：该组件的文本在 Column 中布局，直接改子项 y 通常不会生效
+    property real subYOffset: 0
 
     signal clicked()
 
@@ -141,7 +146,7 @@ Item {
                 bottom: parent.bottom
                 bottomMargin: 3
             }
-            spacing: 2
+            spacing: infoSpacing
 
             // 标题
             Text {
@@ -150,7 +155,7 @@ Item {
                 color: Theme.textPrimary
                 font.family: card.fontFamily
                 font.pixelSize: 10 * card.fontScale * card.titleScale
-                font.bold: true
+                font.bold: titleBold
                 maximumLineCount: 2
                 wrapMode: Text.Wrap
                 elide: Text.ElideRight
@@ -160,6 +165,8 @@ Item {
             // UP主 + 播放量
             Text {
                 width: parent.width
+                // 处于 Column 布局中，y 可能会被布局覆盖，保留该属性以兼容需要时的手动布局
+                y: subYOffset
                 text: upName + (viewCount ? " · " + viewCount : "")
                 color: Theme.textTertiary
                 font.family: card.fontFamily

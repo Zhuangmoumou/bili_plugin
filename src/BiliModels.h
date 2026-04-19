@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QVector>
 #include <QString>
+#include <QStringList>
 
 // ============ 数据结构 ============
 
@@ -33,10 +34,12 @@ struct VideoItem {
 
 struct CommentItem {
     qint64 rpid = 0;
+    qint64 mid = 0;
     QString userName;
     QString avatar;
     int level = 0;
     QString content;
+    QStringList pictures;
     qint64 likes = 0;
     qint64 rcount = 0;
     qint64 ctime = 0;
@@ -46,10 +49,12 @@ struct CommentItem {
 
 struct CommentReplyItem {
     qint64 rpid = 0;
+    qint64 mid = 0;
     QString userName;
     QString avatar;
     int level = 0;
     QString content;
+    QStringList pictures;
     qint64 likes = 0;
     qint64 ctime = 0;
     bool isVip = false;
@@ -156,9 +161,11 @@ public:
     enum Roles {
         RpidRole = Qt::UserRole + 1,
         UserNameRole,
+        UserMidRole,
         AvatarRole,
         LevelRole,
         ContentRole,
+        PicturesRole,
         LikesRole,
         RcountRole,
         CtimeRole,
@@ -214,9 +221,11 @@ public:
     enum Roles {
         RpidRole = Qt::UserRole + 1,
         UserNameRole,
+        UserMidRole,
         AvatarRole,
         LevelRole,
         ContentRole,
+        PicturesRole,
         LikesRole,
         CtimeRole,
         CtimeTextRole,

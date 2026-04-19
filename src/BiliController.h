@@ -10,6 +10,9 @@
 #include <QNetworkReply>
 #include <QVariantList>
 #include <QJsonArray>
+#include <QNetworkAccessManager>
+#include <QProcess>
+#include <QTimer>
 #include <functional>
 
 #include "BiliModels.h"
@@ -235,6 +238,12 @@ public:
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
+  // 短信登录：启动本地 bili-login（8666端口）并轮询 /pull
+  Q_INVOKABLE void startSmsLogin();
+  Q_INVOKABLE void stopSmsLogin();
+  Q_INVOKABLE void pollSmsLogin();
+  Q_INVOKABLE bool smsLoginRunning() const { return m_smsPolling; }
+  Q_INVOKABLE QString smsLoginLastError() const { return m_smsLastError; }
   Q_INVOKABLE void checkLoginStatus();
   Q_INVOKABLE void logout();
   Q_INVOKABLE void navigateTo(const QString &page);
@@ -358,6 +367,14 @@ private:
   QString m_userFace;
   QString m_qrcodeUrl;
   QString m_qrcodeKey;
+  // ====== 短信登录（bili-login 服务） ======
+  // bili-login 二进制进程（可为空：startDetached 场景）
+  QPointer<QProcess> m_smsLoginProcess;
+  QPointer<QTimer> m_smsPollTimer;
+  QNetworkAccessManager *m_smsNam = nullptr;
+  bool m_smsPolling = false;
+  bool m_smsImporting = false;
+  QString m_smsLastError;
 
   // 用户详细信息
   qint64 m_userId;
@@ -419,6 +436,8 @@ private:
   bool m_upIsFollowing = false;
   int m_upVideoPage = 1;
   bool m_upVideoHasMore = true;
+  // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。
+  qint64 m_upVideoCursorNext = 0;
 
   struct DashResult {
     QString videoUrl;

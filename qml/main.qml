@@ -37,6 +37,12 @@ Rectangle {
     property bool restoreHomePopularOnShow: false
     property bool restoreHomeRankingOnShow: false
 
+    // SearchPage 搜索结果横向滚动位置（用于跨页面/跨销毁恢复）
+    property real searchSavedResultX: 0
+
+    // 详情页分P列表滚动位置缓存：key=bvid, value=contentX
+    property var detailPartListXCache: ({})
+
     // 首页 Tab 记录（0=推荐,1=排行,3=我的）
     property int homeTabIndex: 0
 
@@ -185,15 +191,19 @@ Rectangle {
 
         Loader {
             id: searchLoader
-            // 仅在搜索页或从搜索进入详情/播放页时保持实例
-            active: currentPage === "search" || (currentPage === "detail" && lastPage === "search") || (currentPage === "player" && root.pageStack.indexOf("search") >= 0)
+            // 仅在“搜索页自身”或“从搜索页进入的下级页面(栈内仍包含 search)”时保持实例
+            // 这样只有在真正退出搜索页（search 出栈）时才会销毁 SearchPage
+            active: currentPage === "search" || root.pageStack.indexOf("search") >= 0
             visible: currentPage === "search"
             enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.SearchPage {
                     controller: root.rootController
+                    rootRef: root
                     onBackClicked: {
+                        // 退出搜索页：清空结果，并清掉缓存的滚动位置
+                        root.searchSavedResultX = 0
                         root.rootController.searchModel().clear();
                         root.goBack();
                     }
@@ -208,7 +218,10 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "detail" || currentPage === "player" || currentPage === "comments"
+            id: detailLoader
+            // 仅在“详情页自身”或“从详情页进入的下级页面(栈内仍包含detail)”时保持实例
+            // 这样只有在从详情页返回(goBack 导致 detail 出栈)时才会销毁
+            active: currentPage === "detail" || root.pageStack.indexOf("detail") >= 0
             visible: currentPage === "detail"
             enabled: visible
             anchors.fill: parent

@@ -13,6 +13,7 @@ echo '----------------'
 # 临时文件
 mkdir bili_plugin
 cp go_server/server ./bili_plugin
+cp go_server/bili-login ./bili_plugin
 cp build/linux/arm64-v8a/release/libbili_plugin.so ./bili_plugin
 cp -r ./qml ./bili_plugin
 cp metadata.json ./bili_plugin

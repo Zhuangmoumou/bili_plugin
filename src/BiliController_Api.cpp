@@ -15,6 +15,11 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QCoreApplication>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QTimer>
 #include <iostream>
 #include <algorithm>
 
@@ -574,6 +579,8 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
   }
 
   bool sameVideoRefresh = (m_currentVideo.bvid == bvid && !bvid.isEmpty());
+  // 同视频刷新时保存当前选中的 cid，避免 refreshDetail 解析后被重置到第一页
+  const qint64 prevCid = sameVideoRefresh ? m_currentVideo.cid : 0;
 
   // 仅在切换到新视频时重置收藏/投币/点赞/字幕状态，避免同视频刷新闪动
   if (!sameVideoRefresh) {
@@ -621,7 +628,7 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
 
   m_network->get(
       "/video/info", params,
-      [self](const QJsonObject &data) {
+      [self, sameVideoRefresh, prevCid](const QJsonObject &data) {
         if (!self)
           return;
 
@@ -629,24 +636,44 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         self->m_currentVideo.aid = data.value("aid").toVariant().toLongLong();
 
         QJsonArray pages = data.value("pages").toArray();
-        if (!pages.isEmpty() && self->m_currentVideo.cid == 0) {
-          QJsonObject firstPage = pages.first().toObject();
-          self->m_currentVideo.cid =
-              firstPage.value("cid").toVariant().toLongLong();
+
+        // 解析分P列表（先更新模型，后决定 cid）
+        if (pages.count() > 1) { // 只有多于1P时才显示列表
+          QVector<VideoPartItem> parts;
+          parts.reserve(pages.size());
+          for (const QJsonValue &v : pages) {
+            if (v.isObject()) {
+              parts.append(VideoPartListModel::parseVideoPartItem(v.toObject()));
+            }
+          }
+          self->m_videoPartModel->setItems(parts);
+        } else {
+          self->m_videoPartModel->clear();
         }
 
-        // 解析分P列表
-        if (pages.count() > 1) { // 只有多于1P时才显示列表
-            QVector<VideoPartItem> parts;
-            parts.reserve(pages.size());
+        // 决定当前 cid：
+        // - 同视频刷新：优先保留 prevCid（若它存在于 pages 中）
+        // - 否则：若解析不到 cid，则退回到第一页 cid
+        if (!pages.isEmpty()) {
+          if (sameVideoRefresh && prevCid > 0) {
+            bool found = false;
             for (const QJsonValue &v : pages) {
-                if (v.isObject()) {
-                    parts.append(VideoPartListModel::parseVideoPartItem(v.toObject()));
-                }
+              QJsonObject p = v.toObject();
+              qint64 cid = p.value("cid").toVariant().toLongLong();
+              if (cid > 0 && cid == prevCid) {
+                found = true;
+                break;
+              }
             }
-            self->m_videoPartModel->setItems(parts);
-        } else {
-            self->m_videoPartModel->clear();
+            if (found) {
+              self->m_currentVideo.cid = prevCid;
+            }
+          }
+
+          if (self->m_currentVideo.cid == 0) {
+            QJsonObject firstPage = pages.first().toObject();
+            self->m_currentVideo.cid = firstPage.value("cid").toVariant().toLongLong();
+          }
         }
 
         emit self->videoDetailChanged();
@@ -1048,8 +1075,7 @@ void BiliController::fetchCommentReplies(qint64 rootRpid) {
         m_commentReplyModel->setLoading(false);
         m_commentReplyModel->setErrorMessage(msg);
         emit toastMessage(QString("回复加载失败：%1").arg(msg));
-      },
-      true);
+      });
 }
 
 void BiliController::fetchMoreCommentReplies() {
@@ -1861,6 +1887,10 @@ void BiliController::launchExternalPlayerCurrentSelection() {
 // ====== API: 登录 ======
 
 void BiliController::generateQrcode() {
+  // 用户触发登录时：除了拉取二维码，也在后台启动短信登录服务并开始轮询
+  // 这样用户可以在浏览器完成短信登录（bili-login）后，本插件自动接管 cookies
+  startSmsLogin();
+
   setIsLoading(true);
 
   QPointer<BiliController> self(this);
@@ -1886,9 +1916,15 @@ void BiliController::generateQrcode() {
       });
 }
 
+
 void BiliController::pollQrcode() {
   if (m_qrcodeKey.isEmpty()) {
     emit toastMessage("请先获取二维码");
+    return;
+  }
+
+  // 若短信登录已经成功导入并触发 checkLoginStatus，这里避免继续轮询造成冲突
+  if (m_loggedIn) {
     return;
   }
 
@@ -1943,6 +1979,166 @@ void BiliController::pollQrcode() {
         qDebug() << "[BiliController] pollQrcode error:" << msg;
         emit self->toastMessage(QString("轮询失败：%1").arg(msg));
       });
+}
+
+// ====== 短信登录（bili-login + /pull） ======
+
+static const int SMS_LOGIN_PORT = 8666;
+static const char *SMS_PULL_PATH = "/pull";
+
+void BiliController::startSmsLogin() {
+  if (m_loggedIn) return;
+  if (m_smsPolling) return;
+
+  if (!m_smsNam) {
+    m_smsNam = new QNetworkAccessManager(this);
+  }
+
+  // 启动当前目录下的 bili-login（二进制）
+  QStringList candidates;
+  candidates << QDir::current().filePath("bili-login");
+  candidates << QCoreApplication::applicationDirPath() + "/bili-login";
+  candidates << QStringLiteral("/userdisk/PenMods/plugins/bili_plugin/bili-login");
+
+  QString execPath;
+  for (const QString &c : candidates) {
+    if (QFile::exists(c)) { execPath = c; break; }
+  }
+
+  if (!execPath.isEmpty()) {
+    QFile f(execPath);
+    if (!(f.permissions() & QFile::ExeUser)) {
+      f.setPermissions(f.permissions() | QFile::ExeUser | QFile::ExeGroup | QFile::ExeOther);
+    }
+
+    bool ok = QProcess::startDetached(execPath, QStringList(), QFileInfo(execPath).absolutePath());
+    if (!ok) {
+      m_smsLastError = QString("启动 bili-login 失败：%1").arg(execPath);
+      emit toastMessage(m_smsLastError);
+    }
+  } else {
+    m_smsLastError = "未找到 bili-login 可执行文件（将继续尝试轮询 8666/pull）";
+    qDebug() << "[BiliController]" << m_smsLastError;
+  }
+
+  if (!m_smsPollTimer) {
+    m_smsPollTimer = new QTimer(this);
+    m_smsPollTimer->setInterval(2000);
+    m_smsPollTimer->setSingleShot(false);
+    connect(m_smsPollTimer, &QTimer::timeout, this, &BiliController::pollSmsLogin);
+  }
+
+  m_smsPolling = true;
+  m_smsImporting = false;
+  m_smsPollTimer->start();
+}
+
+void BiliController::stopSmsLogin() {
+  m_smsPolling = false;
+  m_smsImporting = false;
+  if (m_smsPollTimer) m_smsPollTimer->stop();
+}
+
+void BiliController::pollSmsLogin() {
+  if (!m_smsPolling || m_loggedIn) return;
+  if (m_smsImporting) return;
+  if (!m_smsNam) m_smsNam = new QNetworkAccessManager(this);
+
+  QUrl url(QString("http://127.0.0.1:%1%2").arg(SMS_LOGIN_PORT).arg(SMS_PULL_PATH));
+  QNetworkRequest req(url);
+  req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+  QNetworkReply *reply = m_smsNam->get(req);
+  if (!reply) return;
+
+  QPointer<BiliController> self(this);
+  connect(reply, &QNetworkReply::finished, this, [self, reply]() {
+    if (!self) { if (reply) reply->deleteLater(); return; }
+
+    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QByteArray body = reply->readAll();
+    reply->deleteLater();
+
+    if (httpStatus == 404) {
+      return; // no account
+    }
+    if (httpStatus < 200 || httpStatus >= 300) {
+      self->m_smsLastError = QString("短信登录服务异常：HTTP %1").arg(httpStatus);
+      qDebug() << "[BiliController]" << self->m_smsLastError;
+      return;
+    }
+
+    QJsonParseError pe;
+    QJsonDocument doc = QJsonDocument::fromJson(body, &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+      self->m_smsLastError = "短信登录 /pull 返回非JSON";
+      return;
+    }
+
+    QJsonObject obj = doc.object();
+    QString refreshToken = obj.value("refresh_token").toString();
+    QJsonObject cookies = obj.value("cookies").toObject();
+    QString sessdata = cookies.value("SESSDATA").toString();
+    QString biliJct = cookies.value("bili_jct").toString();
+    QString buvid3 = cookies.value("buvid3").toString();
+    QString dedeUserID = cookies.value("DedeUserID").toString();
+    QString dedeCkMd5 = cookies.value("DedeUserID__ckMd5").toString();
+
+    if (sessdata.isEmpty()) {
+      self->m_smsLastError = "短信登录 cookies 缺少 SESSDATA";
+      return;
+    }
+
+    self->m_smsImporting = true;
+
+    QUrl importUrl(QString("%1/login/import").arg(self->m_network->apiBase()));
+    QNetworkRequest importReq(importUrl);
+    importReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QJsonObject payload;
+    payload.insert("SESSDATA", sessdata);
+    if (!biliJct.isEmpty()) payload.insert("bili_jct", biliJct);
+    if (!buvid3.isEmpty()) payload.insert("buvid3", buvid3);
+    if (!dedeUserID.isEmpty()) payload.insert("DedeUserID", dedeUserID);
+    if (!dedeCkMd5.isEmpty()) payload.insert("DedeUserID__ckMd5", dedeCkMd5);
+    if (!refreshToken.isEmpty()) payload.insert("refresh_token", refreshToken);
+
+    QNetworkReply *importReply = self->m_smsNam->post(importReq, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    if (!importReply) { self->m_smsImporting = false; return; }
+
+    connect(importReply, &QNetworkReply::finished, self, [self, importReply]() {
+      if (!self) { if (importReply) importReply->deleteLater(); return; }
+
+      const int st = importReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+      importReply->deleteLater();
+
+      self->m_smsImporting = false;
+
+      if (st < 200 || st >= 300) {
+        self->m_smsLastError = QString("导入短信登录 cookies 失败：HTTP %1").arg(st);
+        return;
+      }
+
+      // 导入成功：停止轮询
+      self->stopSmsLogin();
+
+      // 结束 bili-login 进程（按你的要求：pgrep -f ./bili-login 然后 kill）
+      {
+        QProcess pgrep;
+        pgrep.start("pgrep", QStringList() << "-f" << "bili-login");
+        if (pgrep.waitForFinished(1500) && pgrep.exitCode() == 0) {
+          QString out = QString::fromLocal8Bit(pgrep.readAllStandardOutput()).trimmed();
+          QStringList pids = out.split('\n', Qt::SkipEmptyParts);
+          for (const QString &pid : pids) {
+            // 使用 kill 命令避免引入平台差异
+            QProcess::startDetached("kill", QStringList() << "-TERM" << pid);
+          }
+        }
+      }
+
+      self->checkLoginStatus();
+    });
+  });
 }
 
 void BiliController::checkLoginStatus() {
@@ -2096,6 +2292,9 @@ void BiliController::fetchUserInfo(qint64 mid) {
 
 void BiliController::logout() {
   std::cout << "[BiliCtrl] Logout" << std::endl;
+
+  // 停止短信登录后台轮询与进程，避免退出后又被 /pull 拉起登录
+  stopSmsLogin();
 
   if (m_network) {
     m_network->cancelAllRequests();
@@ -2372,6 +2571,7 @@ void BiliController::fetchUpInfo(qint64 mid) {
     m_upUserMid = mid;
     m_upVideoPage = 1;
     m_upVideoHasMore = true;
+    m_upVideoCursorNext = 0;
     if (m_upVideoModel) {
       m_upVideoModel->clear();
       m_upVideoModel->setHasMore(true);
@@ -2442,11 +2642,13 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
     m_upUserMid = mid;
     m_upVideoPage = 1;
     m_upVideoHasMore = true;
+    m_upVideoCursorNext = 0;
     m_upVideoModel->clear();
   }
 
   m_upVideoPage = page;
   if (page == 1) {
+    m_upVideoCursorNext = 0;
     m_upVideoModel->clear();
   }
   m_upVideoModel->setLoading(true);
@@ -2454,8 +2656,16 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
 
   QMap<QString, QString> params;
   params["mid"] = QString::number(mid);
-  params["pn"] = QString::number(page);
   params["ps"] = QString::number(pageSize);
+
+  // 优先使用游标翻页：当 page>1 且已有游标时，带 max 参数请求下一段
+  // 这样可避免 UP 新增稿件导致 pn 翻页出现丢失/重复。
+  if (page > 1 && m_upVideoCursorNext > 0) {
+    params["pn"] = "1";
+    params["max"] = QString::number(m_upVideoCursorNext);
+  } else {
+    params["pn"] = QString::number(page);
+  }
 
   apiGet(
       "/user/videos", params,
@@ -2481,12 +2691,30 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
             VideoItem item = archiveObj.isEmpty()
                                  ? VideoListModel::parseVideoItem(obj)
                                  : VideoListModel::parseVideoItem(archiveObj);
+
+            // APP space/archive/cursor：常见字段
+            // - aid 不一定在 archive 对象里，可能在 param 字段（字符串）
+            // - 时间戳常用 ctime
+            if (item.aid <= 0) {
+              item.aid = obj.value("aid").toVariant().toLongLong();
+            }
+            if (item.aid <= 0) {
+              item.aid = obj.value("param").toString().toLongLong();
+            }
+
+            if (item.pubdate <= 0) {
+              item.pubdate = obj.value("pubdate").toVariant().toLongLong();
+            }
+            if (item.pubdate <= 0) {
+              item.pubdate = obj.value("ctime").toVariant().toLongLong();
+            }
             if (item.pubdate <= 0) {
               item.pubdate = obj.value("created").toVariant().toLongLong();
             }
             if (item.pubdate <= 0 && !archiveObj.isEmpty()) {
               item.pubdate = archiveObj.value("created").toVariant().toLongLong();
             }
+
             items.append(item);
           }
         }
@@ -2498,15 +2726,46 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
 
         m_upVideoModel->appendItems(items);
 
+        // 解析游标（APP cursor）
+        // space/archive/cursor 在很多情况下不返回 data.cursor，而是要求客户端用“上一页最后一个 aid”继续翻页。
+        qint64 nextCursor = 0;
+
+        QJsonObject cursorObj = data.value("cursor").toObject();
+        if (!cursorObj.isEmpty()) {
+          nextCursor = cursorObj.value("next").toVariant().toLongLong();
+          if (nextCursor <= 0) {
+            nextCursor = cursorObj.value("max").toVariant().toLongLong();
+          }
+        }
+
+        // 兜底：用最后一条的 aid（优先）/pubdate 作为游标
+        if (nextCursor <= 0 && !items.isEmpty()) {
+          if (items.last().aid > 0) {
+            nextCursor = items.last().aid;
+          } else {
+            nextCursor = items.last().pubdate;
+          }
+        }
+
+        if (nextCursor > 0) {
+          m_upVideoCursorNext = nextCursor;
+        }
+
         bool hasMore = !items.isEmpty();
-        QJsonObject pageObj = data.value("page").toObject();
-        int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("pn").toInt(page);
-        int size = pageObj.value("ps").toInt(pageSize);
-        if (count > 0 && size > 0) {
-          hasMore = (num * size < count);
-        } else if (data.contains("has_next")) {
+        if (data.contains("has_next")) {
           hasMore = data.value("has_next").toBool(false);
+        } else {
+          // 兼容 web 分页
+          QJsonObject pageObj = data.value("page").toObject();
+          int count = pageObj.value("count").toInt(0);
+          int num = pageObj.value("pn").toInt(page);
+          int size = pageObj.value("ps").toInt(pageSize);
+          if (count > 0 && size > 0) {
+            hasMore = (num * size < count);
+          } else {
+            // 若是游标模式但缺失 has_next，则按 nextCursor 是否变化判断
+            hasMore = (m_upVideoCursorNext > 0) && (items.size() >= pageSize);
+          }
         }
         m_upVideoHasMore = hasMore;
         m_upVideoModel->setHasMore(hasMore);

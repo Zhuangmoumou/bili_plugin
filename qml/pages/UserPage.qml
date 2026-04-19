@@ -22,14 +22,16 @@ Rectangle {
 
     function openFavorites() {
         favView = 1
-        if (controller) controller.fetchFavoriteFolders()
+        // 延后到下一帧触发，避免切换视图瞬间阻塞 UI
+        if (controller) Qt.callLater(function() { controller.fetchFavoriteFolders() })
     }
 
     function openFavoriteDetail(fid, title) {
         currentFavId = fid
         currentFavTitle = title
         favView = 2
-        if (controller) controller.fetchFavoriteItems(fid, 1, 20)
+        // 延后到下一帧触发，避免进入详情时 UI 卡顿
+        if (controller) Qt.callLater(function() { controller.fetchFavoriteItems(fid, 1, 20) })
     }
 
     function backInternal() {
@@ -311,6 +313,35 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
+
+                    Row {
+                       spacing: Theme.spacingSmall
+
+                        Rectangle {
+                            width: 16
+                            height: 16
+                            radius: Theme.radiusRound
+                            color: Theme.withAlpha(Theme.primary, 0.2)
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "4"
+                                color: Theme.primary
+                                font.pixelSize: Theme.fontSmall
+                                font.bold: true
+                            }
+                        }
+
+                        Text {
+                            text: "或进行短信登录"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
                 }
 
                 // 刷新按钮
@@ -722,7 +753,7 @@ Rectangle {
                                     anchors.fill: parent
                                     onClicked: {
                                         favView = 6
-                                        if (controller) controller.fetchWatchLater(1, 20)
+                                        if (controller) Qt.callLater(function() { controller.fetchWatchLater(1, 20) })
                                     }
                                 }
                             }
@@ -775,7 +806,7 @@ Rectangle {
                                     anchors.fill: parent
                                     onClicked: {
                                         favView = 3
-                                        if (controller) controller.fetchRecentHistory()
+                                        if (controller) Qt.callLater(function() { controller.fetchRecentHistory() })
                                     }
                                 }
                             }
@@ -971,47 +1002,69 @@ Rectangle {
             anchors.fill: parent
             visible: favView === 3
 
-            ListView {
-                id: recentList
+            // 用 Loader 延迟创建 ListView，避免 UserPage 被加载时就构建大量 delegate 导致卡顿
+            Loader {
+                id: recentLoader
                 anchors.fill: parent
-                anchors.margins: Theme.spacingSmall
-                model: controller ? controller.recentHistoryModel() : null
-                orientation: ListView.Horizontal
-                spacing: Theme.spacingMedium
-                clip: true
+                active: recentHistoryView.visible
+                asynchronous: true
+                sourceComponent: Component {
+                    Item {
+                        anchors.fill: parent
 
-                onAtXEndChanged: {
-                    if (atXEnd && controller) controller.fetchMoreRecentHistory()
-                }
+                        ListView {
+                            id: recentList
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingSmall
+                            model: controller ? controller.recentHistoryModel() : null
+                            orientation: ListView.Horizontal
+                            spacing: Theme.spacingMedium
+                            clip: true
 
-                delegate: Components.VideoCard {
-                    height: recentList.height
-                    videoTitle: model.title || ""
-                    coverUrl: model.pic || ""
-                    upName: model.ownerName || ""
-                    viewCount: ""
-                    showViewCount: false
-                    durationText: model.durationText || ""
-                    bvid: model.bvid || ""
-                    onClicked: {
-                        userPage.recentHistoryContentX = recentList.contentX
-                        userPage.videoSelected(bvid)
+                            // 性能参数对齐 HomePage
+                            cacheBuffer: 640
+                            displayMarginBeginning: 160
+                            displayMarginEnd: 160
+
+                            property bool _loadingMore: false
+                            onAtXEndChanged: {
+                                if (!atXEnd || !controller || _loadingMore) return
+                                _loadingMore = true
+                                Qt.callLater(function() {
+                                    controller.fetchMoreRecentHistory()
+                                    _loadingMore = false
+                                })
+                            }
+
+                            delegate: Components.VideoCardCompact {
+                                height: recentList.height
+                                videoTitle: model.title || ""
+                                // 与 HomePage 保持一致：直接使用 model.pic，避免重复 encode 带来额外开销/错误
+                                coverUrl: model.pic || ""
+                                upName: model.ownerName || ""
+                                viewCount: ""
+                                durationText: model.durationText || ""
+                                bvid: model.bvid || ""
+                                onClicked: {
+                                    userPage.recentHistoryContentX = recentList.contentX
+                                    userPage.videoSelected(bvid)
+                                }
+                            }
+                        }
+
+                        Text {
+                            visible: recentList.count === 0
+                            text: "暂无最近观看"
+                            color: Theme.textTertiary
+                            anchors.centerIn: parent
+                        }
+
+                        Component.onCompleted: {
+                            if (recentHistoryView.visible && userPage.recentHistoryContentX > 0) {
+                                Qt.callLater(function() { recentList.contentX = userPage.recentHistoryContentX })
+                            }
+                        }
                     }
-                }
-            }
-
-            Text {
-                visible: recentList.count === 0
-                text: "暂无最近观看"
-                color: Theme.textTertiary
-                anchors.centerIn: parent
-            }
-
-            onVisibleChanged: {
-                if (visible && recentHistoryContentX > 0) {
-                    Qt.callLater(function() {
-                        recentList.contentX = recentHistoryContentX
-                    })
                 }
             }
         }
@@ -1022,44 +1075,65 @@ Rectangle {
             anchors.fill: parent
             visible: favView === 6
 
-            ListView {
-                id: watchLaterList
+            Loader {
+                id: watchLaterLoader
                 anchors.fill: parent
-                anchors.margins: Theme.spacingSmall
-                model: controller ? controller.watchLaterModel() : null
-                orientation: ListView.Horizontal
-                spacing: Theme.spacingMedium
-                clip: true
+                active: watchLaterView.visible
+                asynchronous: true
+                sourceComponent: Component {
+                    Item {
+                        anchors.fill: parent
 
-                onAtXEndChanged: {
-                    if (atXEnd && controller) controller.fetchMoreWatchLater()
-                }
+                        ListView {
+                            id: watchLaterList
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingSmall
+                            model: controller ? controller.watchLaterModel() : null
+                            orientation: ListView.Horizontal
+                            spacing: Theme.spacingMedium
+                            clip: true
 
-                delegate: Components.VideoCard {
-                    height: watchLaterList.height
-                    videoTitle: model.title || ""
-                    coverUrl: model.pic || ""
-                    upName: model.ownerName || ""
-                    viewCount: ""
-                    showViewCount: false
-                    durationText: model.durationText || ""
-                    bvid: model.bvid || ""
-                    onClicked: userPage.videoSelected(bvid)
-                }
-            }
+                            cacheBuffer: 640
+                            displayMarginBeginning: 160
+                            displayMarginEnd: 160
 
-            Text {
-                visible: watchLaterList.count === 0 && controller && !controller.isLoading
-                text: "暂无稍后再看"
-                color: Theme.textTertiary
-                anchors.centerIn: parent
-            }
+                            property bool _loadingMore: false
+                            onAtXEndChanged: {
+                                if (!atXEnd || !controller || _loadingMore) return
+                                _loadingMore = true
+                                Qt.callLater(function() {
+                                    controller.fetchMoreWatchLater()
+                                    _loadingMore = false
+                                })
+                            }
 
-            Components.LoadingIndicator {
-                anchors.centerIn: parent
-                running: controller ? controller.isLoading : false
-                onCancelRequested: {
-                    if (controller) controller.cancelAll();
+                            delegate: Components.VideoCardCompact {
+                                height: watchLaterList.height
+                                videoTitle: model.title || ""
+                                coverUrl: model.pic || ""
+                                upName: model.ownerName || ""
+                                viewCount: ""
+                                durationText: model.durationText || ""
+                                bvid: model.bvid || ""
+                                onClicked: userPage.videoSelected(bvid)
+                            }
+                        }
+
+                        Text {
+                            visible: watchLaterList.count === 0 && controller && !controller.isLoading
+                            text: "暂无稍后再看"
+                            color: Theme.textTertiary
+                            anchors.centerIn: parent
+                        }
+
+                        Components.LoadingIndicator {
+                            anchors.centerIn: parent
+                            running: controller ? controller.isLoading : false
+                            onCancelRequested: {
+                                if (controller) controller.cancelAll();
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1080,44 +1154,66 @@ Rectangle {
             anchors.fill: parent
             visible: favView === 2
 
-            ListView {
-                id: favItems
+            Loader {
+                id: favDetailLoader
                 anchors.fill: parent
-                anchors.margins: Theme.spacingSmall
-                model: controller ? controller.favoriteItemModel() : null
-                orientation: ListView.Horizontal
-                spacing: Theme.spacingMedium
-                clip: true
+                active: favDetailView.visible
+                asynchronous: true
+                sourceComponent: Component {
+                    Item {
+                        anchors.fill: parent
 
-                delegate: Components.VideoCard {
-                    height: favItems.height
-                    videoTitle: model.title || ""
-                    coverUrl: model.pic || ""
-                    upName: model.ownerName || ""
-                    viewCount: model.views || ""
-                    durationText: model.durationText || ""
-                    bvid: model.bvid || ""
-                    showCollection: model.partCount > 1
-                    onClicked: userPage.videoSelected(bvid)
-                }
+                        ListView {
+                            id: favItems
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingSmall
+                            model: controller ? controller.favoriteItemModel() : null
+                            orientation: ListView.Horizontal
+                            spacing: Theme.spacingMedium
+                            clip: true
 
-                onAtXEndChanged: {
-                    if (atXEnd && controller) controller.fetchMoreFavoriteItems()
-                }
-            }
+                            cacheBuffer: 640
+                            displayMarginBeginning: 160
+                            displayMarginEnd: 160
 
-            Text {
-                visible: favItems.count === 0 && controller && !controller.isLoading
-                text: "收藏夹为空"
-                color: Theme.textTertiary
-                anchors.centerIn: parent
-            }
+                            delegate: Components.VideoCardCompact {
+                                height: favItems.height
+                                videoTitle: model.title || ""
+                                coverUrl: model.pic || ""
+                                upName: model.ownerName || ""
+                                viewCount: model.views || ""
+                                durationText: model.durationText || ""
+                                bvid: model.bvid || ""
+                                showCollection: model.partCount > 1
+                                onClicked: userPage.videoSelected(bvid)
+                            }
 
-            Components.LoadingIndicator {
-                anchors.centerIn: parent
-                running: controller ? controller.isLoading : false
-                onCancelRequested: {
-                    if (controller) controller.cancelAll();
+                            property bool _loadingMore: false
+                            onAtXEndChanged: {
+                                if (!atXEnd || !controller || _loadingMore) return
+                                _loadingMore = true
+                                Qt.callLater(function() {
+                                    controller.fetchMoreFavoriteItems()
+                                    _loadingMore = false
+                                })
+                            }
+                        }
+
+                        Text {
+                            visible: favItems.count === 0 && controller && !controller.isLoading
+                            text: "收藏夹为空"
+                            color: Theme.textTertiary
+                            anchors.centerIn: parent
+                        }
+
+                        Components.LoadingIndicator {
+                            anchors.centerIn: parent
+                            running: controller ? controller.isLoading : false
+                            onCancelRequested: {
+                                if (controller) controller.cancelAll();
+                            }
+                        }
+                    }
                 }
             }
         }

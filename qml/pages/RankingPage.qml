@@ -112,14 +112,23 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: Theme.spacingSmall
+        anchors.leftMargin: Theme.spacingSmall
+        anchors.rightMargin: Theme.spacingSmall
+        anchors.topMargin: Theme.spacingSmall
+        anchors.bottomMargin: Math.max(0, Theme.spacingSmall - 3)
         model: controller ? controller.rankingModel() : null
         orientation: ListView.Horizontal
         spacing: Theme.spacingMedium
         clip: true
 
-        delegate: Components.VideoCard {
+        delegate: Components.VideoCardCompact {
             height: rankList.height
+            titleScale: 0.9
+            titleBold: false
+            subScale: 0.86
+            // 减少标题与UP信息的空隙 3px（默认 infoSpacing=2）
+            infoSpacing: -1
+            subYOffset: -10
             videoTitle: model.title || ""
             coverUrl: model.pic || ""
             upName: model.ownerName || ""

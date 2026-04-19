@@ -275,9 +275,11 @@ QVariant CommentListModel::data(const QModelIndex &index, int role) const
     switch (role) {
     case RpidRole:     return item.rpid;
     case UserNameRole: return item.userName;
+    case UserMidRole:  return item.mid;
     case AvatarRole:   return item.avatar;
     case LevelRole:    return item.level;
     case ContentRole:  return item.content;
+    case PicturesRole: return item.pictures;
     case LikesRole:    return item.likes;
     case RcountRole:   return item.rcount;
     case CtimeRole:    return item.ctime;
@@ -293,9 +295,11 @@ QHash<int, QByteArray> CommentListModel::roleNames() const
     return {
         {RpidRole, "rpid"},
         {UserNameRole, "userName"},
+        {UserMidRole, "mid"},
         {AvatarRole, "avatar"},
         {LevelRole, "level"},
         {ContentRole, "content"},
+        {PicturesRole, "pictures"},
         {LikesRole, "likes"},
         {RcountRole, "rcount"},
         {CtimeRole, "ctime"},
@@ -364,6 +368,7 @@ CommentItem CommentListModel::parseCommentItem(const QJsonObject &obj)
 
     QJsonObject member = obj.value("member").toObject();
     item.userName = member.value("uname").toString();
+    item.mid = member.value("mid").toVariant().toLongLong();
     item.avatar = member.value("avatar").toString();
 
     QJsonObject levelInfo = member.value("level_info").toObject();
@@ -374,6 +379,17 @@ CommentItem CommentListModel::parseCommentItem(const QJsonObject &obj)
 
     QJsonObject content = obj.value("content").toObject();
     item.content = content.value("message").toString();
+
+    QJsonArray pictures = content.value("pictures").toArray();
+    for (const QJsonValue &pv : pictures) {
+        if (pv.isObject()) {
+            QString img = pv.toObject().value("img_src").toString();
+            if (!img.isEmpty()) item.pictures.append(img);
+        } else if (pv.isString()) {
+            QString img = pv.toString();
+            if (!img.isEmpty()) item.pictures.append(img);
+        }
+    }
 
     item.isTop = obj.value("is_top").toInt(0) == 1 || obj.value("is_top").toBool(false);
 
@@ -417,9 +433,11 @@ QVariant CommentReplyListModel::data(const QModelIndex &index, int role) const
     switch (role) {
     case RpidRole: return item.rpid;
     case UserNameRole: return item.userName;
+    case UserMidRole: return item.mid;
     case AvatarRole: return item.avatar;
     case LevelRole: return item.level;
     case ContentRole: return item.content;
+    case PicturesRole: return item.pictures;
     case LikesRole: return item.likes;
     case CtimeRole: return item.ctime;
     case CtimeTextRole: return CommentListModel::formatTime(item.ctime);
@@ -433,9 +451,11 @@ QHash<int, QByteArray> CommentReplyListModel::roleNames() const
     return {
         {RpidRole, "rpid"},
         {UserNameRole, "userName"},
+        {UserMidRole, "mid"},
         {AvatarRole, "avatar"},
         {LevelRole, "level"},
         {ContentRole, "content"},
+        {PicturesRole, "pictures"},
         {LikesRole, "likes"},
         {CtimeRole, "ctime"},
         {CtimeTextRole, "ctimeText"},
@@ -499,6 +519,7 @@ CommentReplyItem CommentReplyListModel::parseCommentReplyItem(const QJsonObject 
 
     QJsonObject member = obj.value("member").toObject();
     item.userName = member.value("uname").toString();
+    item.mid = member.value("mid").toVariant().toLongLong();
     item.avatar = member.value("avatar").toString();
 
     QJsonObject levelInfo = member.value("level_info").toObject();
@@ -509,6 +530,17 @@ CommentReplyItem CommentReplyListModel::parseCommentReplyItem(const QJsonObject 
 
     QJsonObject content = obj.value("content").toObject();
     item.content = content.value("message").toString();
+
+    QJsonArray pictures = content.value("pictures").toArray();
+    for (const QJsonValue &pv : pictures) {
+        if (pv.isObject()) {
+            QString img = pv.toObject().value("img_src").toString();
+            if (!img.isEmpty()) item.pictures.append(img);
+        } else if (pv.isString()) {
+            QString img = pv.toString();
+            if (!img.isEmpty()) item.pictures.append(img);
+        }
+    }
 
     return item;
 }
