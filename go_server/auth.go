@@ -139,8 +139,9 @@ func buildCorrespondPath(ts int64) (string, error) {
 	return strings.ToLower(hex.EncodeToString(ciphertext)), nil
 }
 
-func getRefreshCSRF(c *BilibiliClient, sessdata, biliJct string, ts int64) string {
-	correspondPath, err := buildCorrespondPath(ts)
+func getRefreshCSRF(c *BilibiliClient, sessdata, biliJct string, tsMilli int64) string {
+	// 文档：使用毫秒时间戳生成 CorrespondPath
+	correspondPath, err := buildCorrespondPath(tsMilli)
 	if err != nil {
 		logWarn("生成 correspondPath 失败: %s", err.Error())
 		return ""
@@ -152,6 +153,7 @@ func getRefreshCSRF(c *BilibiliClient, sessdata, biliJct string, ts int64) strin
 		return ""
 	}
 	c.setHeaders(req)
+	// 对应文档示例：只要求 SESSDATA 也可，但这里带上 bili_jct
 	req.Header.Set("Cookie", "SESSDATA="+sessdata+"; bili_jct="+biliJct)
 
 	resp, err := c.httpClient.Do(req)
@@ -163,6 +165,13 @@ func getRefreshCSRF(c *BilibiliClient, sessdata, biliJct string, ts int64) strin
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 
+	// 文档：refresh_csrf 位于 <div id="1-name">REFRESH_CSRF</div>
+	re := regexp.MustCompile(`<div\s+id="1-name"\s*>([^<]+)</div>`)
+	if m := re.FindStringSubmatch(text); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+
+	// 兼容：若页面结构变化，保留原有两种兜底匹配
 	re1 := regexp.MustCompile(`refresh_csrf"\s*:\s*"([^"]+)"`)
 	re2 := regexp.MustCompile(`name="refresh_csrf"\s+value="([^"]+)"`)
 	if m := re1.FindStringSubmatch(text); len(m) > 1 {
@@ -175,13 +184,14 @@ func getRefreshCSRF(c *BilibiliClient, sessdata, biliJct string, ts int64) strin
 }
 
 func (c *BilibiliClient) refreshCookies() {
-	sessdata, _, biliJct, refreshToken, _, _ := c.getAuth()
+	sessdata, buvid3, biliJct, refreshToken, dedeUserID, dedeCkMd5 := c.getAuth()
 	logInfo("Cookie 刷新检查: sessdata=%t bili_jct=%t refresh_token=%t", sessdata != "", biliJct != "", refreshToken != "")
 	if sessdata == "" || biliJct == "" || refreshToken == "" {
 		logInfo("Cookie 刷新条件不足: sessdata=%t bili_jct=%t refresh_token=%t", sessdata != "", biliJct != "", refreshToken != "")
 		return
 	}
 
+	// 1) 检查是否需要刷新
 	infoURL := "https://passport.bilibili.com/x/passport-login/web/cookie/info?csrf=" + url.QueryEscape(biliJct)
 	req, err := http.NewRequest("GET", infoURL, nil)
 	if err != nil {
@@ -205,37 +215,35 @@ func (c *BilibiliClient) refreshCookies() {
 		return
 	}
 	if code, ok := infoResult["code"].(float64); ok && int(code) != 0 {
-		logWarn("Cookie info 返回异常: code=%d", int(code))
+		logWarn("Cookie info 返回异常: code=%d body=%s", int(code), string(body))
 		return
 	}
 	data, _ := infoResult["data"].(map[string]interface{})
 	refreshNeeded, _ := data["refresh"].(bool)
-	refreshCSRF, _ := data["refresh_csrf"].(string)
-	if rt, ok := data["refresh_token"].(string); ok && rt != "" {
-		refreshToken = rt
-	}
-
-	timestamp := int64(0)
-	if ts, ok := data["timestamp"].(float64); ok {
-		timestamp = int64(ts)
-	}
-
-	logInfo("Cookie 刷新状态: refresh=%t refresh_token=%t", refreshNeeded, refreshToken != "")
 	if !refreshNeeded {
 		logInfo("Cookie 无需刷新")
 		return
 	}
-	if refreshCSRF == "" {
-		if timestamp <= 0 {
-			logInfo("refresh_csrf 缺失且 timestamp 不可用，跳过本次刷新")
-			return
-		}
-		refreshCSRF = getRefreshCSRF(c, sessdata, biliJct, timestamp)
-		if refreshCSRF == "" {
-			logInfo("refresh_csrf 获取失败，跳过本次刷新")
-			return
-		}
+
+	// 文档：timestamp 为毫秒时间戳
+	tsMilli := int64(0)
+	if ts, ok := data["timestamp"].(float64); ok {
+		tsMilli = int64(ts)
 	}
+	if tsMilli <= 0 {
+		logWarn("cookie/info 未返回有效 timestamp(ms)，跳过刷新")
+		return
+	}
+
+	// 2) 获取 refresh_csrf
+	refreshCSRF := getRefreshCSRF(c, sessdata, biliJct, tsMilli)
+	if refreshCSRF == "" {
+		logWarn("refresh_csrf 获取失败，跳过本次刷新")
+		return
+	}
+
+	// 3) 刷新 Cookie（必须保存旧 refresh_token，用于 confirm/refresh）
+	oldRefreshToken := refreshToken
 
 	params := url.Values{}
 	params.Set("csrf", biliJct)
@@ -271,31 +279,80 @@ func (c *BilibiliClient) refreshCookies() {
 			logInfo("Cookie 当前无需刷新或刷新条件不满足: code=%d", codeInt)
 			return
 		}
-		logWarn("Cookie refresh 返回异常: code=%d", codeInt)
+		logWarn("Cookie refresh 返回异常: code=%d body=%s", codeInt, string(refreshBody))
 		return
 	}
 
 	newSessdata := ""
 	newBiliJct := ""
+	newDedeUserID := ""
+	newDedeCkMd5 := ""
 	for _, ck := range refreshResp.Cookies() {
 		switch ck.Name {
 		case "SESSDATA":
 			newSessdata = ck.Value
 		case "bili_jct":
 			newBiliJct = ck.Value
+		case "DedeUserID":
+			newDedeUserID = ck.Value
+		case "DedeUserID__ckMd5":
+			newDedeCkMd5 = ck.Value
 		}
 	}
-
-	if data, ok := refreshResult["data"].(map[string]interface{}); ok {
-		if rt, ok := data["refresh_token"].(string); ok && rt != "" {
+	if d, ok := refreshResult["data"].(map[string]interface{}); ok {
+		if rt, ok := d["refresh_token"].(string); ok && rt != "" {
 			refreshToken = rt
 		}
 	}
 
-	if newSessdata != "" || newBiliJct != "" || refreshToken != "" {
-		c.UpdateAuth(newSessdata, "", newBiliJct, refreshToken, "", "")
-		logInfo("Cookie 刷新成功")
+	if newSessdata != "" {
+		sessdata = newSessdata
 	}
+	if newBiliJct != "" {
+		biliJct = newBiliJct
+	}
+	if newDedeUserID != "" {
+		dedeUserID = newDedeUserID
+	}
+	if newDedeCkMd5 != "" {
+		dedeCkMd5 = newDedeCkMd5
+	}
+	c.UpdateAuth(sessdata, buvid3, biliJct, refreshToken, dedeUserID, dedeCkMd5)
+	logInfo("Cookie refresh 成功，已更新本地 Cookie")
+
+	// 4) confirm/refresh：使旧 refresh_token 失效
+	confirmParams := url.Values{}
+	confirmParams.Set("csrf", biliJct)
+	confirmParams.Set("refresh_token", oldRefreshToken)
+	confirmReq, err := http.NewRequest("POST", "https://passport.bilibili.com/x/passport-login/web/confirm/refresh", strings.NewReader(confirmParams.Encode()))
+	if err != nil {
+		logWarn("confirm/refresh 请求创建失败: %s", err.Error())
+		return
+	}
+	c.setHeaders(confirmReq)
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.Header.Set("Cookie", "SESSDATA="+sessdata+"; bili_jct="+biliJct)
+
+	confirmResp, err := c.httpClient.Do(confirmReq)
+	if err != nil {
+		logWarn("confirm/refresh 请求失败: %s", err.Error())
+		return
+	}
+	defer confirmResp.Body.Close()
+	confirmBody, _ := io.ReadAll(confirmResp.Body)
+	var confirmResult map[string]interface{}
+	if json.Unmarshal(confirmBody, &confirmResult) != nil {
+		logWarn("confirm/refresh 响应非JSON: %s", string(confirmBody))
+		return
+	}
+	if code, ok := confirmResult["code"].(float64); ok && int(code) == 0 {
+		logInfo("confirm/refresh 成功，旧 refresh_token 已失效")
+	} else {
+		logWarn("confirm/refresh 返回异常: %s", string(confirmBody))
+	}
+
+	// 5) SSO 跨域登录：暂不实现，只记录说明
+	// 文档中浏览器会通过 iframe/crossDomain 做站点同步；当前服务端不强制执行。
 }
 
 func handleQrcodeGenerate(w http.ResponseWriter, r *http.Request) {

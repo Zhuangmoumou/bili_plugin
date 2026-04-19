@@ -12,9 +12,14 @@ local o = {
 opts.read_options(o, "bili")
 
 local timer = nil
+-- 记录最后一次有效播放时间，避免 end-file/退出时 time-pos 被重置为 0 仍上报
+local last_time_pos = nil
 
-local function report_heartbeat()
-    local time_pos = mp.get_property_number("time-pos", 0)
+local function report_heartbeat(force_time)
+    local time_pos = force_time
+    if time_pos == nil then
+        time_pos = mp.get_property_number("time-pos", 0)
+    end
     if not time_pos then
         return
     end
@@ -24,6 +29,11 @@ local function report_heartbeat()
     end
 
     local played_time = math.floor(time_pos)
+
+    -- 更新最后一次有效时间（大于0才更新，避免被重置为0覆盖）
+    if played_time > 0 then
+        last_time_pos = played_time
+    end
     local url = string.format(
         "%s?aid=%s&cid=%s&bvid=%s&played_time=%d",
         o.heartbeat_url,
@@ -69,7 +79,10 @@ mp.register_event("file-loaded", function()
 end)
 
 mp.register_event("end-file", function()
-    report_heartbeat()
+    -- end-file 触发时 time-pos 可能已经被 mpv 重置为 0，这里用缓存的 last_time_pos 上报
+    if last_time_pos and last_time_pos > 0 then
+        report_heartbeat(last_time_pos)
+    end
     stop_timer()
 end)
 
