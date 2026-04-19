@@ -1888,7 +1888,7 @@ void BiliController::launchExternalPlayerCurrentSelection() {
 
 void BiliController::generateQrcode() {
   // 用户触发登录时：除了拉取二维码，也在后台启动短信登录服务并开始轮询
-  // 这样用户可以在浏览器完成短信登录（bili-login）后，本插件自动接管 cookies
+  // 这样用户可以在浏览器完成短信登录（bili-sms）后，本插件自动接管 cookies
   startSmsLogin();
 
   setIsLoading(true);
@@ -1981,7 +1981,7 @@ void BiliController::pollQrcode() {
       });
 }
 
-// ====== 短信登录（bili-login + /pull） ======
+// ====== 短信登录（bili-sms + /pull） ======
 
 static const int SMS_LOGIN_PORT = 8666;
 static const char *SMS_PULL_PATH = "/pull";
@@ -1994,11 +1994,11 @@ void BiliController::startSmsLogin() {
     m_smsNam = new QNetworkAccessManager(this);
   }
 
-  // 启动当前目录下的 bili-login（二进制）
+  // 启动当前目录下的 bili-sms（二进制）
   QStringList candidates;
-  candidates << QDir::current().filePath("bili-login");
-  candidates << QCoreApplication::applicationDirPath() + "/bili-login";
-  candidates << QStringLiteral("/userdisk/PenMods/plugins/bili_plugin/bili-login");
+  candidates << QDir::current().filePath("bili-sms");
+  candidates << QCoreApplication::applicationDirPath() + "/bili-sms";
+  candidates << QStringLiteral("/userdisk/PenMods/plugins/bili_plugin/bili-sms");
 
   QString execPath;
   for (const QString &c : candidates) {
@@ -2013,11 +2013,11 @@ void BiliController::startSmsLogin() {
 
     bool ok = QProcess::startDetached(execPath, QStringList(), QFileInfo(execPath).absolutePath());
     if (!ok) {
-      m_smsLastError = QString("启动 bili-login 失败：%1").arg(execPath);
+      m_smsLastError = QString("启动 bili-sms 失败：%1").arg(execPath);
       emit toastMessage(m_smsLastError);
     }
   } else {
-    m_smsLastError = "未找到 bili-login 可执行文件（将继续尝试轮询 8666/pull）";
+    m_smsLastError = "未找到 bili-sms 可执行文件（将继续尝试轮询 8666/pull）";
     qDebug() << "[BiliController]" << m_smsLastError;
   }
 
@@ -2122,10 +2122,10 @@ void BiliController::pollSmsLogin() {
       // 导入成功：停止轮询
       self->stopSmsLogin();
 
-      // 结束 bili-login 进程（按你的要求：pgrep -f ./bili-login 然后 kill）
+      // 结束 bili-sms 进程（按你的要求：pgrep -f bili-sms 然后 kill）
       {
         QProcess pgrep;
-        pgrep.start("pgrep", QStringList() << "-f" << "bili-login");
+        pgrep.start("pgrep", QStringList() << "-f" << "bili-sms");
         if (pgrep.waitForFinished(1500) && pgrep.exitCode() == 0) {
           QString out = QString::fromLocal8Bit(pgrep.readAllStandardOutput()).trimmed();
           QStringList pids = out.split('\n', Qt::SkipEmptyParts);

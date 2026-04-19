@@ -1495,6 +1495,7 @@ func handleAPI(w http.ResponseWriter, action string, call func(*BilibiliClient) 
 
 var globalClient *BilibiliClient
 
+
 // 统一使用服务器端持久化的登录态，不接受客户端传入 Cookie
 func getClient() *BilibiliClient {
 	return globalClient
