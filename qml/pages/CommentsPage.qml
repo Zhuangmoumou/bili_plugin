@@ -41,6 +41,29 @@ Rectangle {
         return pictures[0] || ""
     }
 
+    function openCommentImage(url) {
+        if (!url) return
+        // 系统 FileManagerImageViewer 只能打开本地文件；让 C++ 先下载到 /tmp 后发回本地路径。
+        if (controller && typeof imageViewer !== "undefined" && imageViewer) {
+            controller.prepareImageForViewer(url)
+            return
+        }
+        // 兜底：宿主未注入 imageViewer 时使用旧预览。
+        commentsPage.fullscreenImageUrl = url
+        commentsPage.imageFullscreenVisible = !!commentsPage.fullscreenImageUrl
+    }
+
+    function openSystemImageViewer(localPath) {
+        if (!localPath) return
+        if (typeof imageViewer !== "undefined" && imageViewer) {
+            imageViewer.open(localPath)
+            id_pop_container.show("qrc:/qml/audiopages/FileManagerImageViewer.qml")
+        } else {
+            commentsPage.fullscreenImageUrl = localPath
+            commentsPage.imageFullscreenVisible = true
+        }
+    }
+
     function internalBack() {
         if (imageFullscreenVisible) {
             imageFullscreenVisible = false
@@ -253,10 +276,7 @@ Rectangle {
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: {
-                                commentsPage.fullscreenImageUrl = commentsPage.firstPicture(model.pictures)
-                                commentsPage.imageFullscreenVisible = !!commentsPage.fullscreenImageUrl
-                            }
+                            onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
                         }
                     }
 
@@ -454,10 +474,7 @@ Rectangle {
 
                                 MouseArea {
                                     anchors.fill: parent
-                                    onClicked: {
-                                        commentsPage.fullscreenImageUrl = commentsPage.firstPicture(selectedComment.pictures)
-                                        commentsPage.imageFullscreenVisible = !!commentsPage.fullscreenImageUrl
-                                    }
+                                    onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(selectedComment.pictures))
                                 }
                             }
                         }
@@ -585,10 +602,7 @@ Rectangle {
 
                                     MouseArea {
                                         anchors.fill: parent
-                                        onClicked: {
-                                            commentsPage.fullscreenImageUrl = commentsPage.firstPicture(model.pictures)
-                                            commentsPage.imageFullscreenVisible = !!commentsPage.fullscreenImageUrl
-                                        }
+                                        onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
                                     }
                                 }
                             }
@@ -786,6 +800,71 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // 系统图片查看器弹出容器
+    Item {
+        id: id_pop_container
+        anchors.fill: parent
+        z: 3000
+        visible: popItemObject !== null
+        property var popItemObject: null
+        signal closeSameItem(string popStackId)
+
+        function updateStackInfo() {
+            if (id_pop_container.children.length > 1) {
+                popItemObject = id_pop_container.children[id_pop_container.children.length - 2]
+            } else {
+                popItemObject = null
+            }
+        }
+
+        function show(componentPath) {
+            function initObj(obj) {
+                if (!obj) return
+                Object.defineProperty(obj, 'popStackId', {
+                    enumerable: false,
+                    configurable: false,
+                    writable: false,
+                    value: componentPath
+                })
+                popItemObject = obj
+                if (obj.backButtonClicked) {
+                    obj.backButtonClicked.connect(function() {
+                        closeSameItem(obj.popStackId)
+                        updateStackInfo()
+                        obj.destroy(1)
+                    })
+                }
+                id_pop_container.closeSameItem.connect(function(popStackId) {
+                    if (popStackId === obj.popStackId) obj.destroy(1)
+                })
+                if (obj.show) obj.show()
+            }
+
+            closeSameItem(componentPath)
+            var comp = Qt.createComponent(componentPath)
+            if (comp.status === Component.Ready) {
+                var incubator = comp.incubateObject(id_pop_container)
+                if (incubator.status !== Component.Ready) {
+                    incubator.onStatusChanged = function(s) {
+                        if (s === Component.Ready) initObj(incubator.object)
+                    }
+                } else {
+                    initObj(incubator.object)
+                }
+            } else {
+                console.error("Image viewer component error: " + comp.errorString())
+            }
+        }
+    }
+
+    Connections {
+        target: controller
+        ignoreUnknownSignals: true
+        function onCommentImageReadyForViewer(localPath) {
+            commentsPage.openSystemImageViewer(localPath)
         }
     }
 

@@ -250,6 +250,8 @@ public:
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void clearError();
   Q_INVOKABLE void clearSearchHistory();
+  // 评论/动态远程图片转本地临时文件，供系统 FileManagerImageViewer 打开
+  Q_INVOKABLE void prepareImageForViewer(const QString &url);
 
   // 取消所有网络请求
   Q_INVOKABLE void cancelAll();
@@ -314,6 +316,7 @@ signals:
   void coinStatusChanged();
   void likeStatusChanged();
   void watchLaterStatusChanged();
+  void commentImageReadyForViewer(const QString &localPath);
 
 private:
   void fetchUserInfo(qint64 mid);
