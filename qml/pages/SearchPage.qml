@@ -383,26 +383,66 @@ Rectangle {
 
                         Rectangle {
                             height: 24
-                            width: childrenRect.width + 16
+                            width: historyText.implicitWidth + 22 + (historyItemArea.pressed ? 12 : 0)
                             radius: 12
-                            color: historyItemArea.pressed ? Qt.rgba(0,0,0,0.1) : Qt.rgba(0,0,0,0.05)
+                            color: historyItemArea.deleteArmed
+                                   ? Qt.rgba(1.0, 0.25, 0.25, 0.13)
+                                   : (historyItemArea.pressed ? Qt.rgba(0,0,0,0.10) : Qt.rgba(0,0,0,0.05))
                             border.width: 1
-                            border.color: Qt.rgba(0,0,0,0.08)
+                            border.color: historyItemArea.deleteArmed ? Qt.rgba(1.0, 0.25, 0.25, 0.35) : Qt.rgba(0,0,0,0.08)
+                            scale: historyItemArea.pressed ? 0.96 : 1.0
 
-                            Text {
+                            Behavior on width { NumberAnimation { duration: 100 } }
+                            Behavior on scale { NumberAnimation { duration: 80 } }
+                            Behavior on color { ColorAnimation { duration: 80 } }
+                            Behavior on border.color { ColorAnimation { duration: 80 } }
+
+                            Row {
                                 anchors.centerIn: parent
-                                text: model.display
-                                color: Theme.textSecondary
-                                font.family: searchPage.fontFamily
-                                font.pixelSize: 12
+                                spacing: 4
+
+                                Text {
+                                    id: historyText
+                                    text: model.display
+                                    color: Theme.textSecondary
+                                    font.family: searchPage.fontFamily
+                                    font.pixelSize: 12
+                                }
+
+                                Text {
+                                    visible: historyItemArea.deleteArmed
+                                    text: "🗑"
+                                    font.pixelSize: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
                             MouseArea {
                                 id: historyItemArea
                                 anchors.fill: parent
+                                pressAndHoldInterval: 550
+                                property bool longPressed: false
+                                property bool deleteArmed: false
+                                onPressed: {
+                                    longPressed = false;
+                                    deleteArmed = false;
+                                }
+                                onReleased: {
+                                    var inside = mouse.x >= 0 && mouse.x <= width && mouse.y >= 0 && mouse.y <= height;
+                                    if (deleteArmed && inside && controller) {
+                                        controller.removeSearchHistory(model.display);
+                                    }
+                                    deleteArmed = false;
+                                }
+                                onCanceled: deleteArmed = false
                                 onClicked: {
+                                    if (longPressed) return;
                                     searchInput.text = model.display;
                                     doSearch();
+                                }
+                                onPressAndHold: {
+                                    longPressed = true;
+                                    deleteArmed = true;
                                 }
                             }
                         }

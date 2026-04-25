@@ -271,6 +271,16 @@ void BiliController::clearSearchHistory() {
     saveSearchHistory();
 }
 
+void BiliController::removeSearchHistory(const QString &keyword) {
+    QString kw = keyword.trimmed();
+    if (kw.isEmpty()) return;
+    int removed = m_searchHistory.removeAll(kw);
+    if (removed <= 0) return;
+    m_searchHistoryModel->setStringList(m_searchHistory);
+    saveSearchHistory();
+    emit toastMessage(QString("已删除搜索历史：%1").arg(kw));
+}
+
 void BiliController::refreshUserInfo() {
   if (!m_loggedIn || m_userId <= 0) {
     return;

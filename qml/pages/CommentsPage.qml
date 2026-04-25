@@ -14,6 +14,7 @@ Rectangle {
     readonly property int _textRenderType: Text.QtRendering
     readonly property int _hinting: Font.PreferNoHinting
     readonly property bool _textAA: true
+    readonly property int _commentBodyFontSize: Theme.fontBody + 1
 
     property var controller: null
     property int viewMode: 0 // 0=主评论列表,1=子评论详情
@@ -246,7 +247,7 @@ Rectangle {
                         text: model.content || ""
                         color: Theme.textPrimary
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: commentsPage._commentBodyFontSize
                         wrapMode: Text.Wrap
                         maximumLineCount: 4
                         elide: Text.ElideRight
@@ -446,7 +447,7 @@ Rectangle {
                                 text: selectedComment ? selectedComment.content : ""
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontBody
+                                font.pixelSize: commentsPage._commentBodyFontSize
                                 wrapMode: Text.Wrap
                                 lineHeight: 1.3
                                 renderType: commentsPage._textRenderType
@@ -574,7 +575,7 @@ Rectangle {
                                     text: model.content || ""
                                     color: Theme.textPrimary
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontBody
+                                    font.pixelSize: commentsPage._commentBodyFontSize
                                     wrapMode: Text.Wrap
                                     lineHeight: 1.3
                                     renderType: commentsPage._textRenderType

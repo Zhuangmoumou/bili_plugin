@@ -250,6 +250,7 @@ public:
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void clearError();
   Q_INVOKABLE void clearSearchHistory();
+  Q_INVOKABLE void removeSearchHistory(const QString &keyword);
   // 评论/动态远程图片转本地临时文件，供系统 FileManagerImageViewer 打开
   Q_INVOKABLE void prepareImageForViewer(const QString &url);
 
