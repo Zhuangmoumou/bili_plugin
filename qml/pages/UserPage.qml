@@ -20,6 +20,29 @@ Rectangle {
     property int currentFavId: 0
     property real recentHistoryContentX: 0
     property real watchLaterContentX: 0
+    property int previousFavView: 0
+    property int lastAnimatedFavView: 0
+    property int favViewDirection: 1
+
+    function normalizedFavView(view) {
+        return view === 5 ? 4 : view
+    }
+
+    function isManagedViewCurrent(viewId) {
+        return normalizedFavView(favView) === viewId
+    }
+
+    function shouldShowManagedView(viewId) {
+        return normalizedFavView(favView) === viewId || previousFavView === viewId
+    }
+
+    function managedViewOffset(viewId) {
+        if (normalizedFavView(favView) === viewId)
+            return 0
+        if (previousFavView === viewId)
+            return favViewDirection > 0 ? -10 : 10
+        return favViewDirection > 0 ? 10 : -10
+    }
 
     function openFavorites() {
         favView = 1
@@ -81,6 +104,16 @@ Rectangle {
         }
     }
 
+    onFavViewChanged: {
+        var nextView = normalizedFavView(favView)
+        if (nextView === lastAnimatedFavView)
+            return
+        previousFavView = lastAnimatedFavView
+        favViewDirection = nextView > lastAnimatedFavView ? 1 : -1
+        lastAnimatedFavView = nextView
+        favViewTransitionCleanup.restart()
+    }
+
     Component.onDestruction: {
         console.log("[UserPage] Destroyed, cleaning up");
         // 页面销毁时清空图片源，防止后台线程继续访问
@@ -89,6 +122,13 @@ Rectangle {
         if (qrcodePollTimer) qrcodePollTimer.running = false;
         // 注意：如果已登录成功，不要取消 checkLoginStatus() 请求
         // 让用户信息能够正常加载并保存
+    }
+
+    Timer {
+        id: favViewTransitionCleanup
+        interval: Theme.animNormal
+        repeat: false
+        onTriggered: previousFavView = lastAnimatedFavView
     }
 
     Components.TitleBar {
@@ -409,7 +449,15 @@ Rectangle {
         Item {
             id: profileView
             anchors.fill: parent
-            visible: favView === 0
+            visible: userPage.shouldShowManagedView(0)
+            enabled: userPage.isManagedViewCurrent(0)
+            opacity: userPage.isManagedViewCurrent(0) ? 1 : 0
+            z: userPage.isManagedViewCurrent(0) ? 1 : 0
+            transform: Translate {
+                x: userPage.managedViewOffset(0)
+                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+            }
+            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
 
             Flickable {
                 anchors.fill: parent
@@ -921,7 +969,15 @@ Rectangle {
         Item {
             id: favListView
             anchors.fill: parent
-            visible: favView === 1
+            visible: userPage.shouldShowManagedView(1)
+            enabled: userPage.isManagedViewCurrent(1)
+            opacity: userPage.isManagedViewCurrent(1) ? 1 : 0
+            z: userPage.isManagedViewCurrent(1) ? 1 : 0
+            transform: Translate {
+                x: userPage.managedViewOffset(1)
+                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+            }
+            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
 
             ListView {
                 id: favList
@@ -1009,7 +1065,15 @@ Rectangle {
         Item {
             id: recentHistoryView
             anchors.fill: parent
-            visible: favView === 3
+            visible: userPage.shouldShowManagedView(3)
+            enabled: userPage.isManagedViewCurrent(3)
+            opacity: userPage.isManagedViewCurrent(3) ? 1 : 0
+            z: userPage.isManagedViewCurrent(3) ? 1 : 0
+            transform: Translate {
+                x: userPage.managedViewOffset(3)
+                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+            }
+            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
 
             // 用 Loader 延迟创建 ListView，避免 UserPage 被加载时就构建大量 delegate 导致卡顿
             Loader {
@@ -1086,7 +1150,15 @@ Rectangle {
         Item {
             id: watchLaterView
             anchors.fill: parent
-            visible: favView === 6
+            visible: userPage.shouldShowManagedView(6)
+            enabled: userPage.isManagedViewCurrent(6)
+            opacity: userPage.isManagedViewCurrent(6) ? 1 : 0
+            z: userPage.isManagedViewCurrent(6) ? 1 : 0
+            transform: Translate {
+                x: userPage.managedViewOffset(6)
+                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+            }
+            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
 
             Loader {
                 id: watchLaterLoader
@@ -1168,7 +1240,15 @@ Rectangle {
         SettingsPage {
             id: settingsPage
             anchors.fill: parent
-            visible: favView === 4 || favView === 5
+            visible: userPage.shouldShowManagedView(4)
+            enabled: userPage.isManagedViewCurrent(4)
+            opacity: userPage.isManagedViewCurrent(4) ? 1 : 0
+            z: userPage.isManagedViewCurrent(4) ? 1 : 0
+            transform: Translate {
+                x: userPage.managedViewOffset(4)
+                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+            }
+            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
             controller: userPage.controller
             viewMode: favView
             onRequestSubtitleSettings: userPage.favView = 5
@@ -1178,7 +1258,15 @@ Rectangle {
         Item {
             id: favDetailView
             anchors.fill: parent
-            visible: favView === 2
+            visible: userPage.shouldShowManagedView(2)
+            enabled: userPage.isManagedViewCurrent(2)
+            opacity: userPage.isManagedViewCurrent(2) ? 1 : 0
+            z: userPage.isManagedViewCurrent(2) ? 1 : 0
+            transform: Translate {
+                x: userPage.managedViewOffset(2)
+                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+            }
+            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
 
             Loader {
                 id: favDetailLoader

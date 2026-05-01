@@ -611,6 +611,9 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
     emit toastMessage("视频 ID 为空");
     return;
   }
+  if (m_videoDetailLoadingBvid == bvid) {
+    return;
+  }
 
   bool sameVideoRefresh = (m_currentVideo.bvid == bvid && !bvid.isEmpty());
   // 同视频刷新时保存当前选中的 cid，避免 refreshDetail 解析后被重置到第一页
@@ -654,6 +657,7 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
   }
 
   setIsLoading(true);
+  m_videoDetailLoadingBvid = bvid;
 
   QMap<QString, QString> params;
   params["bvid"] = bvid;
@@ -666,6 +670,7 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         if (!self)
           return;
 
+        self->m_videoDetailLoadingBvid.clear();
         self->m_currentVideo = VideoListModel::parseVideoItem(data);
         self->m_currentVideo.aid = data.value("aid").toVariant().toLongLong();
 
@@ -719,6 +724,7 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         if (!self)
           return;
 
+        self->m_videoDetailLoadingBvid.clear();
         self->setIsLoading(false);
         self->m_videoPartModel->clear();
         emit self->toastMessage(QString("获取视频信息失败：%1").arg(msg));
@@ -734,7 +740,16 @@ void BiliController::fetchPlayUrl(int quality) {
   }
 
   quality = qBound(16, quality, 127);
+  const QString requestKey = QString("%1:%2:%3:%4")
+                                 .arg(m_currentVideo.bvid)
+                                 .arg(m_currentVideo.cid)
+                                 .arg(quality)
+                                 .arg(4048);
+  if (m_playUrlLoadingKey == requestKey) {
+    return;
+  }
   setIsLoading(true);
+  m_playUrlLoadingKey = requestKey;
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(videoAid());
@@ -753,6 +768,7 @@ void BiliController::fetchPlayUrl(int quality) {
         if (!self)
           return;
 
+        self->m_playUrlLoadingKey.clear();
         QString videoUrl;
         QString audioUrl;
         int requestedQuality = quality;
@@ -813,6 +829,7 @@ void BiliController::fetchPlayUrl(int quality) {
         if (!self)
           return;
 
+        self->m_playUrlLoadingKey.clear();
         self->setIsLoading(false);
         emit self->toastMessage(QString("获取播放地址失败：%1").arg(msg));
       });
@@ -827,7 +844,16 @@ void BiliController::fetchAcceptQualities(int quality) {
   }
 
   quality = qBound(16, quality, 127);
+  const QString requestKey = QString("%1:%2:%3:%4")
+                                 .arg(m_currentVideo.bvid)
+                                 .arg(m_currentVideo.cid)
+                                 .arg(quality)
+                                 .arg(4048);
+  if (m_acceptQualitiesLoadingKey == requestKey) {
+    return;
+  }
   setIsLoading(true);
+  m_acceptQualitiesLoadingKey = requestKey;
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(videoAid());
@@ -844,12 +870,14 @@ void BiliController::fetchAcceptQualities(int quality) {
         if (!self)
           return;
 
+        self->m_acceptQualitiesLoadingKey.clear();
         self->updateAcceptQualities(data);
         self->setIsLoading(false);
       },
       [self](int, const QString &msg) {
         if (!self)
           return;
+        self->m_acceptQualitiesLoadingKey.clear();
         self->setIsLoading(false);
         emit self->toastMessage(QString("获取清晰度失败：%1").arg(msg));
       });
@@ -1334,13 +1362,19 @@ void BiliController::fetchFavoriteStatus() {
   if (m_currentVideo.aid <= 0) {
     return;
   }
+  const qint64 aid = m_currentVideo.aid;
+  if (m_favoriteStatusLoadingAid == aid) {
+    return;
+  }
+  m_favoriteStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
-  params["aid"] = QString::number(m_currentVideo.aid);
+  params["aid"] = QString::number(aid);
 
   apiGet(
       "/fav/status", params,
       [this](const QJsonObject &data) {
+        m_favoriteStatusLoadingAid = 0;
 
         bool fav = false;
         if (data.value("favoured").isBool()) {
@@ -1354,6 +1388,7 @@ void BiliController::fetchFavoriteStatus() {
         }
       },
       [this](int, const QString &msg) {
+        m_favoriteStatusLoadingAid = 0;
         emit toastMessage(QString("获取收藏状态失败：%1").arg(msg));
       });
 }
@@ -1365,13 +1400,19 @@ void BiliController::fetchCoinStatus() {
   if (m_currentVideo.aid <= 0) {
     return;
   }
+  const qint64 aid = m_currentVideo.aid;
+  if (m_coinStatusLoadingAid == aid) {
+    return;
+  }
+  m_coinStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
-  params["aid"] = QString::number(m_currentVideo.aid);
+  params["aid"] = QString::number(aid);
 
   apiGet(
       "/coin/status", params,
       [this](const QJsonObject &data) {
+        m_coinStatusLoadingAid = 0;
 
         bool coined = false;
         int multiply = data.value("multiply").toInt(0);
@@ -1386,6 +1427,7 @@ void BiliController::fetchCoinStatus() {
         }
       },
       [this](int, const QString &msg) {
+        m_coinStatusLoadingAid = 0;
         emit toastMessage(QString("获取投币状态失败：%1").arg(msg));
       });
 }
@@ -1443,13 +1485,19 @@ void BiliController::fetchLikeStatus() {
   if (m_currentVideo.aid <= 0) {
     return;
   }
+  const qint64 aid = m_currentVideo.aid;
+  if (m_likeStatusLoadingAid == aid) {
+    return;
+  }
+  m_likeStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
-  params["aid"] = QString::number(m_currentVideo.aid);
+  params["aid"] = QString::number(aid);
 
   apiGet(
       "/like/status", params,
       [this](const QJsonObject &data) {
+        m_likeStatusLoadingAid = 0;
 
         int liked = 0;
         if (data.value("liked").isBool()) {
@@ -1466,6 +1514,7 @@ void BiliController::fetchLikeStatus() {
         }
       },
       [this](int, const QString &msg) {
+        m_likeStatusLoadingAid = 0;
         emit toastMessage(QString("获取点赞状态失败：%1").arg(msg));
       });
 }
@@ -1477,6 +1526,11 @@ void BiliController::fetchWatchLaterStatus() {
   if (m_currentVideo.aid <= 0) {
     return;
   }
+  const qint64 aid = m_currentVideo.aid;
+  if (m_watchLaterStatusLoadingAid == aid) {
+    return;
+  }
+  m_watchLaterStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
   params["pn"] = "1";
@@ -1485,6 +1539,7 @@ void BiliController::fetchWatchLaterStatus() {
   apiGet(
       "/toview/list", params,
       [this](const QJsonObject &data) {
+        m_watchLaterStatusLoadingAid = 0;
         QJsonArray list = data.value("list").toArray();
         if (list.isEmpty()) {
           list = data.value("data").toArray();
@@ -1509,6 +1564,7 @@ void BiliController::fetchWatchLaterStatus() {
         }
       },
       [this](int, const QString &msg) {
+        m_watchLaterStatusLoadingAid = 0;
         emit toastMessage(QString("获取稍后再看状态失败：%1").arg(msg));
       });
 }
@@ -1769,6 +1825,10 @@ void BiliController::launchExternalPlayerWithAudioUrlAndSubtitle(const QString &
            + ",bili-cid=" + QString::number(m_currentVideo.cid)
            + ",bili-bvid=" + m_currentVideo.bvid);
 
+  qDebug() << "[BiliController] launchExternalPlayerWithAudioUrlAndSubtitle"
+           << "player=" << player
+           << "sub=" << sub;
+
   bool ok = QProcess::startDetached(player, args);
   if (!ok) {
     emit toastMessage("启动外部播放器失败");
@@ -1874,37 +1934,20 @@ void BiliController::launchExternalPlayerCurrentSelection() {
     return;
   }
 
-  QMap<QString, QString> params;
-  params["aid"] = QString::number(m_currentVideo.aid);
-  params["cid"] = QString::number(m_currentVideo.cid);
-  params["bvid"] = m_currentVideo.bvid;
-  params["sid"] = QString::number(m_selectedSubtitleId);
-  params["font_size"] = QString::number(m_subtitleFontSize);
-  params["margin_v"] = QString::number(m_subtitleMarginV);
-  params["spacing"] = QString::number(m_subtitleSpacing, 'f', 2);
-  params["weight"] = QString::number(m_subtitleWeight);
+  QUrl subtitleUrl(m_network->apiBase() + "/video/subtitle/ass/file");
+  QUrlQuery subtitleQuery;
+  subtitleQuery.addQueryItem("aid", QString::number(m_currentVideo.aid));
+  subtitleQuery.addQueryItem("cid", QString::number(m_currentVideo.cid));
+  subtitleQuery.addQueryItem("bvid", m_currentVideo.bvid);
+  subtitleQuery.addQueryItem("sid", QString::number(m_selectedSubtitleId));
+  subtitleQuery.addQueryItem("font_size", QString::number(m_subtitleFontSize));
+  subtitleQuery.addQueryItem("margin_v", QString::number(m_subtitleMarginV));
+  subtitleQuery.addQueryItem("spacing", QString::number(m_subtitleSpacing, 'f', 2));
+  subtitleQuery.addQueryItem("weight", QString::number(m_subtitleWeight));
+  subtitleUrl.setQuery(subtitleQuery);
 
-  QPointer<BiliController> self(this);
-  setIsLoading(true);
-  m_network->get(
-      "/video/subtitle/ass", params,
-      [self](const QJsonObject &data) {
-        if (!self)
-          return;
-        self->setIsLoading(false);
-        QString path = data.value("path").toString();
-        if (path.isEmpty()) {
-          emit self->toastMessage("字幕文件生成失败");
-          return;
-        }
-        self->launchExternalPlayerWithAudioUrlAndSubtitle(self->m_dashVideoUrl, self->m_dashAudioUrl, path);
-      },
-      [self](int, const QString &msg) {
-        if (!self)
-          return;
-        self->setIsLoading(false);
-        emit self->toastMessage(QString("获取字幕失败：%1").arg(msg));
-      });
+  launchExternalPlayerWithAudioUrlAndSubtitle(
+      m_dashVideoUrl, m_dashAudioUrl, subtitleUrl.toString());
 }
 
 // ====== API: 登录 ======
@@ -2614,10 +2657,7 @@ void BiliController::fetchUpInfo(qint64 mid) {
         if (m_upUserMid != mid)
           return;
 
-        QJsonObject obj = data;
-        if (data.value("data").isObject()) {
-          obj = data.value("data").toObject();
-        }
+        const QJsonObject obj = data;
 
         m_upUserName = obj.value("name").toString();
         if (m_upUserName.isEmpty()) {
@@ -2643,7 +2683,8 @@ void BiliController::fetchUpInfo(qint64 mid) {
         m_upUserFans = toIntSafe(obj.value("follower"));
         m_upUserFollowing = toIntSafe(obj.value("following"));
 
-        bool newFollowState = obj.value("is_following").toBool(false);
+        bool newFollowState = obj.value("is_following").toBool(false)
+                              || obj.value("is_followed").toBool(false);
         bool followStateChanged = (m_upIsFollowing != newFollowState);
         m_upIsFollowing = newFollowState;
 

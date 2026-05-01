@@ -273,6 +273,78 @@ func maskSensitive(value string) string {
 	return value[:4] + "..." + value[len(value)-4:]
 }
 
+func extractResponseCodeFromHead(head []byte) int {
+	if len(head) == 0 {
+		return -1
+	}
+
+	pattern := []byte(`"code"`)
+	idx := bytes.Index(head, pattern)
+	if idx < 0 {
+		return -1
+	}
+
+	rest := head[idx+len(pattern):]
+	colon := bytes.IndexByte(rest, ':')
+	if colon < 0 {
+		return -1
+	}
+	rest = bytes.TrimSpace(rest[colon+1:])
+	if len(rest) == 0 {
+		return -1
+	}
+
+	end := 0
+	if rest[0] == '-' {
+		end = 1
+	}
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 || (end == 1 && rest[0] == '-') {
+		return -1
+	}
+
+	code, err := strconv.Atoi(string(rest[:end]))
+	if err != nil {
+		return -1
+	}
+	return code
+}
+
+func isJSONContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType == "" {
+		return false
+	}
+	return strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json")
+}
+
+func limitLogBody(body []byte) string {
+	const maxLen = 300
+	s := string(body)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func logUpstreamBusinessError(apiURL string, body []byte) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return
+	}
+	code, ok := resp["code"].(float64)
+	if !ok || int(code) == 0 {
+		return
+	}
+	msg, _ := resp["message"].(string)
+	if msg == "" {
+		msg, _ = resp["msg"].(string)
+	}
+	logWarn("上游业务错误 url=%s code=%d message=%s body=%s", apiURL, int(code), msg, limitLogBody(body))
+}
+
 func extractKeyFromURL(rawURL string) string {
 	if rawURL == "" {
 		return ""
@@ -383,6 +455,8 @@ func (c *BilibiliClient) ClearAuth() {
 
 type BilibiliClient struct {
 	mu              sync.RWMutex
+	upstreamMu      sync.Mutex
+	lastUpstreamAt  time.Time
 	sessdata        string
 	buvid3          string
 	biliJct         string
@@ -393,6 +467,21 @@ type BilibiliClient struct {
 	imgKey          string
 	subKey          string
 	httpClient      *http.Client
+}
+
+func (c *BilibiliClient) waitBeforeUpstream() {
+	const minInterval = 350 * time.Millisecond
+
+	c.upstreamMu.Lock()
+	defer c.upstreamMu.Unlock()
+
+	if !c.lastUpstreamAt.IsZero() {
+		wait := minInterval - time.Since(c.lastUpstreamAt)
+		if wait > 0 {
+			time.Sleep(wait)
+		}
+	}
+	c.lastUpstreamAt = time.Now()
 }
 
 func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
@@ -603,6 +692,7 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
+	c.waitBeforeUpstream()
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(startTime)
 	if err != nil {
@@ -617,6 +707,7 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 	}
 
 	logDebug("API 响应 %s %s (%dms)", method, apiURL, duration.Milliseconds())
+	logUpstreamBusinessError(apiURL, body)
 	return json.RawMessage(body), nil
 }
 
@@ -690,6 +781,7 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 		req.Header.Set("Cookie", cookie)
 
+		c.waitBeforeUpstream()
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
@@ -871,20 +963,24 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 		}
 	}
 
-	// 补充当前登录用户与该 UP 的关注关系
-	relationRaw, err := c.GetUserRelation(mid)
-	if err == nil {
-		var relationResp map[string]interface{}
-		if json.Unmarshal(relationRaw, &relationResp) == nil {
-			if relationCode, ok := relationResp["code"].(float64); ok && int(relationCode) == 0 {
-				if relationData, ok := relationResp["data"].(map[string]interface{}); ok {
-					attribute := 0
-					if v, ok := relationData["attribute"].(float64); ok {
-						attribute = int(v)
+	// 补充当前登录用户与该 UP 的关注关系。查询自己的信息时不需要打该接口，
+	// 否则登录后初始化会额外增加一次上游请求，更容易触发风控。
+	sessdata, _, _, _, dedeUserID, _ := c.getAuth()
+	if sessdata != "" && dedeUserID != strconv.Itoa(mid) {
+		relationRaw, err := c.GetUserRelation(mid)
+		if err == nil {
+			var relationResp map[string]interface{}
+			if json.Unmarshal(relationRaw, &relationResp) == nil {
+				if relationCode, ok := relationResp["code"].(float64); ok && int(relationCode) == 0 {
+					if relationData, ok := relationResp["data"].(map[string]interface{}); ok {
+						attribute := 0
+						if v, ok := relationData["attribute"].(float64); ok {
+							attribute = int(v)
+						}
+						isFollowing := attribute == 2 || attribute == 6 || attribute == 128 || attribute == 129 || attribute == 130
+						dataObj["relation_attribute"] = attribute
+						dataObj["is_following"] = isFollowing
 					}
-					isFollowing := attribute == 2 || attribute == 6 || attribute == 128 || attribute == 129 || attribute == 130
-					dataObj["relation_attribute"] = attribute
-					dataObj["is_following"] = isFollowing
 				}
 			}
 		}
@@ -1640,20 +1736,10 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 		duration := time.Since(startTime)
 
-		code := -1
-		if len(lrw.bodyHead) > 0 {
-			head := lrw.bodyHead
-			if start := bytes.IndexByte(head, '{'); start >= 0 {
-				end := bytes.LastIndexByte(head, '}')
-				if end > start {
-					var resp map[string]interface{}
-					if json.Unmarshal(head[start:end+1], &resp) == nil {
-						if c, ok := resp["code"].(float64); ok {
-							code = int(c)
-						}
-					}
-				}
-			}
+		code := extractResponseCodeFromHead(lrw.bodyHead)
+		if code == -1 && lrw.statusCode >= 200 && lrw.statusCode < 300 &&
+			!isJSONContentType(lrw.Header().Get("Content-Type")) {
+			code = 0
 		}
 
 		logResponse(r.URL.Path, code, duration)
@@ -1976,6 +2062,16 @@ func fetchSubtitleBody(client *BilibiliClient, subtitleURL string) ([]interface{
 	return body, nil
 }
 
+func sanitizeASSText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\\N")
+	text = strings.ReplaceAll(text, "\n", "\\N")
+	text = strings.ReplaceAll(text, "\r", "\\N")
+	// 避免 ASS override block 被字幕正文意外触发。
+	text = strings.ReplaceAll(text, "{", "（")
+	text = strings.ReplaceAll(text, "}", "）")
+	return text
+}
+
 func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spacing float64, weight int) string {
 	var sb strings.Builder
 	sb.WriteString("[Script Info]\n")
@@ -2003,10 +2099,7 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spa
 		if to <= from {
 			to = from + 2
 		}
-		text := html.EscapeString(content)
-		text = strings.ReplaceAll(text, "\r\n", "\\N")
-		text = strings.ReplaceAll(text, "\n", "\\N")
-		text = strings.ReplaceAll(text, "\r", "\\N")
+		text := sanitizeASSText(html.UnescapeString(content))
 		sb.WriteString(fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,{\\bord0\\shad0\\b%d}%s\n", formatAssTime(from), formatAssTime(to), weight, text))
 	}
 
@@ -2685,6 +2778,57 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleVideoSubtitleASSFile(w http.ResponseWriter, r *http.Request) {
+	aid, ok := requireIntQuery(w, r, "aid")
+	if !ok {
+		return
+	}
+	cid, ok := requireIntQuery(w, r, "cid")
+	if !ok {
+		return
+	}
+	sid, ok := requireIntQuery(w, r, "sid")
+	if !ok {
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+
+	fontSize, marginV, spacing, weight, ok := subtitleStyleParamsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	client := getClient()
+	subs, err := fetchPlayerSubtitleList(client, aid, cid, bvid)
+	if err != nil {
+		logError("处理 /video/subtitle/ass/file 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	subtitleURL := getSubtitleURL(subs, sid)
+	if subtitleURL == "" {
+		writeError(w, 404, "未找到指定字幕")
+		return
+	}
+
+	body, err := fetchSubtitleBody(client, subtitleURL)
+	if err != nil {
+		status := 500
+		if err.Error() == "该字幕内容为空" {
+			status = 404
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	assContent := buildASSFromSubtitleBody(body, fontSize, marginV, spacing, weight)
+	w.Header().Set("Content-Type", "application/x-ass; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"bili_cc_%d_%d_%d.ass\"", aid, cid, sid))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, assContent)
+}
+
 // ==================== 路由注册 ====================
 
 func setupRoutes(mux *http.ServeMux) {
@@ -2700,6 +2844,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/comments/replies", handleVideoCommentsReplies)
 	mux.HandleFunc("/video/subtitle/list", handleVideoSubtitleList)
 	mux.HandleFunc("/video/subtitle/ass", handleVideoSubtitleASS)
+	mux.HandleFunc("/video/subtitle/ass/file", handleVideoSubtitleASSFile)
 	mux.HandleFunc("/user/info", handleUserInfo)
 	mux.HandleFunc("/user/follow/toggle", handleUserFollowToggle)
 	mux.HandleFunc("/user/videos", handleUserVideos)

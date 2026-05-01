@@ -104,12 +104,14 @@ Rectangle {
             var prev = (prevEntry && prevEntry.page) ? prevEntry.page : prevEntry;
             var fromPage = currentPage;
             console.log("[goBack] pop prev=", prev, "newStack=", JSON.stringify(newStack));
-            pageStack = newStack; // Assign the new array
-            _animating = true;
             if (prevEntry && prevEntry.props) {
                 applyPageProps(prev, prevEntry.props)
             }
+            _animating = true;
+            // 先切回目标页，再更新栈，避免依赖 stackContains(prev) 的 Loader
+            // 在 currentPage 仍是旧页时被短暂销毁，导致子页面状态丢失。
             currentPage = prev;
+            pageStack = newStack; // Assign the new array
 
             // 从详情页返回时恢复对应页面滚动位置
             if (fromPage === "detail") {

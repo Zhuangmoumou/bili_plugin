@@ -98,6 +98,7 @@ Rectangle {
     property int savedPartCid: 0
     property bool _needRestorePartAfterRefresh: false
     property bool _restoringPartNow: false
+    property bool _completed: false
 
     onBvidChanged: {
         savedPartListX = (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
@@ -625,7 +626,7 @@ Rectangle {
             Item {
                 width: parent.width - 16
                 anchors.horizontalCenter: parent.horizontalCenter
-                height: 22
+                height: 24
 
                 Row {
                     id: toolRow
@@ -1108,8 +1109,8 @@ Rectangle {
         property string label: ""
         signal triggered()
 
-        height: 22
-        radius: 11
+        height: 24
+        radius: 12
         color: toolArea.pressed ? primaryDark : primaryColor
         scale: toolArea.pressed ? 0.92 : 1.0
         Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
@@ -1117,12 +1118,11 @@ Rectangle {
 
         Row {
             anchors.centerIn: parent
-            anchors.horizontalCenterOffset: -3
-            spacing: 3
+            spacing: 4
 
             Canvas {
-                width: 10
-                height: 10
+                width: 11
+                height: 11
                 anchors.verticalCenter: parent.verticalCenter
                 property string _type: toolBtn.iconType
 
@@ -1182,7 +1182,7 @@ Rectangle {
                 font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
                 elide: Text.ElideRight
-                width: Math.min(implicitWidth, toolBtn.width - 20)
+                width: Math.min(implicitWidth, toolBtn.width - 24)
             }
         }
 
@@ -1806,17 +1806,15 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        refreshDetail(true)
+        _completed = true
 
         if (rootRef && rootRef.playQualitySelected > 0) {
             selectedQuality = rootRef.playQualitySelected
         }
         updateQualities()
 
-        if (controller && controller.videoCid > 0) {
-            controller.fetchAcceptQualities(selectedQuality)
-            controller.fetchFavoriteStatus()
-            controller.fetchWatchLaterStatus()
+        if (controller && bvid.length > 0 && controller.videoBvid !== bvid) {
+            refreshDetail(true)
         }
 
         enterAnimation.start()
@@ -1829,8 +1827,10 @@ Rectangle {
             if (controller) {
                 savedPartCid = controller.videoCid || 0
             }
-            _needRestorePartAfterRefresh = true
-            refreshDetail(false)
+            if (_completed) {
+                _needRestorePartAfterRefresh = true
+                refreshDetail(false)
+            }
         } else {
             if (videoPartList) savedPartListX = videoPartList.contentX
             if (controller) savedPartCid = controller.videoCid || 0
@@ -1847,7 +1847,6 @@ Rectangle {
                 controller.fetchCoinStatus()
                 controller.fetchLikeStatus()
                 controller.fetchWatchLaterStatus()
-                controller.fetchSubtitleList()
             }
 
             if (detailPage._needRestorePartAfterRefresh && !detailPage._restoringPartNow) {

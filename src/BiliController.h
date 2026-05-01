@@ -440,6 +440,13 @@ private:
   // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。
   qint64 m_upVideoCursorNext = 0;
   QString m_lastRecentViewReportKey;
+  QString m_videoDetailLoadingBvid;
+  QString m_playUrlLoadingKey;
+  QString m_acceptQualitiesLoadingKey;
+  qint64 m_favoriteStatusLoadingAid = 0;
+  qint64 m_coinStatusLoadingAid = 0;
+  qint64 m_likeStatusLoadingAid = 0;
+  qint64 m_watchLaterStatusLoadingAid = 0;
 
   struct DashResult {
     QString videoUrl;

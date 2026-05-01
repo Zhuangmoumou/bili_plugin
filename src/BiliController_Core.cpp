@@ -236,6 +236,13 @@ void BiliController::cancelAll() {
 
   // 立即重置前端可见加载状态，避免取消后卡在 loading UI
   m_loadingCount = 0;
+  m_videoDetailLoadingBvid.clear();
+  m_playUrlLoadingKey.clear();
+  m_acceptQualitiesLoadingKey.clear();
+  m_favoriteStatusLoadingAid = 0;
+  m_coinStatusLoadingAid = 0;
+  m_likeStatusLoadingAid = 0;
+  m_watchLaterStatusLoadingAid = 0;
   if (m_isLoading) {
     m_isLoading = false;
     emit isLoadingChanged();
