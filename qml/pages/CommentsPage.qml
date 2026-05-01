@@ -1,4 +1,5 @@
 import QtQuick 2.12
+import QtGraphicalEffects 1.12
 import BiliPlugin 1.0
 import "../components" as Components
 import ".."
@@ -15,6 +16,16 @@ Rectangle {
     readonly property int _hinting: Font.PreferNoHinting
     readonly property bool _textAA: true
     readonly property int _commentBodyFontSize: Theme.fontBody + 1
+    readonly property color _pageTopGlow: "#18283b"
+    readonly property color _pageBottomGlow: "#1a1320"
+    readonly property color _panelFill: "#171b22"
+    readonly property color _panelBorder: "#2a313d"
+    readonly property color _cardFill: "#1b212a"
+    readonly property color _cardFillStrong: "#202734"
+    readonly property color _chipFill: "#222b37"
+    readonly property color _mutedText: "#7f8a9a"
+    readonly property int _headerHeight: 30
+    readonly property int _metaStripHeight: 22
 
     property var controller: null
     property int viewMode: 0 // 0=主评论列表,1=子评论详情
@@ -22,6 +33,8 @@ Rectangle {
     property var selectedComment: null
     property bool imageFullscreenVisible: false
     property string fullscreenImageUrl: ""
+    property bool autoLoadingComments: false
+    property bool autoLoadingReplies: false
     signal backClicked()
 
     function openCommentDetail(commentObj) {
@@ -40,6 +53,30 @@ Rectangle {
     function firstPicture(pictures) {
         if (!pictures || pictures.length === 0) return ""
         return pictures[0] || ""
+    }
+
+    function compactCount(value) {
+        var n = Number(value || 0)
+        if (n <= 0) return ""
+        if (n >= 10000) return (n / 10000.0).toFixed(n >= 100000 ? 0 : 1) + "w"
+        if (n >= 1000) return (n / 1000.0).toFixed(n >= 10000 ? 0 : 1) + "k"
+        return n.toString()
+    }
+
+    function levelAccent(level) {
+        switch (Number(level || 0)) {
+        case 1: return "#60a5fa"
+        case 2: return "#34d399"
+        case 3: return "#f59e0b"
+        case 4: return "#fb7185"
+        case 5: return "#a78bfa"
+        case 6: return "#f472b6"
+        default: return Theme.primary
+        }
+    }
+
+    function isOwner(mid) {
+        return controller && mid && controller.videoOwnerMid > 0 && (Number(mid) === Number(controller.videoOwnerMid))
     }
 
     function openCommentImage(url) {
@@ -81,6 +118,24 @@ Rectangle {
         commentsPage.backClicked()
     }
 
+    function requestMoreCommentsIfNeeded() {
+        if (!controller || viewMode !== 0) return
+        var cm = controller.commentModel()
+        if (!cm || cm.loading || autoLoadingComments || commentList.count <= 0) return
+        if (commentList.contentHeight <= commentList.height) return
+        autoLoadingComments = true
+        controller.fetchMoreComments()
+    }
+
+    function requestMoreRepliesIfNeeded() {
+        if (!controller || viewMode !== 1 || !controller.replyHasMore) return
+        var rm = controller.commentReplyModel()
+        if (!rm || rm.loading || autoLoadingReplies || rm.count <= 0) return
+        if (replyDetailFlick.contentHeight <= replyDetailFlick.height) return
+        autoLoadingReplies = true
+        controller.fetchMoreCommentReplies()
+    }
+
     function isAnyCommentLoading() {
         if (!controller) return false
         var cm = controller.commentModel()
@@ -88,160 +143,322 @@ Rectangle {
         return (cm && cm.loading) || (rm && rm.loading)
     }
 
-    Components.TitleBar {
-        id: titleBar
-        title: {
-            if (viewMode === 1) return "评论详情";
-            var cm = controller ? controller.commentModel() : null;
-            var total = cm ? cm.totalCount : 0;
-            return "评论" + (total > 0 ? " (" + total + ")" : "");
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0b1017" }
+            GradientStop { position: 0.55; color: "#0f151d" }
+            GradientStop { position: 1.0; color: "#0c1118" }
         }
-        showBack: true
+    }
+
+    Rectangle {
+        width: 110
+        height: 60
+        radius: 30
+        anchors.right: parent.right
+        anchors.rightMargin: -28
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: -18
+        color: Theme.withAlpha(_pageBottomGlow, 0.55)
+    }
+
+    Item {
+        id: headerWrap
         anchors.top: parent.top
-        onBackClicked: commentsPage.internalBack()
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 28
+        z: 20
+
+        Rectangle {
+            id: backButton
+            width: 20
+            height: 20
+            radius: 10
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            anchors.top: parent.top
+            anchors.topMargin: 4
+            color: backButtonArea.pressed ? Theme.withAlpha(Theme.primary, 0.26) : Theme.withAlpha(_panelFill, 0.88)
+            border.color: Theme.withAlpha(Theme.primary, backButtonArea.pressed ? 0.32 : 0.16)
+            border.width: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: "‹"
+                color: Theme.primary
+                font.pixelSize: Theme.fontLarge
+                font.bold: true
+            }
+
+            MouseArea {
+                id: backButtonArea
+                anchors.fill: parent
+                anchors.margins: -8
+                onClicked: commentsPage.internalBack()
+            }
+        }
+
+        Rectangle {
+            id: titleChip
+            anchors.left: backButton.right
+            anchors.leftMargin: 6
+            anchors.top: parent.top
+            anchors.topMargin: 4
+            height: 20
+            width: titleText.implicitWidth + 12
+            radius: 10
+            color: Theme.withAlpha(_panelFill, 0.9)
+            border.color: Theme.withAlpha(_panelBorder, 0.82)
+            border.width: 1
+
+            Text {
+                id: titleText
+                anchors.centerIn: parent
+                text: viewMode === 1 ? "评论详情" : "评论区"
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontMedium
+                font.bold: true
+                renderType: commentsPage._textRenderType
+                font.hintingPreference: commentsPage._hinting
+                antialiasing: commentsPage._textAA
+            }
+        }
+
+        Rectangle {
+            id: headerCountChip
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            anchors.top: parent.top
+            anchors.topMargin: 6
+            width: headerCountText.implicitWidth + 12
+            height: 15
+            radius: 8
+            color: Theme.withAlpha(Theme.primary, 0.14)
+            border.color: Theme.withAlpha(Theme.primary, 0.22)
+            border.width: 1
+
+            Text {
+                id: headerCountText
+                anchors.centerIn: parent
+                text: {
+                    if (viewMode === 1) {
+                        var rm = controller ? controller.commentReplyModel() : null
+                        return (rm ? rm.count : 0) + " 条回复"
+                    }
+                    var cm = controller ? controller.commentModel() : null
+                    var total = cm ? cm.totalCount : 0
+                    return (total > 0 ? total : 0) + " 条评论"
+                }
+                color: Theme.primaryLight
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontTiny
+                font.bold: true
+                renderType: commentsPage._textRenderType
+                font.hintingPreference: commentsPage._hinting
+                antialiasing: commentsPage._textAA
+            }
+        }
+
+        Rectangle {
+            id: metaStrip
+            anchors.top: backButton.bottom
+            anchors.topMargin: Theme.spacingSmall
+            anchors.left: titleChip.left
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            height: 0
+            radius: 11
+            color: "transparent"
+            border.width: 0
+            visible: false
+        }
     }
 
     ListView {
         id: commentList
-        anchors.top: titleBar.bottom
+        anchors.top: headerWrap.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: Theme.spacingSmall
+        anchors.leftMargin: 6
+        anchors.rightMargin: 6
+        anchors.bottomMargin: 4
         model: controller ? controller.commentModel() : null
-        spacing: Theme.spacingSmall
+        spacing: 5
         clip: true
         visible: viewMode === 0
+        onMovementEnded: {
+            if (contentY + height >= contentHeight - 18) {
+                commentsPage.requestMoreCommentsIfNeeded()
+            }
+        }
+        onContentYChanged: {
+            if (moving && contentY + height >= contentHeight - 10) {
+                commentsPage.requestMoreCommentsIfNeeded()
+            }
+        }
 
         delegate: Rectangle {
+            property bool pinned: (typeof isTop !== "undefined" && !!isTop)
+                                  || (typeof is_top !== "undefined" && !!is_top)
+                                  || (!!model && !!model.isTop)
+                                  || (!!model && !!model.is_top)
             width: commentList.width
-            height: commentContent.height + Theme.spacingMedium * 2
-            color: Theme.bgCard
-            radius: Theme.radiusLarge
+            height: commentBodyColumn.height + 12
+            radius: 12
+            color: pinned ? Theme.withAlpha(_cardFillStrong, 0.98) : Theme.withAlpha(_cardFill, 0.98)
+            border.color: pinned ? Theme.withAlpha(Theme.primary, 0.34) : Theme.withAlpha(_panelBorder, 0.9)
+            border.width: 1
+
+            Rectangle {
+                width: 3
+                height: Math.max(18, parent.height * 0.5)
+                radius: 2
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 15
+                anchors.bottomMargin: 8
+                color: model.isVip ? Theme.accent : (pinned ? Theme.primary : Theme.withAlpha(Theme.textTertiary, 0.35))
+                z: 0
+            }
 
             Row {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                spacing: Theme.spacingMedium
+                anchors.margins: 6
+                spacing: 6
 
-                // 头像
                 Rectangle {
-                    width: 22; height: 22
-                    radius: Theme.radiusRound
+                    width: 22
+                    height: 22
+                    radius: 11
                     color: Theme.bgTertiary
-                    clip: true
 
                     Image {
+                        id: commentAvatarImage
                         anchors.fill: parent
-                        source: model.avatar
-                        ? "image://bili/" + encodeURIComponent(model.avatar) : ""
+                        source: model.avatar ? "image://bili/" + encodeURIComponent(model.avatar) : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
+                        smooth: true
+                        mipmap: true
+                        visible: false
+                    }
+
+                    OpacityMask {
+                        anchors.fill: commentAvatarImage
+                        source: commentAvatarImage
+                        maskSource: Rectangle {
+                            width: commentAvatarImage.width
+                            height: commentAvatarImage.height
+                            radius: Math.min(width, height) / 2
+                            visible: false
+                        }
                     }
                 }
 
                 Column {
-                    id: commentContent
-                    width: parent.width - 22 - Theme.spacingMedium
-                    spacing: Theme.spacingTiny
+                    id: commentBodyColumn
+                    width: parent.width - 28
+                    spacing: 4
 
-                    // 用户名 + 等级 + 时间
                     Row {
-                        spacing: Theme.spacingSmall
+                        width: parent.width
+                        spacing: 4
 
                         Text {
+                            width: Math.min(90, implicitWidth)
                             text: model.userName || ""
-                            color: model.isVip ? Theme.accent : Theme.primary
+                            color: model.isVip ? Theme.accent : Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
                             font.bold: true
+                            elide: Text.ElideRight
                             renderType: commentsPage._textRenderType
                             font.hintingPreference: commentsPage._hinting
                             antialiasing: commentsPage._textAA
                         }
 
-                        // UP 主标识
                         Rectangle {
-                            visible: controller && model.mid && controller.videoOwnerMid > 0 && (Number(model.mid) === Number(controller.videoOwnerMid))
+                            visible: commentsPage.isOwner(model.mid)
+                            width: ownerTagText.implicitWidth + 8
                             height: 12
                             radius: 6
-                            color: "#fb7299"
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: upTagText.implicitWidth + 8
+                            color: Theme.withAlpha(Theme.accent, 0.18)
+                            border.color: Theme.withAlpha(Theme.accent, 0.28)
+                            border.width: 1
 
                             Text {
-                                id: upTagText
+                                id: ownerTagText
                                 anchors.centerIn: parent
                                 text: "UP"
-                                color: "white"
+                                color: Theme.accent
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 8
+                                font.pixelSize: 7
                                 font.bold: true
-                                renderType: commentsPage._textRenderType
-                                font.hintingPreference: commentsPage._hinting
-                                antialiasing: commentsPage._textAA
                             }
                         }
 
                         Rectangle {
                             visible: (model.level || 0) > 0
-                            width: 18; height: 10
-                            radius: Theme.radiusTiny
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: {
-                                var lv = model.level || 0;
-                                if (lv >= 6) return Theme.accent;
-                                if (lv >= 4) return Theme.warning;
-                                return Theme.textTertiary;
-                            }
+                            width: levelText.implicitWidth + 8
+                            height: 12
+                            radius: 6
+                            color: Theme.withAlpha(commentsPage.levelAccent(model.level || 0), 0.16)
+                            border.color: Theme.withAlpha(commentsPage.levelAccent(model.level || 0), 0.30)
+                            border.width: 1
+
                             Text {
-                            anchors.centerIn: parent
-                            text: "L" + (model.level || 0)
-                            color: "white"
-                            font.pixelSize: 6
-                            font.bold: true
-                                renderType: commentsPage._textRenderType
-                            font.hintingPreference: commentsPage._hinting
-                            antialiasing: commentsPage._textAA
+                                id: levelText
+                                anchors.centerIn: parent
+                                text: "Lv" + (model.level || 0)
+                                color: commentsPage.levelAccent(model.level || 0)
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 7
+                                font.bold: true
+                            }
                         }
+
+                        Rectangle {
+                            visible: pinned
+                            width: topTagText.implicitWidth + 10
+                            height: 13
+                            radius: 6
+                            color: Qt.rgba(0.23, 0.51, 0.96, 0.18)
+                            border.color: Qt.rgba(0.38, 0.70, 1.0, 0.36)
+                            border.width: 1
+
+                            Text {
+                                id: topTagText
+                                anchors.centerIn: parent
+                                text: "TOP"
+                                color: "#93c5fd"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 7
+                                font.bold: true
+                            }
+                        }
+
+                        Item {
+                            width: Math.max(0, parent.width - 170)
+                            height: 1
                         }
 
                         Text {
+                            width: 50
+                            horizontalAlignment: Text.AlignRight
                             text: model.ctimeText || ""
-                            color: Theme.textTertiary
+                            color: _mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontTiny
                             renderType: commentsPage._textRenderType
                             font.hintingPreference: commentsPage._hinting
                             antialiasing: commentsPage._textAA
                         }
-
-                        Rectangle {
-                            visible: !!model.isTop
-                            height: 12
-                            radius: 6
-                            color: Theme.withAlpha(Theme.primary, 0.2)
-                            border.color: Theme.withAlpha(Theme.primary, 0.45)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: topLabel.implicitWidth + 8
-
-                            Text {
-                                id: topLabel
-                                anchors.centerIn: parent
-                                text: "TOP"
-                                color: Theme.primary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontTiny
-                                font.bold: true
-                                renderType: commentsPage._textRenderType
-                                font.hintingPreference: commentsPage._hinting
-                                antialiasing: commentsPage._textAA
-                            }
-                        }
                     }
 
-                    // 评论内容
                     Text {
                         width: parent.width
                         text: model.content || ""
@@ -249,72 +466,77 @@ Rectangle {
                         font.family: Theme.fontFamily
                         font.pixelSize: commentsPage._commentBodyFontSize
                         wrapMode: Text.Wrap
-                        maximumLineCount: 4
+                        maximumLineCount: 3
                         elide: Text.ElideRight
-                        lineHeight: 1.3
+                        lineHeight: 1.22
                         renderType: commentsPage._textRenderType
                         font.hintingPreference: commentsPage._hinting
                         antialiasing: commentsPage._textAA
                     }
 
-                    Rectangle {
-                        visible: !!commentsPage.firstPicture(model.pictures)
-                        width: Math.min(parent.width, 96)
-                        height: Math.min(56, width * 0.66)
-                        radius: Theme.radiusSmall
-                        color: Theme.bgTertiary
-                        border.color: Theme.borderLight
-                        border.width: 1
-                        clip: true
-
-                        Image {
-                            anchors.fill: parent
-                            source: commentsPage.commentImageSource(commentsPage.firstPicture(model.pictures))
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            mipmap: true
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
-                        }
-                    }
-
-                    // 互动按钮
                     Row {
-                        spacing: Theme.spacingLarge
+                        width: parent.width
+                        spacing: 6
 
-                        Components.IconButton {
-                            icon: "👍"
-                            value: {
-                                var l = model.likes || 0;
-                                return l > 0
-                                ? (l > 999 ? (l/1000.0).toFixed(1) + "k" : l.toString())
-                                : "";
+                        Rectangle {
+                            visible: !!commentsPage.firstPicture(model.pictures)
+                            width: 58
+                            height: 36
+                            radius: 8
+                            color: Theme.bgTertiary
+                            border.color: Theme.withAlpha(_panelBorder, 0.95)
+                            border.width: 1
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: commentsPage.commentImageSource(commentsPage.firstPicture(model.pictures))
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                mipmap: true
                             }
-                            width: 36
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
+                            }
                         }
 
-                        Components.IconButton {
-                            icon: "💬"
-                            value: {
-                                var r = model.rcount || 0;
-                                return r > 0 ? r.toString() : "";
+                        Item {
+                            width: Math.max(0, parent.width - (commentsPage.firstPicture(model.pictures) ? 64 : 0) - actionButtons.width)
+                            height: 1
+                        }
+
+                        Row {
+                            id: actionButtons
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 4
+
+                            Components.IconButton {
+                                icon: "👍"
+                                value: commentsPage.compactCount(model.likes || 0)
+                                width: 30
                             }
-                            width: 30
-                            onClicked: {
-                                commentsPage.openCommentDetail({
-                                    rpid: model.rpid || 0,
-                                    userName: model.userName || "",
-                                    avatar: model.avatar || "",
-                                    level: model.level || 0,
-                                    content: model.content || "",
-                                    pictures: model.pictures || [],
-                                    likes: model.likes || 0,
-                                    ctimeText: model.ctimeText || "",
-                                    isVip: model.isVip || false
-                                })
+
+                            Components.IconButton {
+                                icon: "💬"
+                                value: commentsPage.compactCount(model.rcount || 0)
+                                width: 32
+                                active: false
+                                onClicked: {
+                                    commentsPage.openCommentDetail({
+                                        rpid: model.rpid || 0,
+                                        userName: model.userName || "",
+                                        avatar: model.avatar || "",
+                                        level: model.level || 0,
+                                        content: model.content || "",
+                                        pictures: model.pictures || [],
+                                        likes: model.likes || 0,
+                                        ctimeText: model.ctimeText || "",
+                                        isVip: model.isVip || false,
+                                        pinned: pinned
+                                    })
+                                }
                             }
                         }
                     }
@@ -322,123 +544,212 @@ Rectangle {
             }
         }
 
-        // 加载更多
         footer: Rectangle {
             width: commentList.width
-            height: Theme.touchMinSize
-            color: "transparent"
+            height: 30
+            radius: 10
+            color: Theme.withAlpha(_panelFill, 0.7)
+            border.color: Theme.withAlpha(_panelBorder, 0.7)
+            border.width: 1
 
             Components.IconButton {
                 anchors.centerIn: parent
-                width: 96
+                width: 92
                 icon: commentLoadBtnBusy ? "⏳" : "↓"
-                label: commentLoadBtnBusy ? "加载中..." : "加载更多"
+                label: commentLoadBtnBusy ? "加载中..." : "更多评论"
                 active: commentLoadBtnBusy
                 property bool commentLoadBtnBusy: {
                     var cm = controller ? controller.commentModel() : null
                     return cm && cm.loading
                 }
                 onClicked: {
-                    if (!commentLoadBtnBusy && controller) controller.fetchMoreComments();
+                    if (!commentLoadBtnBusy && controller) controller.fetchMoreComments()
                 }
             }
         }
 
-        // 空状态
         Column {
             visible: commentList.count === 0 && controller && !commentsPage.isAnyCommentLoading()
             anchors.centerIn: parent
-            spacing: Theme.spacingSmall
+            spacing: 2
 
             Text {
-                text: "💬"
-                font.pixelSize: 18
-                anchors.horizontalCenter: parent.horizontalCenter
-                opacity: 0.4
-            }
-            Text {
-                text: "暂无评论"
-                color: Theme.textTertiary
+                text: "评论还没刷出来"
+                color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Text {
+                text: "稍后再试"
+                color: Theme.textTertiary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontTiny
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
     }
 
     Item {
-        anchors.top: titleBar.bottom
+        anchors.top: headerWrap.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
+        anchors.leftMargin: 6
+        anchors.rightMargin: 6
+        anchors.bottomMargin: 4
         visible: viewMode === 1
 
         Flickable {
             id: replyDetailFlick
             anchors.fill: parent
-            anchors.margins: Theme.spacingSmall
-            contentHeight: replyDetailColumn.height + 8
+            contentHeight: replyDetailColumn.height + 4
             clip: true
             boundsBehavior: Flickable.DragOverBounds
+            onMovementEnded: {
+                if (contentY + height >= contentHeight - 18) {
+                    commentsPage.requestMoreRepliesIfNeeded()
+                }
+            }
+            onContentYChanged: {
+                if (moving && contentY + height >= contentHeight - 10) {
+                    commentsPage.requestMoreRepliesIfNeeded()
+                }
+            }
 
             Column {
                 id: replyDetailColumn
                 width: parent.width
-                spacing: Theme.spacingSmall
+                spacing: 5
 
                 Rectangle {
                     width: parent.width
-                    radius: Theme.radiusLarge
-                    color: Theme.bgCard
-                    height: mainCommentContent.height + Theme.spacingMedium * 2
+                    height: detailHeaderColumn.height + 12
+                    radius: 12
+                    color: Theme.withAlpha(_cardFillStrong, 0.98)
+                    border.color: Theme.withAlpha(Theme.primary, 0.24)
+                    border.width: 1
 
                     Row {
                         anchors.fill: parent
-                        anchors.margins: Theme.spacingMedium
-                        spacing: Theme.spacingMedium
+                        anchors.margins: 6
+                        spacing: 6
 
                         Rectangle {
-                            width: 22; height: 22
-                            radius: Theme.radiusRound
+                            width: 24
+                            height: 24
+                            radius: 12
                             color: Theme.bgTertiary
-                            clip: true
 
                             Image {
+                                id: detailAvatarImage
                                 anchors.fill: parent
                                 source: selectedComment && selectedComment.avatar
-                                ? "image://bili/" + encodeURIComponent(selectedComment.avatar) : ""
+                                        ? "image://bili/" + encodeURIComponent(selectedComment.avatar) : ""
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
+                                smooth: true
+                                mipmap: true
+                                visible: false
+                            }
+
+                            OpacityMask {
+                                anchors.fill: detailAvatarImage
+                                source: detailAvatarImage
+                                maskSource: Rectangle {
+                                    width: detailAvatarImage.width
+                                    height: detailAvatarImage.height
+                                    radius: Math.min(width, height) / 2
+                                    visible: false
+                                }
                             }
                         }
 
                         Column {
-                            id: mainCommentContent
-                            width: parent.width - 22 - Theme.spacingMedium
-                            spacing: Theme.spacingTiny
+                            id: detailHeaderColumn
+                            width: parent.width - 30
+                            spacing: 4
 
                             Row {
-                                spacing: Theme.spacingSmall
+                                width: parent.width
+                                spacing: 4
 
                                 Text {
+                                    id: detailUserNameText
+                                    width: Math.min(88, implicitWidth)
                                     text: selectedComment ? selectedComment.userName : ""
-                                    color: selectedComment && selectedComment.isVip ? Theme.accent : Theme.primary
+                                    color: selectedComment && selectedComment.isVip ? Theme.accent : Theme.textPrimary
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSmall
                                     font.bold: true
+                                    elide: Text.ElideRight
                                     renderType: commentsPage._textRenderType
                                     font.hintingPreference: commentsPage._hinting
                                     antialiasing: commentsPage._textAA
                                 }
 
+                                Rectangle {
+                                    id: detailTopTag
+                                    visible: selectedComment && selectedComment.pinned
+                                    width: detailTopTagText.implicitWidth + 10
+                                    height: 13
+                                    radius: 6
+                                    color: Qt.rgba(0.23, 0.51, 0.96, 0.18)
+                                    border.color: Qt.rgba(0.38, 0.70, 1.0, 0.36)
+                                    border.width: 1
+
+                                    Text {
+                                        id: detailTopTagText
+                                        anchors.centerIn: parent
+                                        text: "TOP"
+                                        color: "#93c5fd"
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 7
+                                        font.bold: true
+                                    }
+                                }
+
                                 Text {
+                                    id: detailTimeText
+                                    width: 50
+                                    horizontalAlignment: Text.AlignRight
                                     text: selectedComment ? selectedComment.ctimeText : ""
-                                    color: Theme.textTertiary
+                                    color: _mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontTiny
                                     renderType: commentsPage._textRenderType
                                     font.hintingPreference: commentsPage._hinting
                                     antialiasing: commentsPage._textAA
+                                }
+
+                                Item {
+                                    width: Math.max(0, parent.width
+                                                    - detailUserNameText.width
+                                                    - (detailTopTag.visible ? detailTopTag.width : 0)
+                                                    - detailTimeText.width
+                                                    - detailLikeBadge.width
+                                                    - (detailTopTag.visible ? 20 : 16))
+                                    height: 1
+                                }
+
+                                Rectangle {
+                                    id: detailLikeBadge
+                                    width: detailLikeText.implicitWidth + 10
+                                    height: 14
+                                    radius: 7
+                                    color: Theme.withAlpha(Theme.primary, 0.12)
+                                    border.color: Theme.withAlpha(Theme.primary, 0.2)
+                                    border.width: 1
+
+                                    Text {
+                                        id: detailLikeText
+                                        anchors.centerIn: parent
+                                        text: "赞 " + commentsPage.compactCount(selectedComment ? selectedComment.likes : 0)
+                                        color: Theme.primaryLight
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 7
+                                    }
                                 }
                             }
 
@@ -449,7 +760,7 @@ Rectangle {
                                 font.family: Theme.fontFamily
                                 font.pixelSize: commentsPage._commentBodyFontSize
                                 wrapMode: Text.Wrap
-                                lineHeight: 1.3
+                                lineHeight: 1.24
                                 renderType: commentsPage._textRenderType
                                 font.hintingPreference: commentsPage._hinting
                                 antialiasing: commentsPage._textAA
@@ -457,11 +768,11 @@ Rectangle {
 
                             Rectangle {
                                 visible: selectedComment && !!commentsPage.firstPicture(selectedComment.pictures)
-                                width: Math.min(parent.width, 96)
-                                height: Math.min(56, width * 0.66)
-                                radius: Theme.radiusSmall
+                                width: 64
+                                height: 40
+                                radius: 8
                                 color: Theme.bgTertiary
-                                border.color: Theme.borderLight
+                                border.color: Theme.withAlpha(_panelBorder, 0.95)
                                 border.width: 1
                                 clip: true
 
@@ -484,9 +795,32 @@ Rectangle {
 
                 Rectangle {
                     width: parent.width
-                    height: 1
-                    color: Theme.divider
-                    opacity: 0.6
+                    height: 18
+                    radius: 9
+                    color: Theme.withAlpha(_chipFill, 0.92)
+                    border.color: Theme.withAlpha(_panelBorder, 0.8)
+                    border.width: 1
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+
+                        Text {
+                            text: "回复列表"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontTiny
+                        }
+
+                        Text {
+                            text: controller && controller.commentReplyModel() ? controller.commentReplyModel().count + " 条" : "0 条"
+                            color: _mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontTiny
+                        }
+                    }
                 }
 
                 Repeater {
@@ -494,74 +828,98 @@ Rectangle {
 
                     Rectangle {
                         width: replyDetailColumn.width
-                        height: replyContent.height + Theme.spacingMedium * 2
-                        color: Theme.bgCard
-                        radius: Theme.radiusLarge
+                        height: replyContent.height + 12
+                        radius: 12
+                        color: Theme.withAlpha(_cardFill, 0.98)
+                        border.color: Theme.withAlpha(_panelBorder, 0.9)
+                        border.width: 1
 
                         Row {
                             anchors.fill: parent
-                            anchors.margins: Theme.spacingMedium
-                            spacing: Theme.spacingMedium
+                            anchors.margins: 6
+                            spacing: 6
 
                             Rectangle {
-                                width: 22; height: 22
-                                radius: Theme.radiusRound
+                                width: 20
+                                height: 20
+                                radius: 10
                                 color: Theme.bgTertiary
-                                clip: true
 
                                 Image {
+                                    id: replyAvatarImage
                                     anchors.fill: parent
-                                    source: model.avatar
-                                    ? "image://bili/" + encodeURIComponent(model.avatar) : ""
+                                    source: model.avatar ? "image://bili/" + encodeURIComponent(model.avatar) : ""
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
+                                    smooth: true
+                                    mipmap: true
+                                    visible: false
+                                }
+
+                                OpacityMask {
+                                    anchors.fill: replyAvatarImage
+                                    source: replyAvatarImage
+                                    maskSource: Rectangle {
+                                        width: replyAvatarImage.width
+                                        height: replyAvatarImage.height
+                                        radius: Math.min(width, height) / 2
+                                        visible: false
+                                    }
                                 }
                             }
 
                             Column {
                                 id: replyContent
-                                width: parent.width - 22 - Theme.spacingMedium
-                                spacing: Theme.spacingTiny
+                                width: parent.width - 26
+                                spacing: 4
 
                                 Row {
-                                    spacing: Theme.spacingSmall
+                                    width: parent.width
+                                    spacing: 4
 
                                     Text {
+                                        width: Math.min(84, implicitWidth)
                                         text: model.userName || ""
-                                        color: model.isVip ? Theme.accent : Theme.primary
+                                        color: model.isVip ? Theme.accent : Theme.textPrimary
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSmall
                                         font.bold: true
+                                        elide: Text.ElideRight
                                         renderType: commentsPage._textRenderType
                                         font.hintingPreference: commentsPage._hinting
                                         antialiasing: commentsPage._textAA
                                     }
 
                                     Rectangle {
-                                        visible: controller && model.mid && controller.videoOwnerMid > 0 && (Number(model.mid) === Number(controller.videoOwnerMid))
+                                        visible: commentsPage.isOwner(model.mid)
+                                        width: replyUpTagText.implicitWidth + 8
                                         height: 12
                                         radius: 6
-                                        color: "#fb7299"
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: upReplyTagText.implicitWidth + 8
+                                        color: Theme.withAlpha(Theme.accent, 0.18)
+                                        border.color: Theme.withAlpha(Theme.accent, 0.28)
+                                        border.width: 1
 
                                         Text {
-                                            id: upReplyTagText
+                                            id: replyUpTagText
                                             anchors.centerIn: parent
                                             text: "UP"
-                                            color: "white"
+                                            color: Theme.accent
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: 8
+                                            font.pixelSize: 7
                                             font.bold: true
-                                            renderType: commentsPage._textRenderType
-                                            font.hintingPreference: commentsPage._hinting
-                                            antialiasing: commentsPage._textAA
                                         }
                                     }
 
+                                    Item {
+                                        width: Math.max(0, parent.width - 130)
+                                        height: 1
+                                    }
+
                                     Text {
+                                        width: 50
+                                        horizontalAlignment: Text.AlignRight
                                         text: model.ctimeText || ""
-                                        color: Theme.textTertiary
+                                        color: _mutedText
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontTiny
                                         renderType: commentsPage._textRenderType
@@ -577,33 +935,45 @@ Rectangle {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: commentsPage._commentBodyFontSize
                                     wrapMode: Text.Wrap
-                                    lineHeight: 1.3
+                                    lineHeight: 1.22
                                     renderType: commentsPage._textRenderType
                                     font.hintingPreference: commentsPage._hinting
                                     antialiasing: commentsPage._textAA
                                 }
 
-                                Rectangle {
-                                    visible: !!commentsPage.firstPicture(model.pictures)
-                                    width: Math.min(parent.width, 96)
-                                    height: Math.min(56, width * 0.66)
-                                    radius: Theme.radiusSmall
-                                    color: Theme.bgTertiary
-                                    border.color: Theme.borderLight
-                                    border.width: 1
-                                    clip: true
+                                Row {
+                                    width: parent.width
+                                    spacing: 6
 
-                                    Image {
-                                        anchors.fill: parent
-                                        source: commentsPage.commentImageSource(commentsPage.firstPicture(model.pictures))
-                                        fillMode: Image.PreserveAspectCrop
-                                        asynchronous: true
-                                        mipmap: true
+                                    Rectangle {
+                                        visible: !!commentsPage.firstPicture(model.pictures)
+                                        width: 56
+                                        height: 34
+                                        radius: 8
+                                        color: Theme.bgTertiary
+                                        border.color: Theme.withAlpha(_panelBorder, 0.95)
+                                        border.width: 1
+                                        clip: true
+
+                                        Image {
+                                            anchors.fill: parent
+                                            source: commentsPage.commentImageSource(commentsPage.firstPicture(model.pictures))
+                                            fillMode: Image.PreserveAspectCrop
+                                            asynchronous: true
+                                            mipmap: true
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
+                                        }
                                     }
 
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
+                                    Components.IconButton {
+                                        icon: "👍"
+                                        value: commentsPage.compactCount(model.likes || 0)
+                                        width: 34
+                                        anchors.verticalCenter: parent.verticalCenter
                                     }
                                 }
                             }
@@ -611,22 +981,31 @@ Rectangle {
                     }
                 }
 
-                Components.IconButton {
+                Rectangle {
                     visible: controller && controller.replyHasMore
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 96
-                    icon: replyLoadBtnBusy ? "⏳" : "↓"
-                    label: replyLoadBtnBusy ? "加载中..." : "加载更多"
-                    active: replyLoadBtnBusy
-                    property bool replyLoadBtnBusy: controller && controller.commentReplyModel() && controller.commentReplyModel().loading
-                    onClicked: {
-                        if (!replyLoadBtnBusy && controller) controller.fetchMoreCommentReplies()
+                    width: parent.width
+                    height: 30
+                    radius: 10
+                    color: Theme.withAlpha(_panelFill, 0.7)
+                    border.color: Theme.withAlpha(_panelBorder, 0.7)
+                    border.width: 1
+
+                    Components.IconButton {
+                        anchors.centerIn: parent
+                        width: 92
+                        icon: replyLoadBtnBusy ? "⏳" : "↓"
+                        label: replyLoadBtnBusy ? "加载中..." : "更多回复"
+                        active: replyLoadBtnBusy
+                        property bool replyLoadBtnBusy: controller && controller.commentReplyModel() && controller.commentReplyModel().loading
+                        onClicked: {
+                            if (!replyLoadBtnBusy && controller) controller.fetchMoreCommentReplies()
+                        }
                     }
                 }
 
                 Text {
                     visible: controller && controller.commentReplyModel() && controller.commentReplyModel().count === 0 && !commentsPage.isAnyCommentLoading()
-                    text: "暂无回复"
+                    text: "这条评论还没有回复"
                     color: Theme.textTertiary
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontBody
@@ -797,10 +1176,24 @@ Rectangle {
                     id: cancelArea
                     anchors.fill: parent
                     onClicked: {
-                        if (controller) controller.cancelAll();
+                        if (controller) controller.cancelAll()
                     }
                 }
             }
+        }
+    }
+
+    Connections {
+        target: controller ? controller.commentModel() : null
+        function onLoadingChanged() {
+            if (!target || !target.loading) commentsPage.autoLoadingComments = false
+        }
+    }
+
+    Connections {
+        target: controller ? controller.commentReplyModel() : null
+        function onLoadingChanged() {
+            if (!target || !target.loading) commentsPage.autoLoadingReplies = false
         }
     }
 
@@ -824,7 +1217,7 @@ Rectangle {
         function show(componentPath) {
             function initObj(obj) {
                 if (!obj) return
-                Object.defineProperty(obj, 'popStackId', {
+                Object.defineProperty(obj, "popStackId", {
                     enumerable: false,
                     configurable: false,
                     writable: false,
@@ -870,6 +1263,6 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        if (controller) controller.fetchComments();
+        if (controller) controller.fetchComments()
     }
 }

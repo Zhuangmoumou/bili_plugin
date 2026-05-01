@@ -19,6 +19,7 @@ Rectangle {
     property string currentFavTitle: ""
     property int currentFavId: 0
     property real recentHistoryContentX: 0
+    property real watchLaterContentX: 0
 
     function openFavorites() {
         favView = 1
@@ -69,6 +70,14 @@ Rectangle {
     onVisibleChanged: {
         if (visible && controller && controller.loggedIn) {
             controller.refreshUserInfo();
+            Qt.callLater(function() {
+                if (recentLoader.item && recentLoader.item.restorePosition) {
+                    recentLoader.item.restorePosition()
+                }
+                if (watchLaterLoader.item && watchLaterLoader.item.restorePosition) {
+                    watchLaterLoader.item.restorePosition()
+                }
+            })
         }
     }
 
@@ -715,6 +724,59 @@ Rectangle {
                                 width: 36
                                 height: 36
                                 radius: 18
+                                color: historyEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
+                                border.color: Theme.withAlpha(Theme.primary, 0.35)
+                                border.width: 1
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = Theme.primary
+                                        ctx.lineWidth = 1.8
+                                        ctx.lineCap = "round"
+                                        ctx.beginPath()
+                                        ctx.arc(9, 9, 6.5, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(9, 9)
+                                        ctx.lineTo(9, 5.5)
+                                        ctx.moveTo(9, 9)
+                                        ctx.lineTo(12, 10.5)
+                                        ctx.stroke()
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: historyEntryArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        favView = 3
+                                        if (controller) Qt.callLater(function() { controller.fetchRecentHistory() })
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "最近观看"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+
+                        Column {
+                            spacing: 6
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
                                 color: watchLaterEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
                                 border.color: Theme.withAlpha(Theme.primary, 0.35)
                                 border.width: 1
@@ -760,59 +822,6 @@ Rectangle {
 
                             Text {
                                 text: "稍后再看"
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
-                                anchors.horizontalCenter: parent.horizontalCenter
-                            }
-                        }
-
-                        Column {
-                            spacing: 6
-
-                            Rectangle {
-                                width: 36
-                                height: 36
-                                radius: 18
-                                color: historyEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.withAlpha(Theme.primary, 0.12)
-                                border.color: Theme.withAlpha(Theme.primary, 0.35)
-                                border.width: 1
-                                anchors.horizontalCenter: parent.horizontalCenter
-
-                                Canvas {
-                                    anchors.centerIn: parent
-                                    width: 16
-                                    height: 16
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        ctx.strokeStyle = Theme.primary
-                                        ctx.lineWidth = 1.8
-                                        ctx.lineCap = "round"
-                                        ctx.beginPath()
-                                        ctx.arc(9, 9, 6.5, 0, Math.PI * 2)
-                                        ctx.stroke()
-                                        ctx.beginPath()
-                                        ctx.moveTo(9, 9)
-                                        ctx.lineTo(9, 5.5)
-                                        ctx.moveTo(9, 9)
-                                        ctx.lineTo(12, 10.5)
-                                        ctx.stroke()
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: historyEntryArea
-                                    anchors.fill: parent
-                                    onClicked: {
-                                        favView = 3
-                                        if (controller) Qt.callLater(function() { controller.fetchRecentHistory() })
-                                    }
-                                }
-                            }
-
-                            Text {
-                                text: "最近观看"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
@@ -1012,6 +1021,12 @@ Rectangle {
                     Item {
                         anchors.fill: parent
 
+                        function restorePosition() {
+                            if (recentHistoryView.visible && userPage.recentHistoryContentX > 0) {
+                                recentList.contentX = userPage.recentHistoryContentX
+                            }
+                        }
+
                         ListView {
                             id: recentList
                             anchors.fill: parent
@@ -1060,9 +1075,7 @@ Rectangle {
                         }
 
                         Component.onCompleted: {
-                            if (recentHistoryView.visible && userPage.recentHistoryContentX > 0) {
-                                Qt.callLater(function() { recentList.contentX = userPage.recentHistoryContentX })
-                            }
+                            Qt.callLater(function() { restorePosition() })
                         }
                     }
                 }
@@ -1083,6 +1096,12 @@ Rectangle {
                 sourceComponent: Component {
                     Item {
                         anchors.fill: parent
+
+                        function restorePosition() {
+                            if (watchLaterView.visible && userPage.watchLaterContentX > 0) {
+                                watchLaterList.contentX = userPage.watchLaterContentX
+                            }
+                        }
 
                         ListView {
                             id: watchLaterList
@@ -1115,7 +1134,10 @@ Rectangle {
                                 viewCount: ""
                                 durationText: model.durationText || ""
                                 bvid: model.bvid || ""
-                                onClicked: userPage.videoSelected(bvid)
+                                onClicked: {
+                                    userPage.watchLaterContentX = watchLaterList.contentX
+                                    userPage.videoSelected(bvid)
+                                }
                             }
                         }
 
@@ -1132,6 +1154,10 @@ Rectangle {
                             onCancelRequested: {
                                 if (controller) controller.cancelAll();
                             }
+                        }
+
+                        Component.onCompleted: {
+                            Qt.callLater(function() { restorePosition() })
                         }
                     }
                 }

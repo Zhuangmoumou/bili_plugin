@@ -54,10 +54,10 @@ BiliController::BiliController(QObject *parent)
   // 加载字幕样式设置
   QSettings settings("BiliPocket", "BiliPlugin");
   m_subtitleFontSize = settings.value("subtitleFontSize", m_subtitleFontSize).toInt();
-  m_subtitleOutline = settings.value("subtitleOutline", m_subtitleOutline).toDouble();
   m_subtitleMarginV = settings.value("subtitleMarginV", m_subtitleMarginV).toInt();
   m_subtitleSpacing = settings.value("subtitleSpacing", m_subtitleSpacing).toDouble();
-  m_subtitleBold = settings.value("subtitleBold", m_subtitleBold).toInt();
+  m_subtitleWeight = settings.value("subtitleWeight",
+                                    settings.value("subtitleBold", m_subtitleWeight)).toInt();
 }
 
 BiliController::~BiliController() {

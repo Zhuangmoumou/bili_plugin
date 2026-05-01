@@ -24,6 +24,16 @@ Rectangle {
         controller.fetchUpInfo(midVal)
     }
 
+    function formatFanCount(value) {
+        var n = Number(value || 0)
+        if (n < 10000) return String(Math.floor(n))
+
+        var wan = n / 10000.0
+        var s = wan.toFixed(2)
+        s = s.replace(/\.?0+$/, "")
+        return s + "万"
+    }
+
     // 刷新结束：用 controller.isLoading 的变化来收口
     Connections {
         target: controller
@@ -226,14 +236,20 @@ Rectangle {
                         Rectangle {
                             height: 18
                             radius: Theme.radiusRound
-                            color: followArea.pressed ? Theme.primaryDark : Theme.primary
+                            color: controller && controller.upIsFollowing
+                                   ? (followArea.pressed ? Theme.bgTertiary : Theme.bgSecondary)
+                                   : (followArea.pressed ? Theme.primaryDark : Theme.primary)
+                            border.width: controller && controller.upIsFollowing ? 1 : 0
+                            border.color: controller && controller.upIsFollowing
+                                          ? Theme.withAlpha(Theme.primary, 0.35)
+                                          : "transparent"
                             width: followText.implicitWidth + 16
 
                             Text {
                                 id: followText
                                 anchors.centerIn: parent
                                 text: controller && controller.upIsFollowing ? "已关注" : "关注"
-                                color: Theme.textOnPrimary
+                                color: controller && controller.upIsFollowing ? Theme.textSecondary : Theme.textOnPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSmall
                                 font.bold: true
@@ -287,7 +303,7 @@ Rectangle {
 
                     Text {
                         width: parent.width
-                        text: controller ? String(controller.upUserFans) : "0"
+                        text: controller ? upPage.formatFanCount(controller.upUserFans) : "0"
                         color: Theme.textPrimary
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontMedium

@@ -35,6 +35,41 @@ Rectangle {
         }
     }
 
+    function escapeRichText(text) {
+        if (!text) return ""
+        var s = String(text)
+        s = s.replace(/&/g, "&amp;")
+        s = s.replace(/</g, "&lt;")
+        s = s.replace(/>/g, "&gt;")
+        return s
+    }
+
+    function descRichText(text) {
+        var raw = text && text.length > 0 ? String(text) : "暂无简介"
+        var pattern = /BV[0-9A-Za-z]{10}/g
+        var lastIndex = 0
+        var result = ""
+        var match
+
+        while ((match = pattern.exec(raw)) !== null) {
+            var start = match.index
+            var end = start + match[0].length
+            result += escapeRichText(raw.slice(lastIndex, start))
+            result += "<a href=\"" + match[0] + "\" style=\"color:#60a5fa;text-decoration:none;\">" + match[0] + "</a>"
+            lastIndex = end
+        }
+
+        result += escapeRichText(raw.slice(lastIndex))
+        return result.replace(/\r\n/g, "<br>").replace(/\n/g, "<br>").replace(/\r/g, "<br>")
+    }
+
+    function openBvidFromDesc(bvid) {
+        if (!bvid || bvid === detailPage.bvid) return
+        if (rootRef) {
+            rootRef.navigateTo("detail", { bvid: bvid })
+        }
+    }
+
     function updateQualities() {
         if (controller && controller.acceptQualities && controller.acceptQualities.length > 0) {
             availableQualities = controller.acceptQualities;
@@ -54,18 +89,26 @@ Rectangle {
     signal commentsRequested()
     signal upRequested(var mid)
 
-    // 分P列表横向滚动位置（同时会同步到 rootRef.detailPartListXCache[bvid]）
+    // 分P列表横向滚动位置
     property real savedPartListX: (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
                               ? rootRef.detailPartListXCache[bvid]
                               : 0
 
-    // 记录用户当前选中的分P index（用于在 refreshDetail 后恢复选择）
     property int savedPartIndex: 0
-    // 记录进入刷新前的 cid（用于判断是否被重置到第一集）
     property int savedPartCid: 0
-    // 标记：本次 refreshDetail 后需要尝试恢复分P
     property bool _needRestorePartAfterRefresh: false
     property bool _restoringPartNow: false
+
+    onBvidChanged: {
+        savedPartListX = (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
+                         ? rootRef.detailPartListXCache[bvid]
+                         : 0
+        savedPartIndex = 0
+        savedPartCid = 0
+        _needRestorePartAfterRefresh = false
+        _restoringPartNow = false
+        refreshDetail(true)
+    }
 
     onSavedPartListXChanged: {
         if (rootRef && bvid && rootRef.detailPartListXCache) {
@@ -80,7 +123,6 @@ Rectangle {
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
         if (savedPartListX <= 0) return;
-        // 三次延后恢复：详情页会在返回时触发 refreshDetail() 导致 model 重置，ListView 可能多次抛光覆盖 contentX
         Qt.callLater(function() {
             videoPartList.contentX = savedPartListX;
             Qt.callLater(function() {
@@ -96,14 +138,1068 @@ Rectangle {
     readonly property color primaryColor: "#3b82f6"
     readonly property color primaryLight: "#60a5fa"
     readonly property color primaryDark: "#2563eb"
+    readonly property color surfaceColor: Qt.rgba(1, 1, 1, 0.05)
+    readonly property color surfaceBorder: Qt.rgba(1, 1, 1, 0.08)
+
+    // ═══════════════════════════════════════════════════════════
+    // 背景渐变
+    // ═══════════════════════════════════════════════════════════
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0d1117" }
+            GradientStop { position: 0.5; color: "#111827" }
+            GradientStop { position: 1.0; color: "#0f172a" }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 顶部浮动返回控件
+    // ═══════════════════════════════════════════════════════════
+    Item {
+        id: topBar
+        anchors.top: parent.top
+        anchors.left: parent.left
+        width: 42
+        height: 24
+        z: 5
+
+        Rectangle {
+            id: backBtn
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            anchors.top: parent.top
+            anchors.topMargin: 4
+            width: 22
+            height: 22
+            radius: 11
+            color: backArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.34) : Qt.rgba(0.23, 0.51, 0.96, 0.12)
+            border.width: 1
+            border.color: backArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.32) : Qt.rgba(0.38, 0.70, 1.0, 0.22)
+
+            Behavior on color { ColorAnimation { duration: 150 } }
+            scale: backArea.pressed ? 0.85 : 1.0
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+            Canvas {
+                anchors.centerIn: parent
+                anchors.horizontalCenterOffset: -1
+                width: 12
+                height: 12
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    ctx.strokeStyle = primaryLight
+                    ctx.lineWidth = 2
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    ctx.beginPath()
+                    ctx.moveTo(8, 2)
+                    ctx.lineTo(3, 6)
+                    ctx.lineTo(8, 10)
+                    ctx.stroke()
+                }
+            }
+
+            MouseArea {
+                id: backArea
+                anchors.fill: parent
+                anchors.margins: -6
+                onClicked: detailPage.backClicked()
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 主内容区（垂直滑动）
+    // ═══════════════════════════════════════════════════════════
+    Flickable {
+        id: mainFlick
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: topBar.bottom
+        anchors.bottom: parent.bottom
+        contentHeight: mainColumn.height
+        flickableDirection: Flickable.VerticalFlick
+        clip: true
+        boundsBehavior: Flickable.DragOverBounds
+
+        Column {
+            id: mainColumn
+            width: parent.width
+            spacing: 7
+            topPadding: 7
+
+            // ─────────────────────────────────────────────
+            // Hero 区: 封面 + 主信息
+            // ─────────────────────────────────────────────
+            Item {
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: Math.max(66, heroInfoColumn.implicitHeight + 2)
+
+                // 封面容器
+                Rectangle {
+                    id: coverContainer
+                    width: 110
+                    height: 66
+                    radius: 8
+                    color: "#1e293b"
+                    anchors.left: parent.left
+                    clip: true
+
+                    Image {
+                        id: coverImage
+                        anchors.fill: parent
+                        source: controller && controller.videoPic
+                        ? "image://bili/" + encodeURIComponent(controller.videoPic) : ""
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        smooth: true
+                        mipmap: true
+                        opacity: status === Image.Ready ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+                    }
+
+                    // 渐变遮罩
+                    Rectangle {
+                        anchors.fill: parent
+                        gradient: Gradient {
+                            GradientStop { position: 0.0; color: "transparent" }
+                            GradientStop { position: 0.5; color: "transparent" }
+                            GradientStop { position: 1.0; color: "#cc000000" }
+                        }
+                    }
+
+                    // 时长（左下）
+                    Text {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        anchors.leftMargin: 5
+                        anchors.bottomMargin: 4
+                        text: controller ? controller.videoDuration : "00:00"
+                        color: "white"
+                        font.pixelSize: 9
+                        font.family: fontFamily
+                        font.bold: true
+                        style: Text.Outline
+                        styleColor: Qt.rgba(0, 0, 0, 0.6)
+                    }
+
+                    // 合集标签（右下）
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        anchors.rightMargin: 5
+                        anchors.bottomMargin: 4
+                        height: 13
+                        width: collectionText.implicitWidth + 8
+                        radius: 6
+                        color: Qt.rgba(0, 0, 0, 0.55)
+                        border.width: 1
+                        border.color: Qt.rgba(1, 1, 1, 0.25)
+                        visible: controller && controller.videoPartModel() && controller.videoPartModel().count > 1
+
+                        Text {
+                            id: collectionText
+                            anchors.centerIn: parent
+                            text: "合集 " + (controller && controller.videoPartModel() ? controller.videoPartModel().count : 0) + "P"
+                            color: "white"
+                            font.pixelSize: 8
+                            font.family: fontFamily
+                            font.bold: true
+                        }
+                    }
+                }
+
+                // 播放按钮（封面正中）
+                Rectangle {
+                    anchors.centerIn: coverContainer
+                    width: 30
+                    height: 30
+                    radius: 15
+                    color: playArea.pressed ? primaryDark : primaryColor
+                    border.color: Qt.rgba(1, 1, 1, 0.4)
+                    border.width: 2
+
+                    scale: playArea.pressed ? 0.82 : 1.0
+                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    // 发光环
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: parent.width + 6
+                        height: parent.height + 6
+                        radius: width / 2
+                        color: "transparent"
+                        border.color: Qt.rgba(0.23, 0.51, 0.96, 0.4)
+                        border.width: 2
+                        opacity: playArea.pressed ? 0 : 0.7
+                        Behavior on opacity { NumberAnimation { duration: 200 } }
+                    }
+
+                    Canvas {
+                        anchors.centerIn: parent
+                        width: 12
+                        height: 12
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            ctx.fillStyle = "white"
+                            ctx.beginPath()
+                            ctx.moveTo(3, 2)
+                            ctx.lineTo(12, 7)
+                            ctx.lineTo(3, 12)
+                            ctx.closePath()
+                            ctx.fill()
+                        }
+                    }
+
+                    MouseArea {
+                        id: playArea
+                        anchors.fill: parent
+                        anchors.margins: -8
+                        onClicked: detailPage.playRequested(detailPage.selectedQuality)
+                    }
+                }
+
+                // 右侧信息列
+                Column {
+                    id: heroInfoColumn
+                    anchors.left: coverContainer.right
+                    anchors.leftMargin: 9
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.topMargin: 1
+                    spacing: 4
+
+                    // 标题
+                    Text {
+                        id: titleText
+                        width: parent.width
+                        text: controller ? controller.videoTitle : ""
+                        color: "#f1f5f9"
+                        font.family: fontFamily
+                        font.pixelSize: 12
+                        font.bold: true
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        lineHeight: 1.15
+
+                        opacity: controller ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 300 } }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: detailPage.fullTitleVisible = true
+                        }
+                    }
+
+                    // UP 主行
+                    Rectangle {
+                        id: upChip
+                        height: 18
+                        radius: 9
+                        color: upArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.3) : Qt.rgba(0.23, 0.51, 0.96, 0.14)
+                        border.color: Qt.rgba(0.23, 0.51, 0.96, 0.32)
+                        border.width: 1
+                        width: Math.min(upRow.implicitWidth + 10, parent.width)
+
+                        scale: upArea.pressed ? 0.92 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                        Behavior on color { ColorAnimation { duration: 120 } }
+
+                        Row {
+                            id: upRow
+                            anchors.left: parent.left
+                            anchors.leftMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 5
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                color: "#1e293b"
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Image {
+                                    id: ownerAvatarImage
+                                    anchors.fill: parent
+                                    smooth: true
+                                    mipmap: true
+                                    source: controller && controller.videoOwnerFace
+                                    ? "image://bili/" + encodeURIComponent(controller.videoOwnerFace) : ""
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    visible: false
+                                }
+
+                                OpacityMask {
+                                    anchors.fill: ownerAvatarImage
+                                    source: ownerAvatarImage
+                                    maskSource: Rectangle {
+                                        width: ownerAvatarImage.width
+                                        height: ownerAvatarImage.height
+                                        radius: Math.min(width, height) / 2
+                                        visible: false
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: controller ? controller.videoOwner : ""
+                                color: primaryLight
+                                font.family: fontFamily
+                                font.pixelSize: 9
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                                elide: Text.ElideRight
+                                width: Math.min(implicitWidth, 130)
+                            }
+                        }
+
+                        MouseArea {
+                            id: upArea
+                            anchors.fill: parent
+                            onClicked: {
+                                if (controller && controller.videoOwnerMid > 0) {
+                                    detailPage.upRequested(controller.videoOwnerMid)
+                                }
+                            }
+                        }
+                    }
+
+                    // 统计信息行：播放 · 弹幕 · 日期
+                    Row {
+                        spacing: 8
+                        height: 11
+
+                        Row {
+                            spacing: 3
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Canvas {
+                                width: 9
+                                height: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.fillStyle = "#94a3b8"
+                                    ctx.beginPath()
+                                    ctx.moveTo(2, 1)
+                                    ctx.lineTo(8, 4.5)
+                                    ctx.lineTo(2, 8)
+                                    ctx.closePath()
+                                    ctx.fill()
+                                }
+                            }
+                            Text {
+                                text: controller ? controller.videoViews : "0"
+                                color: "#94a3b8"
+                                font.family: fontFamily
+                                font.pixelSize: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        Row {
+                            spacing: 3
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Canvas {
+                                width: 9
+                                height: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.strokeStyle = "#34d399"
+                                    ctx.lineWidth = 1
+                                    ctx.lineCap = "round"
+                                    ctx.beginPath()
+                                    ctx.moveTo(0, 2); ctx.lineTo(7, 2)
+                                    ctx.moveTo(2, 4.5); ctx.lineTo(9, 4.5)
+                                    ctx.moveTo(0, 7); ctx.lineTo(6, 7)
+                                    ctx.stroke()
+                                }
+                            }
+                            Text {
+                                text: controller ? controller.videoDanmaku : "0"
+                                color: "#94a3b8"
+                                font.family: fontFamily
+                                font.pixelSize: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        Text {
+                            text: controller ? controller.videoPubDate : ""
+                            color: "#64748b"
+                            font.family: fontFamily
+                            font.pixelSize: 9
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideRight
+                            width: Math.min(implicitWidth, 80)
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────
+            // 主操作行: 点赞 · 投币 · 收藏 · 稍后再看
+            // ─────────────────────────────────────────────
+            Item {
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: 36
+
+                Row {
+                    id: actionRow
+                    anchors.fill: parent
+                    spacing: 6
+
+                    ActionButton {
+                        width: (parent.width - parent.spacing * 3) / 4
+                        iconType: "like"
+                        label: controller ? controller.videoLikes : "0"
+                        active: controller && controller.isLiked
+                        activeColor: "#f472b6"
+                        onTriggered: {
+                            if (controller) controller.toggleLike()
+                        }
+                    }
+
+                    ActionButton {
+                        width: (parent.width - parent.spacing * 3) / 4
+                        iconType: "coin"
+                        label: controller ? controller.videoCoins : "0"
+                        active: controller && controller.isCoined
+                        activeColor: "#fbbf24"
+                        onTriggered: {
+                            if (!controller) return
+                            if (controller.isCoined) {
+                                controller.toastMessage("已经投过币了")
+                            } else {
+                                detailPage.coinPickerVisible = true
+                            }
+                        }
+                    }
+
+                    ActionButton {
+                        width: (parent.width - parent.spacing * 3) / 4
+                        iconType: "star"
+                        label: controller ? controller.videoFavorites : "0"
+                        active: controller && controller.isFavorited
+                        activeColor: "#fb7299"
+                        onTriggered: {
+                            if (!controller) return
+                            if (controller.isFavorited) {
+                                controller.toggleFavorite()
+                            } else {
+                                controller.fetchFavoriteFolders()
+                                detailPage.favoritePickerVisible = true
+                            }
+                        }
+                    }
+
+                    ActionButton {
+                        width: (parent.width - parent.spacing * 3) / 4
+                        iconType: "watchlater"
+                        label: controller && controller.isWatchLater ? "已加" : "稍后"
+                        active: controller && controller.isWatchLater
+                        activeColor: primaryLight
+                        onTriggered: {
+                            if (controller) controller.toggleWatchLater()
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────
+            // 工具行: 评论 · 下载 · 字幕
+            // ─────────────────────────────────────────────
+            Item {
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: 22
+
+                Row {
+                    id: toolRow
+                    anchors.fill: parent
+                    spacing: 6
+
+                    ToolButton {
+                        width: (parent.width - parent.spacing * 2) / 3
+                        iconType: "comment"
+                        label: "评论"
+                        onTriggered: detailPage.commentsRequested()
+                    }
+
+                    ToolButton {
+                        width: (parent.width - parent.spacing * 2) / 3
+                        iconType: "download"
+                        label: "下载"
+                        onTriggered: {
+                            if (controller) controller.downloadVideoToDisk(detailPage.selectedQuality)
+                        }
+                    }
+
+                    ToolButton {
+                        width: (parent.width - parent.spacing * 2) / 3
+                        iconType: "subtitle"
+                        label: {
+                            if (controller && controller.selectedSubtitleLabel && controller.selectedSubtitleLabel.length > 0) {
+                                return "字幕·" + controller.selectedSubtitleLabel
+                            }
+                            return "字幕"
+                        }
+                        onTriggered: {
+                            if (controller) controller.fetchSubtitleList()
+                            detailPage.subtitlePickerVisible = true
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────
+            // 清晰度选择
+            // ─────────────────────────────────────────────
+            Item {
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: 24
+
+                Text {
+                    id: qualityHeader
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "清晰度"
+                    color: primaryLight
+                    font.family: fontFamily
+                    font.pixelSize: 10
+                    font.bold: true
+                }
+
+                Rectangle {
+                    id: refreshChip
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 18
+                    width: 36
+                    radius: 9
+                    color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.06)
+                    border.width: 1
+                    border.color: Qt.rgba(1, 1, 1, 0.1)
+
+                    scale: refreshArea.pressed ? 0.9 : 1.0
+                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: 100 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "刷新"
+                        color: "#cbd5e1"
+                        font.family: fontFamily
+                        font.pixelSize: 9
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: refreshArea
+                        anchors.fill: parent
+                        onClicked: {
+                            if (controller) controller.fetchAcceptQualities(detailPage.selectedQuality)
+                        }
+                    }
+                }
+
+                Flickable {
+                    id: qualityFlick
+                    anchors.left: qualityHeader.right
+                    anchors.leftMargin: 8
+                    anchors.right: refreshChip.left
+                    anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 22
+                    contentWidth: qualityRow.implicitWidth
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    clip: true
+                    boundsBehavior: Flickable.DragOverBounds
+
+                    Row {
+                        id: qualityRow
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Repeater {
+                            model: detailPage.availableQualities
+
+                            Rectangle {
+                                id: qualityItem
+                                height: 18
+                                width: Math.max(34, qItemText.implicitWidth + 10)
+                                radius: 9
+                                color: detailPage.selectedQuality === modelData
+                                       ? primaryColor
+                                       : Qt.rgba(1, 1, 1, 0.06)
+                                border.width: 1
+                                border.color: detailPage.selectedQuality === modelData
+                                               ? primaryLight
+                                               : Qt.rgba(1, 1, 1, 0.1)
+
+                                scale: qualityArea.pressed ? 0.9 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                Behavior on color { ColorAnimation { duration: 100 } }
+
+                                Text {
+                                    id: qItemText
+                                    anchors.centerIn: parent
+                                    text: qualityLabel(modelData)
+                                    color: detailPage.selectedQuality === modelData
+                                           ? "white"
+                                           : "#cbd5e1"
+                                    font.family: fontFamily
+                                    font.pixelSize: 9
+                                    font.bold: detailPage.selectedQuality === modelData
+                                }
+
+                                MouseArea {
+                                    id: qualityArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        detailPage.selectedQuality = modelData
+                                        if (detailPage.rootRef) {
+                                            detailPage.rootRef.playQualitySelected = modelData
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────
+            // 选集（仅多P视频）
+            // ─────────────────────────────────────────────
+            Item {
+                id: partsSection
+                width: parent.width
+                height: visible ? 84 : 0
+                visible: controller && !controller.isLoading
+                         && controller.videoPartModel() && controller.videoPartModel().count > 1
+
+                Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                Row {
+                    id: partsHeader
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.leftMargin: 8
+                    spacing: 5
+                    height: 11
+
+                    Canvas {
+                        width: 11
+                        height: 11
+                        anchors.verticalCenter: parent.verticalCenter
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            ctx.strokeStyle = primaryLight
+                            ctx.lineWidth = 1.4
+                            ctx.lineCap = "round"
+                            ctx.beginPath()
+                            ctx.moveTo(1.5, 2); ctx.lineTo(1.5, 9)
+                            ctx.moveTo(4.5, 2); ctx.lineTo(4.5, 9)
+                            ctx.moveTo(7.5, 2); ctx.lineTo(7.5, 9)
+                            ctx.moveTo(10, 2); ctx.lineTo(10, 9)
+                            ctx.stroke()
+                        }
+                    }
+
+                    Text {
+                        text: "选集"
+                        color: primaryLight
+                        font.family: fontFamily
+                        font.pixelSize: 10
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                        text: controller && controller.videoPartModel()
+                              ? controller.videoPartModel().count + "P"
+                              : ""
+                        color: "#64748b"
+                        font.family: fontFamily
+                        font.pixelSize: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                ListView {
+                    id: videoPartList
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: partsHeader.bottom
+                    anchors.topMargin: 5
+                    height: 60
+                    orientation: ListView.Horizontal
+                    clip: true
+                    spacing: 6
+                    leftMargin: 8
+                    rightMargin: 8
+
+                    model: controller ? controller.videoPartModel() : null
+                    visible: model && model.count > 0
+
+                    delegate: Components.VideoPartCard {
+                        pNumber: model.page
+                        partTitle: model.part
+                        durationText: model.durationText
+                        isCurrent: controller && controller.videoCid === model.cid
+
+                        onClicked: {
+                            if (!controller) return
+                            detailPage.savedPartListX = videoPartList.contentX
+                            detailPage.savedPartIndex = index
+                            if (controller.videoCid === model.cid) {
+                                detailPage.fullPartTitleText = model.part || ""
+                                detailPage.fullPartTitleVisible = true
+                            } else {
+                                controller.playVideoPart(index)
+                                detailPage.restorePartListPosition()
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────
+            // 简介
+            // ─────────────────────────────────────────────
+            Rectangle {
+                id: descCard
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                radius: 10
+                color: surfaceColor
+                border.color: surfaceBorder
+                border.width: 1
+                height: descColumn.implicitHeight + 18
+
+                Column {
+                    id: descColumn
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    spacing: 6
+
+                    Row {
+                        spacing: 5
+                        height: 11
+
+                        Canvas {
+                            width: 11
+                            height: 11
+                            anchors.verticalCenter: parent.verticalCenter
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.strokeStyle = primaryLight
+                                ctx.lineWidth = 1.2
+                                ctx.lineCap = "round"
+                                ctx.lineJoin = "round"
+                                ctx.beginPath()
+                                ctx.moveTo(2, 1); ctx.lineTo(7, 1)
+                                ctx.lineTo(10, 4); ctx.lineTo(10, 10)
+                                ctx.lineTo(2, 10); ctx.closePath()
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.moveTo(7, 1); ctx.lineTo(7, 4); ctx.lineTo(10, 4)
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.moveTo(4, 6); ctx.lineTo(8, 6)
+                                ctx.moveTo(4, 8); ctx.lineTo(8, 8)
+                                ctx.stroke()
+                            }
+                        }
+
+                        Text {
+                            text: "简介"
+                            color: primaryLight
+                            font.family: fontFamily
+                            font.pixelSize: 10
+                            font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Text {
+                            text: detailPage.bvid && detailPage.bvid.length > 0
+                                  ? "· " + detailPage.bvid
+                                  : ""
+                            color: "#64748b"
+                            font.family: fontFamily
+                            font.pixelSize: 9
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Qt.rgba(1, 1, 1, 0.06)
+                    }
+
+                    Flickable {
+                        id: descFlick
+                        width: parent.width
+                        height: Math.min(descText.implicitHeight, 80)
+                        contentHeight: descText.implicitHeight
+                        flickableDirection: Flickable.VerticalFlick
+                        clip: true
+                        boundsBehavior: Flickable.DragOverBounds
+
+                        Text {
+                            id: descText
+                            width: parent.width
+                            text: detailPage.descRichText(controller && controller.videoDesc
+                                  ? controller.videoDesc : "暂无简介")
+                            textFormat: Text.RichText
+                            color: "#94a3b8"
+                            font.family: fontFamily
+                            font.pixelSize: 10
+                            wrapMode: Text.Wrap
+                            lineHeight: 1.35
+                            linkColor: "#60a5fa"
+                            onLinkActivated: detailPage.openBvidFromDesc(link)
+                        }
+                    }
+                }
+            }
+
+            // 底部保留轻微呼吸感
+            Item {
+                width: parent.width
+                height: 3
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ActionButton 组件 - 主操作按钮（图标在上、文本在下）
+    // ═══════════════════════════════════════════════════════════
+    component ActionButton: Rectangle {
+        id: actionBtn
+        property string iconType: ""
+        property string label: ""
+        property bool active: false
+        property color activeColor: "#f472b6"
+        signal triggered()
+
+        height: 36
+        radius: 8
+        color: active
+               ? Qt.rgba(activeColor.r, activeColor.g, activeColor.b, 0.18)
+               : (actionArea.pressed ? Qt.rgba(1, 1, 1, 0.13) : Qt.rgba(1, 1, 1, 0.05))
+        border.color: active
+                      ? Qt.rgba(activeColor.r, activeColor.g, activeColor.b, 0.55)
+                      : Qt.rgba(1, 1, 1, 0.08)
+        border.width: 1
+
+        scale: actionArea.pressed ? 0.92 : 1.0
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 120 } }
+        Behavior on border.color { ColorAnimation { duration: 120 } }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 2
+
+            Canvas {
+                id: actIcon
+                width: 14
+                height: 14
+                anchors.horizontalCenter: parent.horizontalCenter
+                property bool _active: actionBtn.active
+                property color _activeColor: actionBtn.activeColor
+                property string _type: actionBtn.iconType
+                on_ActiveChanged: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    var col = _active ? _activeColor : "#cbd5e1"
+
+                    if (_type === "like") {
+                        ctx.fillStyle = col
+                        ctx.beginPath()
+                        ctx.moveTo(7, 13)
+                        ctx.bezierCurveTo(1, 8, 0, 4, 3, 2)
+                        ctx.bezierCurveTo(5, 1, 7, 2, 7, 4.5)
+                        ctx.bezierCurveTo(7, 2, 9, 1, 11, 2)
+                        ctx.bezierCurveTo(14, 4, 13, 8, 7, 13)
+                        ctx.fill()
+                    } else if (_type === "coin") {
+                        ctx.strokeStyle = col
+                        ctx.lineWidth = 1.4
+                        ctx.beginPath()
+                        ctx.arc(7, 7, 6, 0, Math.PI * 2)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.arc(7, 7, 3, 0, Math.PI * 2)
+                        ctx.stroke()
+                    } else if (_type === "star") {
+                        ctx.fillStyle = col
+                        ctx.beginPath()
+                        var cx = 7, cy = 7, outerR = 6.5, innerR = 2.6
+                        for (var i = 0; i < 5; i++) {
+                            var oA = (i * 72 - 90) * Math.PI / 180
+                            var iA = ((i * 72) + 36 - 90) * Math.PI / 180
+                            if (i === 0) ctx.moveTo(cx + outerR * Math.cos(oA), cy + outerR * Math.sin(oA))
+                            else ctx.lineTo(cx + outerR * Math.cos(oA), cy + outerR * Math.sin(oA))
+                            ctx.lineTo(cx + innerR * Math.cos(iA), cy + innerR * Math.sin(iA))
+                        }
+                        ctx.closePath()
+                        ctx.fill()
+                    } else if (_type === "watchlater") {
+                        ctx.strokeStyle = col
+                        ctx.lineWidth = 1.4
+                        ctx.lineCap = "round"
+                        ctx.beginPath()
+                        ctx.arc(7, 7, 5.5, 0, Math.PI * 2)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(7, 7); ctx.lineTo(7, 4.2)
+                        ctx.moveTo(7, 7); ctx.lineTo(9.7, 8.4)
+                        ctx.stroke()
+                    }
+                }
+            }
+
+            Text {
+                text: actionBtn.label
+                color: actionBtn.active ? actionBtn.activeColor : "#cbd5e1"
+                font.family: fontFamily
+                font.pixelSize: 9
+                font.bold: actionBtn.active
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+
+        MouseArea {
+            id: actionArea
+            anchors.fill: parent
+            onClicked: actionBtn.triggered()
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ToolButton 组件 - 工具按钮（图标 + 横向文本）
+    // ═══════════════════════════════════════════════════════════
+    component ToolButton: Rectangle {
+        id: toolBtn
+        property string iconType: ""
+        property string label: ""
+        signal triggered()
+
+        height: 22
+        radius: 11
+        color: toolArea.pressed ? primaryDark : primaryColor
+        scale: toolArea.pressed ? 0.92 : 1.0
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 100 } }
+
+        Row {
+            anchors.centerIn: parent
+            anchors.horizontalCenterOffset: -3
+            spacing: 3
+
+            Canvas {
+                width: 10
+                height: 10
+                anchors.verticalCenter: parent.verticalCenter
+                property string _type: toolBtn.iconType
+
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    ctx.strokeStyle = "white"
+                    ctx.fillStyle = "white"
+                    ctx.lineWidth = 1.2
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+
+                    if (_type === "comment") {
+                        ctx.beginPath()
+                        ctx.moveTo(2, 1.5)
+                        ctx.lineTo(9, 1.5)
+                        ctx.quadraticCurveTo(10.5, 1.5, 10.5, 3)
+                        ctx.lineTo(10.5, 6.5)
+                        ctx.quadraticCurveTo(10.5, 8, 9, 8)
+                        ctx.lineTo(5, 8)
+                        ctx.lineTo(2.5, 10.2)
+                        ctx.lineTo(2.5, 8)
+                        ctx.quadraticCurveTo(0.5, 8, 0.5, 6.5)
+                        ctx.lineTo(0.5, 3)
+                        ctx.quadraticCurveTo(0.5, 1.5, 2, 1.5)
+                        ctx.closePath()
+                        ctx.stroke()
+                    } else if (_type === "download") {
+                        ctx.beginPath()
+                        ctx.moveTo(5.5, 1); ctx.lineTo(5.5, 7.2)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(2.5, 4.8); ctx.lineTo(5.5, 7.8); ctx.lineTo(8.5, 4.8)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(1, 10); ctx.lineTo(10, 10)
+                        ctx.stroke()
+                    } else if (_type === "subtitle") {
+                        ctx.beginPath()
+                        ctx.rect(0.5, 2, 10, 7)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(2, 5); ctx.lineTo(4, 5)
+                        ctx.moveTo(5, 5); ctx.lineTo(8.5, 5)
+                        ctx.moveTo(2, 7); ctx.lineTo(5, 7)
+                        ctx.moveTo(6, 7); ctx.lineTo(8.5, 7)
+                        ctx.stroke()
+                    }
+                }
+            }
+
+            Text {
+                text: toolBtn.label
+                color: "white"
+                font.family: fontFamily
+                font.pixelSize: 8
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
+                width: Math.min(implicitWidth, toolBtn.width - 20)
+            }
+        }
+
+        MouseArea {
+            id: toolArea
+            anchors.fill: parent
+            onClicked: toolBtn.triggered()
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════
     // 全屏标题浮层
     // ═══════════════════════════════════════════════════════════
     Rectangle {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.8)
-        z: 200 // 确保在最顶层
+        color: Qt.rgba(0, 0, 0, 0.82)
+        z: 200
         visible: detailPage.fullTitleVisible
 
         opacity: visible ? 1 : 0
@@ -129,7 +1225,7 @@ Rectangle {
 
     Rectangle {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.8)
+        color: Qt.rgba(0, 0, 0, 0.82)
         z: 201
         visible: detailPage.fullPartTitleVisible
 
@@ -151,1217 +1247,6 @@ Rectangle {
         MouseArea {
             anchors.fill: parent
             onClicked: detailPage.fullPartTitleVisible = false
-        }
-    }
-
-    // 背景渐变
-    Rectangle {
-        anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#0d1117" }
-            GradientStop { position: 0.5; color: "#111827" }
-            GradientStop { position: 1.0; color: "#0f172a" }
-        }
-    }
-
-    Row {
-        anchors.fill: parent
-        spacing: 0
-
-        // ═══════════════════════════════════════════════════════════
-        // 左侧固定列 - 装饰线
-        // ═══════════════════════════════════════════════════════════
-        Rectangle {
-            id: leftBar
-            width: 8
-            height: parent.height
-            color: "transparent"
-
-            // 装饰线
-            Rectangle {
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                anchors.margins: 8
-                width: 1
-                color: Qt.rgba(1, 1, 1, 0.06)
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // 右侧主内容区 - 可垂直滑动
-        // ═══════════════════════════════════════════════════════════
-        Flickable {
-            id: mainFlick
-            width: parent.width - leftBar.width
-            height: parent.height
-            contentHeight: mainColumn.height + 16
-            flickableDirection: Flickable.VerticalFlick
-            clip: true
-            boundsBehavior: Flickable.DragOverBounds
-
-            Column {
-                id: mainColumn
-                width: parent.width
-                spacing: 8
-                topPadding: 8
-
-                // 退出按钮
-                Rectangle {
-                    id: backBtn
-                    anchors.left: parent.left
-                    anchors.leftMargin: 16
-                    width: 28
-                    height: 28
-                    radius: 14
-                    color: backArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.4) : Qt.rgba(1, 1, 1, 0.1)
-
-                    Behavior on color { ColorAnimation { duration: 150 } }
-                    scale: backArea.pressed ? 0.85 : 1.0
-                    Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-
-                    // iOS 风格返回箭头
-                    Canvas {
-                        anchors.centerIn: parent
-                        anchors.horizontalCenterOffset: -1
-                        width: 14
-                        height: 14
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            ctx.strokeStyle = primaryLight
-                            ctx.lineWidth = 2.2
-                            ctx.lineCap = "round"
-                            ctx.lineJoin = "round"
-                            ctx.beginPath()
-                            ctx.moveTo(9, 2)
-                            ctx.lineTo(3, 7)
-                            ctx.lineTo(9, 12)
-                            ctx.stroke()
-                        }
-                    }
-
-                    MouseArea {
-                        id: backArea
-                        anchors.fill: parent
-                        anchors.margins: -2
-                        onClicked: detailPage.backClicked()
-                    }
-                }
-
-                // ─────────────────────────────────────
-                // 顶部区域：封面 + 信息
-                // ─────────────────────────────────────
-                Item {
-                    width: parent.width - 16
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    height: 72
-
-                    // 封面（圆角裁切）
-                    Rectangle {
-                        id: coverContainer
-                        width: 108
-                        height: parent.height
-                        radius: 10
-                        color: "#1e293b"
-                        anchors.left: parent.left
-                        clip: true
-
-                        Image {
-                            id: coverImage
-                            anchors.fill: parent
-                            source: controller && controller.videoPic
-                            ? "image://bili/" + encodeURIComponent(controller.videoPic) : ""
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            smooth: true
-                            mipmap: true
-                            opacity: status === Image.Ready ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
-                        }
-
-                        // 渐变遮罩
-                        Rectangle {
-                            anchors.fill: parent
-                            gradient: Gradient {
-                                GradientStop { position: 0.0; color: "transparent" }
-                                GradientStop { position: 0.6; color: "transparent" }
-                                GradientStop { position: 1.0; color: "#aa000000" }
-                            }
-                        }
-                    }
-
-                    // 播放按钮（在封面上层）
-                    Rectangle {
-                        anchors.centerIn: coverContainer
-                        width: 38
-                        height: 38
-                        radius: 19
-                        color: playArea.pressed ? primaryDark : primaryColor
-                        border.color: Qt.rgba(1, 1, 1, 0.25)
-                        border.width: 2
-
-                        scale: playArea.pressed ? 0.82 : 1.0
-                        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        // 发光效果
-                        Rectangle {
-                            anchors.centerIn: parent
-                            width: parent.width + 8
-                            height: parent.height + 8
-                            radius: width / 2
-                            color: "transparent"
-                            border.color: Qt.rgba(0.23, 0.51, 0.96, 0.35)
-                            border.width: 3
-                            opacity: playArea.pressed ? 0 : 0.7
-                            Behavior on opacity { NumberAnimation { duration: 200 } }
-                        }
-
-                        // 播放三角形
-                        Canvas {
-                            anchors.centerIn: parent
-                            anchors.horizontalCenterOffset: 2
-                            width: 16
-                            height: 16
-                            onPaint: {
-                                var ctx = getContext("2d")
-                                ctx.clearRect(0, 0, width, height)
-                                ctx.fillStyle = "white"
-                                ctx.beginPath()
-                                ctx.moveTo(3, 2)
-                                ctx.lineTo(14, 8)
-                                ctx.lineTo(3, 14)
-                                ctx.closePath()
-                                ctx.fill()
-                            }
-                        }
-
-                        MouseArea {
-                        id: playArea
-                        anchors.fill: parent
-                        anchors.margins: -8
-                        onClicked: detailPage.playRequested(detailPage.selectedQuality)
-                        }
-                    }
-
-                    // 时长标签
-                    Rectangle {
-                        anchors.right: coverContainer.right
-                        anchors.bottom: coverContainer.bottom
-                        anchors.margins: 5
-                        height: 16
-                        width: durationText.implicitWidth + 8
-                        radius: 4
-                        color: "#cc000000"
-
-                        Text {
-                            id: durationText
-                            anchors.centerIn: parent
-                            text: controller ? controller.videoDuration : "00:00"
-                            color: "white"
-                            font.pixelSize: 9
-                            font.family: fontFamily
-                        }
-                    }
-
-                    // 合集标识（多P视频）
-                    Rectangle {
-                        anchors.right: coverContainer.right
-                        anchors.bottom: coverContainer.bottom
-                        anchors.rightMargin: 5
-                        anchors.bottomMargin: 24
-                        height: 16
-                        width: collectionText.implicitWidth + 10
-                        radius: 4
-                        color: Qt.rgba(0.6, 0.6, 0.6, 0.9)
-                        visible: controller && controller.videoPartModel() && controller.videoPartModel().count > 1
-
-                        Text {
-                            id: collectionText
-                            anchors.centerIn: parent
-                            text: "合集"
-                            color: "#222222"
-                            font.pixelSize: 9
-                            font.family: fontFamily
-                            font.bold: true
-                        }
-                    }
-
-                    // 右侧信息
-                    Column {
-                        anchors.left: coverContainer.right
-                        anchors.leftMargin: 10
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        width: parent.width - 118
-                        spacing: 5
-
-                        // 标题
-                        Text {
-                            id: titleText
-                            width: parent.width
-                            height: 34
-                            text: controller ? controller.videoTitle : ""
-                            color: "#f1f5f9"
-                            font.family: fontFamily
-                            font.pixelSize: 12
-                            font.bold: true
-                            wrapMode: Text.Wrap
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                            lineHeight: 1.2
-
-                            opacity: controller ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 300 } }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: detailPage.fullTitleVisible = true
-                            }
-                        }
-
-                        // UP 主和评论按钮
-                        Flickable {
-                            id: upFlick
-                            width: parent.width
-                            height: 20
-                            contentWidth: contentRow.implicitWidth
-                            flickableDirection: Flickable.HorizontalFlick
-                            clip: true
-                            boundsBehavior: Flickable.DragOverBounds
-                            interactive: contentWidth > width
-
-                            Row {
-                                id: contentRow
-                                height: parent.height
-                                spacing: 8
-
-                                // UP 主标签
-                                Rectangle {
-                                    height: 20
-                                    radius: 10
-                                    color: upArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.25) : Qt.rgba(0.23, 0.51, 0.96, 0.15)
-                                    border.color: Qt.rgba(0.23, 0.51, 0.96, 0.25)
-                                    border.width: 1
-                                    width: upRow.implicitWidth + 12
-
-                                    scale: upArea.pressed ? 0.9 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                                    Behavior on color { ColorAnimation { duration: 120 } }
-
-                                    MouseArea {
-                                        id: upArea
-                                        anchors.fill: parent
-                                        onClicked: {
-                                            if (controller && controller.videoOwnerMid > 0) {
-                                                detailPage.upRequested(controller.videoOwnerMid)
-                                            }
-                                        }
-                                    }
-
-                                    Row {
-                                        id: upRow
-                                        anchors.centerIn: parent
-                                        spacing: 6
-
-                                        Rectangle {
-                                            width: 16
-                                            height: 16
-                                            radius: 8
-                                            color: "#1e293b"
-                                            anchors.verticalCenter: parent.verticalCenter
-
-                                            Image {
-                                                id: ownerAvatarImage
-                                                anchors.fill: parent
-                                                smooth: true
-                                                mipmap: true
-                                                source: controller && controller.videoOwnerFace
-                                                ? "image://bili/" + encodeURIComponent(controller.videoOwnerFace) : ""
-                                                fillMode: Image.PreserveAspectCrop
-                                                asynchronous: true
-                                                visible: false
-                                            }
-
-                                            OpacityMask {
-                                                anchors.fill: ownerAvatarImage
-                                                source: ownerAvatarImage
-                                                maskSource: Rectangle {
-                                                    width: ownerAvatarImage.width
-                                                    height: ownerAvatarImage.height
-                                                    radius: Math.min(width, height) / 2
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            text: controller ? controller.videoOwner : ""
-                                            color: primaryLight
-                                            font.family: fontFamily
-                                            font.pixelSize: 10
-                                            font.bold: true
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            elide: Text.ElideRight
-                                            width: Math.min(implicitWidth, 100)
-                                        }
-                                    }
-                                }
-
-                                // 评论按钮
-                                Rectangle {
-                                    width: 72
-                                    height: 20
-                                    radius: 10
-                                    color: commentArea.pressed ? primaryDark : primaryColor
-
-                                    scale: commentArea.pressed ? 0.88 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                                    Row {
-                                        anchors.centerIn: parent
-                                        spacing: 4
-
-                                        // 评论图标
-                                        Canvas {
-                                            width: 11
-                                            height: 11
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            onPaint: {
-                                                var ctx = getContext("2d")
-                                                ctx.clearRect(0, 0, width, height)
-                                                ctx.strokeStyle = "white"
-                                                ctx.lineWidth = 1.2
-                                                ctx.lineCap = "round"
-                                                ctx.lineJoin = "round"
-                                                ctx.beginPath()
-                                                ctx.moveTo(2, 1)
-                                                ctx.lineTo(9, 1)
-                                                ctx.quadraticCurveTo(10, 1, 10, 2)
-                                                ctx.lineTo(10, 6)
-                                                ctx.quadraticCurveTo(10, 7, 9, 7)
-                                                ctx.lineTo(4, 7)
-                                                ctx.lineTo(2, 10)
-                                                ctx.lineTo(2, 7)
-                                                ctx.lineTo(2, 7)
-                                                ctx.quadraticCurveTo(1, 7, 1, 6)
-                                                ctx.lineTo(1, 2)
-                                                ctx.quadraticCurveTo(1, 1, 2, 1)
-                                                ctx.stroke()
-                                            }
-                                        }
-
-                                        Text {
-                                            text: "查看评论"
-                                            color: "white"
-                                            font.family: fontFamily
-                                            font.pixelSize: 9
-                                            font.bold: true
-                                            anchors.verticalCenter: parent.verticalCenter
-                                        }
-                                    }
-
-                                    MouseArea {
-                                        id: commentArea
-                                        anchors.fill: parent
-                                        onClicked: detailPage.commentsRequested()
-                                    }
-                                }
-
-                                // 下载按钮
-                                Rectangle {
-                                    width: 48
-                                    height: 20
-                                    radius: 10
-                                    color: downloadArea.pressed ? primaryDark : primaryColor
-
-                                    scale: downloadArea.pressed ? 0.88 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                                    Text {
-                                        text: "下载"
-                                        color: "white"
-                                        font.family: fontFamily
-                                        font.pixelSize: 9
-                                        font.bold: true
-                                        anchors.centerIn: parent
-                                    }
-
-                                    MouseArea {
-                                        id: downloadArea
-                                        anchors.fill: parent
-                                        onClicked: {
-                                            if (controller) {
-                                                controller.downloadVideoToDisk(detailPage.selectedQuality);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 字幕按钮
-                                Rectangle {
-                                    width: 55
-                                    height: 20
-                                    radius: 10
-                                    color: subtitleArea.pressed ? primaryDark : primaryColor
-
-                                    scale: subtitleArea.pressed ? 0.88 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                                    Text {
-                                        text: {
-                                            if (controller && controller.selectedSubtitleLabel && controller.selectedSubtitleLabel.length > 0) {
-                                                return "字幕:" + controller.selectedSubtitleLabel;
-                                            }
-                                            return "字幕";
-                                        }
-                                        color: "white"
-                                        font.family: fontFamily
-                                        font.pixelSize: 9
-                                        font.bold: true
-                                        anchors.centerIn: parent
-                                        elide: Text.ElideRight
-                                        width: parent.width - 6
-                                        horizontalAlignment: Text.AlignHCenter
-                                    }
-
-                                    MouseArea {
-                                        id: subtitleArea
-                                        anchors.fill: parent
-                                        onClicked: {
-                                            if (controller) {
-                                                controller.fetchSubtitleList();
-                                            }
-                                            detailPage.subtitlePickerVisible = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ─────────────────────────────────────
-                // 清晰度选择器
-                // ─────────────────────────────────────
-                Flickable {
-                    id: qualityFlick
-                    anchors.left: parent.left
-                    anchors.leftMargin: 16
-                    anchors.right: parent.right
-                    anchors.rightMargin: 16
-                    height: 22
-                    contentWidth: qualityRow.implicitWidth
-                    contentHeight: height
-                    flickableDirection: Flickable.HorizontalFlick
-                    clip: true
-                    boundsBehavior: Flickable.DragOverBounds
-
-                    Row {
-                        id: qualityRow
-                        spacing: 6
-                        height: parent.height
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.verticalCenterOffset: 2
-
-                        Text {
-                            text: "清晰度: " + qualityLabel(detailPage.selectedQuality)
-                            color: primaryLight
-                            font.family: fontFamily
-                            font.pixelSize: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        Rectangle {
-                            height: 18
-                            width: 38
-                            radius: 9
-                            color: refreshArea.pressed ? primaryDark : Qt.rgba(1, 1, 1, 0.08)
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.12)
-
-                            scale: refreshArea.pressed ? 0.9 : 1.0
-                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 100 } }
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "刷新"
-                                color: "#cbd5e1"
-                                font.family: fontFamily
-                                font.pixelSize: 9
-                                font.bold: true
-                            }
-
-                            MouseArea {
-                                id: refreshArea
-                                anchors.fill: parent
-                                onClicked: {
-                                    if (controller) {
-                                        controller.fetchAcceptQualities(detailPage.selectedQuality)
-                                    }
-                                }
-                            }
-                        }
-
-                        Repeater {
-                            model: detailPage.availableQualities
-
-                            Rectangle {
-                                id: qualityItem
-                                height: 18
-                                width: Math.max(38, qualityText.implicitWidth + 10)
-                                radius: 9
-                                color: detailPage.selectedQuality === modelData
-                                       ? primaryColor
-                                       : Qt.rgba(1, 1, 1, 0.08)
-                                border.width: 1
-                                border.color: detailPage.selectedQuality === modelData
-                                               ? primaryLight
-                                               : Qt.rgba(1, 1, 1, 0.12)
-
-                                scale: qualityArea.pressed ? 0.9 : 1.0
-                                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                                Behavior on color { ColorAnimation { duration: 100 } }
-
-                                Text {
-                                    id: qualityText
-                                    anchors.centerIn: parent
-                                    text: qualityLabel(modelData) + (detailPage.selectedQuality === modelData ? " ✓" : "")
-                                    color: detailPage.selectedQuality === modelData
-                                           ? "white"
-                                           : "#cbd5e1"
-                                    font.family: fontFamily
-                                    font.pixelSize: 9
-                                    font.bold: detailPage.selectedQuality === modelData
-                                }
-
-                                MouseArea {
-                                    id: qualityArea
-                                    anchors.fill: parent
-                                    onClicked: {
-                                        detailPage.selectedQuality = modelData
-                                        if (detailPage.rootRef) {
-                                            detailPage.rootRef.playQualitySelected = modelData
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ─────────────────────────────────────
-                // Badge 信息栏（可横向滑动）
-                // ─────────────────────────────────────
-                Flickable {
-                    id: badgeFlick
-                    width: parent.width
-                    height: 28
-                    contentWidth: badgeRow.width
-                    flickableDirection: Flickable.HorizontalFlick
-                    clip: true
-                    boundsBehavior: Flickable.DragOverBounds
-
-                    Row {
-                        id: badgeRow
-                        height: parent.height
-                        spacing: 6
-                        leftPadding: 8
-                        rightPadding: 8
-
-                        // 播放量
-                        BadgeItem {
-                            iconType: "play"
-                            value: controller ? controller.videoViews : "0"
-                            iconColor: primaryLight
-                        }
-
-                        // 点赞（可点击）
-                        Rectangle {
-                            width: likeBadgeContent.width + 14
-                            height: 24
-                            radius: 12
-                            color: controller && controller.isLiked ? Qt.rgba(0.96, 0.45, 0.71, 0.2) : Qt.rgba(1, 1, 1, 0.07)
-                            border.color: controller && controller.isLiked ? Qt.rgba(0.96, 0.45, 0.71, 0.6) : Qt.rgba(1, 1, 1, 0.08)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            scale: likeBadgeArea.pressed ? 0.9 : 1.0
-                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 100 } }
-
-                            Row {
-                                id: likeBadgeContent
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Canvas {
-                                    width: 12
-                                    height: 12
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    property bool liked: controller ? controller.isLiked : false
-                                    onLikedChanged: requestPaint()
-
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        ctx.fillStyle = controller && controller.isLiked ? "#f472b6" : "#f472b6"
-                                        ctx.beginPath()
-                                        ctx.moveTo(6, 11)
-                                        ctx.bezierCurveTo(1, 7, 0, 4, 2.5, 2)
-                                        ctx.bezierCurveTo(4, 1, 6, 2, 6, 4)
-                                        ctx.bezierCurveTo(6, 2, 8, 1, 9.5, 2)
-                                        ctx.bezierCurveTo(12, 4, 11, 7, 6, 11)
-                                        ctx.fill()
-                                    }
-                                }
-
-                                Text {
-                                    text: controller ? controller.videoLikes : "0"
-                                    color: controller && controller.isLiked ? "#f472b6" : "#d1d5db"
-                                    font.family: fontFamily
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            MouseArea {
-                                id: likeBadgeArea
-                                anchors.fill: parent
-                                onClicked: {
-                                    if (!controller) return
-                                    controller.toggleLike()
-                                }
-                            }
-                        }
-
-                        // 投币（可点击）
-                        Rectangle {
-                            width: coinBadgeContent.width + 14
-                            height: 24
-                            radius: 12
-                            color: controller && controller.isCoined ? Qt.rgba(0.98, 0.75, 0.14, 0.2) : Qt.rgba(1, 1, 1, 0.07)
-                            border.color: controller && controller.isCoined ? Qt.rgba(0.98, 0.75, 0.14, 0.6) : Qt.rgba(1, 1, 1, 0.08)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            scale: coinBadgeArea.pressed ? 0.9 : 1.0
-                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 100 } }
-
-                            Row {
-                                id: coinBadgeContent
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Canvas {
-                                    width: 12
-                                    height: 12
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    property bool coined: controller ? controller.isCoined : false
-                                    onCoinedChanged: requestPaint()
-
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        ctx.strokeStyle = controller && controller.isCoined ? "#fbbf24" : "#fbbf24"
-                                        ctx.lineWidth = 1.3
-                                        ctx.beginPath()
-                                        ctx.arc(6, 6, 5, 0, Math.PI * 2)
-                                        ctx.stroke()
-                                        ctx.beginPath()
-                                        ctx.arc(6, 6, 2.5, 0, Math.PI * 2)
-                                        ctx.stroke()
-                                    }
-                                }
-
-                                Text {
-                                    text: controller ? controller.videoCoins : "0"
-                                    color: controller && controller.isCoined ? "#fbbf24" : "#d1d5db"
-                                    font.family: fontFamily
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            MouseArea {
-                                id: coinBadgeArea
-                                anchors.fill: parent
-                                onClicked: {
-                                    if (!controller) return
-                                    if (controller.isCoined) {
-                                        controller.toastMessage("已经投过币了")
-                                    } else {
-                                        detailPage.coinPickerVisible = true
-                                    }
-                                }
-                            }
-                        }
-
-                        // 收藏（可点击）
-                        Rectangle {
-                            width: badgeContent.width + 14
-                            height: 24
-                            radius: 12
-                            color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.2) : Qt.rgba(1, 1, 1, 0.07)
-                            border.color: controller && controller.isFavorited ? Qt.rgba(0.95, 0.47, 0.66, 0.6) : Qt.rgba(1, 1, 1, 0.08)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            scale: favBadgeArea.pressed ? 0.9 : 1.0
-                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 100 } }
-
-                            Row {
-                                id: badgeContent
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Canvas {
-                                    width: 12
-                                    height: 12
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    property bool fav: controller ? controller.isFavorited : false
-                                    onFavChanged: requestPaint()
-
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        var col = controller && controller.isFavorited ? "#fb7299" : "#a78bfa"
-                                        ctx.fillStyle = col
-                                        ctx.beginPath()
-                                        var cx = 6, cy = 6, outerR = 5.5, innerR = 2.2
-                                        for (var i = 0; i < 5; i++) {
-                                            var outerAngle = (i * 72 - 90) * Math.PI / 180
-                                            var innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180
-                                            if (i === 0) {
-                                                ctx.moveTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
-                                            } else {
-                                                ctx.lineTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
-                                            }
-                                            ctx.lineTo(cx + innerR * Math.cos(innerAngle), cy + innerR * Math.sin(innerAngle))
-                                        }
-                                        ctx.closePath()
-                                        ctx.fill()
-                                    }
-                                }
-
-                                Text {
-                                    text: controller ? controller.videoFavorites : "0"
-                                    color: controller && controller.isFavorited ? "#fb7299" : "#d1d5db"
-                                    font.family: fontFamily
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            MouseArea {
-                                id: favBadgeArea
-                                anchors.fill: parent
-                                onClicked: {
-                                    if (!controller) return
-                                    if (controller.isFavorited) {
-                                        controller.toggleFavorite()
-                                    } else {
-                                        controller.fetchFavoriteFolders()
-                                        detailPage.favoritePickerVisible = true
-                                    }
-                                }
-                            }
-                        }
-
-                        // 稍后再看
-                        Rectangle {
-                            width: toviewBadgeContent.width + 18
-                            height: 24
-                            radius: 12
-                            color: controller && controller.isWatchLater
-                                   ? Qt.rgba(0.23, 0.51, 0.96, 0.22)
-                                   : (toviewBadgeArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.25) : Qt.rgba(1, 1, 1, 0.07))
-                            border.color: controller && controller.isWatchLater
-                                          ? Qt.rgba(0.23, 0.51, 0.96, 0.6)
-                                          : Qt.rgba(0.23, 0.51, 0.96, 0.25)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            scale: toviewBadgeArea.pressed ? 0.9 : 1.0
-                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 100 } }
-
-                            Row {
-                                id: toviewBadgeContent
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Canvas {
-                                    width: 12
-                                    height: 12
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        ctx.strokeStyle = controller && controller.isWatchLater ? primaryColor : primaryLight
-                                        ctx.lineWidth = 1.4
-                                        ctx.lineCap = "round"
-                                        ctx.beginPath()
-                                        ctx.arc(6, 6, 4.8, 0, Math.PI * 2)
-                                        ctx.stroke()
-                                        ctx.beginPath()
-                                        ctx.moveTo(6, 6)
-                                        ctx.lineTo(6, 3.2)
-                                        ctx.moveTo(6, 6)
-                                        ctx.lineTo(8.6, 7.2)
-                                        ctx.stroke()
-                                        ctx.beginPath()
-                                        ctx.moveTo(9.5, 2.5)
-                                        ctx.lineTo(11.5, 2.5)
-                                        ctx.moveTo(10.5, 1.5)
-                                        ctx.lineTo(10.5, 3.5)
-                                        ctx.stroke()
-                                    }
-                                }
-
-                                Text {
-                                    text: controller && controller.isWatchLater ? "已加入" : "稍后再看"
-                                    color: controller && controller.isWatchLater ? primaryLight : "#cbd5e1"
-                                    font.family: fontFamily
-                                    font.pixelSize: 9
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            MouseArea {
-                                id: toviewBadgeArea
-                                anchors.fill: parent
-                                onClicked: {
-                                    if (controller) controller.toggleWatchLater()
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            visible: false
-                        }
-
-                        // 弹幕
-                        BadgeItem {
-                            iconType: "danmaku"
-                            value: controller ? controller.videoDanmaku : "0"
-                            iconColor: "#34d399"
-                        }
-                    }
-                }
-
-                // ─────────────────────────────────────
-                // 简介区域（大圆角矩形，可滑动）
-                // ─────────────────────────────────────
-                Rectangle {
-                    id: descCard
-                    width: parent.width - 16
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    radius: 12
-                    color: Qt.rgba(1, 1, 1, 0.05)
-                    border.color: Qt.rgba(1, 1, 1, 0.08)
-                    border.width: 1
-                    height: descColumn.implicitHeight + 20
-
-                    Column {
-                        id: descColumn
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.margins: 10
-                        spacing: 6
-
-                        // 简介标题
-                        Row {
-                            spacing: 5
-                            height: 12
-
-                            Canvas {
-                                width: 12
-                                height: 12
-                                anchors.bottom: parent.bottom
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.clearRect(0, 0, width, height)
-                                    ctx.strokeStyle = primaryLight
-                                    ctx.lineWidth = 1.3
-                                    ctx.lineCap = "round"
-                                    ctx.beginPath()
-                                    ctx.moveTo(2, 1)
-                                    ctx.lineTo(7, 1)
-                                    ctx.lineTo(10, 4)
-                                    ctx.lineTo(10, 11)
-                                    ctx.lineTo(2, 11)
-                                    ctx.closePath()
-                                    ctx.stroke()
-                                    ctx.beginPath()
-                                    ctx.moveTo(7, 1)
-                                    ctx.lineTo(7, 4)
-                                    ctx.lineTo(10, 4)
-                                    ctx.stroke()
-                                    ctx.beginPath()
-                                    ctx.moveTo(4, 6)
-                                    ctx.lineTo(8, 6)
-                                    ctx.moveTo(4, 8.5)
-                                    ctx.lineTo(8, 8.5)
-                                    ctx.stroke()
-                                }
-                            }
-
-                            Text {
-                                text: "简介"
-                                color: primaryLight
-                                font.family: fontFamily
-                                font.pixelSize: 11
-                                font.bold: true
-                                anchors.bottom: parent.bottom
-                            }
-
-                            Text {
-                                text: controller ? ("发布于 " + controller.videoPubDate) : ""
-                                color: "#94a3b8"
-                                font.family: fontFamily
-                                font.pixelSize: 9
-                                anchors.bottom: parent.bottom
-                            }
-                        }
-
-                        // 分割线
-                        Rectangle {
-                            width: parent.width
-                            height: 1
-                            color: Qt.rgba(1, 1, 1, 0.08)
-                        }
-
-                        // 简介内容（可滑动）
-                        Flickable {
-                            id: descFlick
-                            width: parent.width
-                            height: Math.min(descText.implicitHeight, 80)
-                            contentHeight: descText.implicitHeight
-                            flickableDirection: Flickable.VerticalFlick
-                            clip: true
-                            boundsBehavior: Flickable.DragOverBounds
-
-                            Text {
-                                id: descText
-                                width: parent.width
-                                text: controller && controller.videoDesc
-                                ? controller.videoDesc : "暂无简介"
-                                color: "#94a3b8"
-                                font.family: fontFamily
-                                font.pixelSize: 10
-                                wrapMode: Text.Wrap
-                                lineHeight: 1.35
-                            }
-                        }
-                    }
-                }
-
-                // ─────────────────────────────────────
-                // 分P 列表
-                // ─────────────────────────────────────
-                Item {
-                    width: parent.width
-                    height: videoPartList.visible ? videoPartList.height + 24 : 0
-                    visible: !controller.isLoading && videoPartList.model && videoPartList.model.count > 0
-
-                    Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-                    // 分P列表标题
-                    Row {
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.leftMargin: 16
-                        spacing: 5
-                        height: 12
-                        visible: videoPartList.visible
-
-                        Canvas {
-                            width: 12
-                            height: 12
-                            anchors.bottom: parent.bottom
-                            onPaint: {
-                                var ctx = getContext("2d")
-                                ctx.clearRect(0, 0, width, height)
-                                ctx.strokeStyle = primaryLight
-                                ctx.lineWidth = 1.3
-                                ctx.lineCap = "round"
-                                ctx.beginPath()
-                                ctx.moveTo(1, 2); ctx.lineTo(1, 10);
-                                ctx.moveTo(4, 2); ctx.lineTo(4, 10);
-                                ctx.moveTo(7, 2); ctx.lineTo(7, 10);
-                                ctx.moveTo(10, 2); ctx.lineTo(10, 10);
-                                ctx.stroke()
-                            }
-                        }
-
-                        Text {
-                            text: "视频选集"
-                            color: primaryLight
-                            font.family: fontFamily
-                            font.pixelSize: 11
-                            font.bold: true
-                            anchors.bottom: parent.bottom
-                        }
-                    }
-
-                    // 水平分P列表
-                    ListView {
-                        id: videoPartList
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.topMargin: 20
-                        height: 60
-                        orientation: ListView.Horizontal
-                        clip: true
-                        spacing: 8
-                        leftMargin: 16
-                        rightMargin: 16
-                        
-                        model: controller ? controller.videoPartModel() : null
-                        visible: model && model.count > 0
-
-                        delegate: Components.VideoPartCard {
-                            pNumber: model.page
-                            partTitle: model.part
-                            durationText: model.durationText
-                            isCurrent: controller && controller.videoCid === model.cid
-
-                            onClicked: {
-                                if (!controller) return
-                                detailPage.savedPartListX = videoPartList.contentX
-                                detailPage.savedPartIndex = index
-                                if (controller.videoCid === model.cid) {
-                                    detailPage.fullPartTitleText = model.part || ""
-                                    detailPage.fullPartTitleVisible = true
-                                } else {
-                                    controller.playVideoPart(index)
-                                    detailPage.restorePartListPosition()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // Badge 组件
-    // ═══════════════════════════════════════════════════════════
-    component BadgeItem: Rectangle {
-        property string iconType: ""
-        property string value: ""
-        property color iconColor: primaryLight
-
-        width: badgeContent.width + 14
-        height: 24
-        radius: 12
-        color: Qt.rgba(1, 1, 1, 0.07)
-        border.color: Qt.rgba(1, 1, 1, 0.08)
-        border.width: 1
-        anchors.verticalCenter: parent.verticalCenter
-
-        Row {
-            id: badgeContent
-            anchors.centerIn: parent
-            spacing: 4
-
-            Canvas {
-                width: 12
-                height: 12
-                anchors.verticalCenter: parent.verticalCenter
-
-                property string type: iconType
-                property color col: iconColor
-
-                onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.clearRect(0, 0, width, height)
-
-                    if (type === "play") {
-                        ctx.fillStyle = col
-                        ctx.beginPath()
-                        ctx.moveTo(2, 1)
-                        ctx.lineTo(11, 6)
-                        ctx.lineTo(2, 11)
-                        ctx.closePath()
-                        ctx.fill()
-                    } else if (type === "like") {
-                        ctx.fillStyle = col
-                        ctx.beginPath()
-                        ctx.moveTo(6, 11)
-                        ctx.bezierCurveTo(1, 7, 0, 4, 2.5, 2)
-                        ctx.bezierCurveTo(4, 1, 6, 2, 6, 4)
-                        ctx.bezierCurveTo(6, 2, 8, 1, 9.5, 2)
-                        ctx.bezierCurveTo(12, 4, 11, 7, 6, 11)
-                        ctx.fill()
-                    } else if (type === "coin") {
-                        ctx.strokeStyle = col
-                        ctx.lineWidth = 1.3
-                        ctx.beginPath()
-                        ctx.arc(6, 6, 5, 0, Math.PI * 2)
-                        ctx.stroke()
-                        ctx.beginPath()
-                        ctx.arc(6, 6, 2.5, 0, Math.PI * 2)
-                        ctx.stroke()
-                    } else if (type === "star") {
-                        ctx.fillStyle = col
-                        ctx.beginPath()
-                        var cx = 6, cy = 6, outerR = 5.5, innerR = 2.2
-                        for (var i = 0; i < 5; i++) {
-                            var outerAngle = (i * 72 - 90) * Math.PI / 180
-                            var innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180
-                            if (i === 0) {
-                                ctx.moveTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
-                            } else {
-                                ctx.lineTo(cx + outerR * Math.cos(outerAngle), cy + outerR * Math.sin(outerAngle))
-                            }
-                            ctx.lineTo(cx + innerR * Math.cos(innerAngle), cy + innerR * Math.sin(innerAngle))
-                        }
-                        ctx.closePath()
-                        ctx.fill()
-                    } else if (type === "danmaku") {
-                        ctx.strokeStyle = col
-                        ctx.lineWidth = 1.4
-                        ctx.lineCap = "round"
-                        ctx.beginPath()
-                        ctx.moveTo(0, 3)
-                        ctx.lineTo(9, 3)
-                        ctx.stroke()
-                        ctx.beginPath()
-                        ctx.moveTo(2, 6)
-                        ctx.lineTo(12, 6)
-                        ctx.stroke()
-                        ctx.beginPath()
-                        ctx.moveTo(0, 9)
-                        ctx.lineTo(7, 9)
-                        ctx.stroke()
-                    }
-                }
-            }
-
-            Text {
-                text: value
-                color: "#d1d5db"
-                font.family: fontFamily
-                font.pixelSize: 10
-                font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
-            }
         }
     }
 
@@ -1760,7 +1645,7 @@ Rectangle {
         anchors.fill: parent
         color: Qt.rgba(0, 0, 0, 0.75)
         visible: controller && controller.isDownloading
-        z: 100 // 确保在最顶层
+        z: 100
 
         Behavior on opacity { NumberAnimation { duration: 200 } }
         opacity: visible ? 1 : 0
@@ -1786,7 +1671,7 @@ Rectangle {
                 height: 4
                 radius: 2
                 color: Qt.rgba(1, 1, 1, 0.3)
-                
+
                 Rectangle {
                     width: parent.width * (controller ? controller.downloadProgress : 0)
                     height: parent.height
@@ -1797,13 +1682,10 @@ Rectangle {
             }
         }
 
-        // 点击取消下载
         MouseArea {
             anchors.fill: parent
             onClicked: {
-                if (controller) {
-                    controller.cancelDownload();
-                }
+                if (controller) controller.cancelDownload();
             }
         }
     }
@@ -1911,9 +1793,8 @@ Rectangle {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // 入场动画
+    // 入场动画 + 生命周期
     // ═══════════════════════════════════════════════════════════
-    // 记录最后一次刷新时间，避免 visible 变化导致的短时间重复刷新
     property double _lastRefreshMs: 0
 
     function refreshDetail(force) {
@@ -1925,16 +1806,13 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        // 初次进入详情页：拉取一次数据
         refreshDetail(true)
 
-        // 默认清晰度
         if (rootRef && rootRef.playQualitySelected > 0) {
             selectedQuality = rootRef.playQualitySelected
         }
         updateQualities()
 
-        // 尝试获取可用清晰度
         if (controller && controller.videoCid > 0) {
             controller.fetchAcceptQualities(selectedQuality)
             controller.fetchFavoriteStatus()
@@ -1946,18 +1824,14 @@ Rectangle {
 
     onVisibleChanged: {
         if (visible) {
-            // 返回详情页：先尝试恢复滚动位置（即使后面刷新导致模型重置，onVideoDetailChanged 里还会再恢复一次）
             restorePartListPosition()
 
-            // 兼容“每次重进详情都更新”需求：仍然 refreshDetail
-            // 但在刷新前缓存当前 cid，并在刷新完成后尝试恢复分P选择
             if (controller) {
                 savedPartCid = controller.videoCid || 0
             }
             _needRestorePartAfterRefresh = true
             refreshDetail(false)
         } else {
-            // 离开详情页时缓存分P列表位置
             if (videoPartList) savedPartListX = videoPartList.contentX
             if (controller) savedPartCid = controller.videoCid || 0
         }
@@ -1976,15 +1850,12 @@ Rectangle {
                 controller.fetchSubtitleList()
             }
 
-            // 详情数据刷新后：如发现 cid 被重置（常见为第一集），则恢复到用户之前选择的 index。
-            // 兼容“每次重进详情都更新”，但尽量不改变用户当前分P。
             if (detailPage._needRestorePartAfterRefresh && !detailPage._restoringPartNow) {
                 detailPage._needRestorePartAfterRefresh = false
 
                 var partModel = controller ? controller.videoPartModel() : null
                 var canRestore = partModel && partModel.count > detailPage.savedPartIndex
 
-                // 只有在 refresh 后 current cid 与 refresh 前 cid 不一致时才恢复，避免无意义重复 playVideoPart
                 if (canRestore && detailPage.savedPartIndex > 0
                         && (controller.videoCid || 0) !== (detailPage.savedPartCid || 0)) {
                     detailPage._restoringPartNow = true
@@ -2023,7 +1894,7 @@ Rectangle {
         }
 
         NumberAnimation {
-            target: leftBar
+            target: topBar
             property: "opacity"
             from: 0
             to: 1

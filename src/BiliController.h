@@ -71,10 +71,9 @@ class BiliController : public QObject {
   Q_PROPERTY(qint64 selectedSubtitleId READ selectedSubtitleId NOTIFY selectedSubtitleChanged)
   Q_PROPERTY(QString selectedSubtitleLabel READ selectedSubtitleLabel NOTIFY selectedSubtitleChanged)
   Q_PROPERTY(int subtitleFontSize READ subtitleFontSize NOTIFY subtitleStyleChanged)
-  Q_PROPERTY(double subtitleOutline READ subtitleOutline NOTIFY subtitleStyleChanged)
   Q_PROPERTY(int subtitleMarginV READ subtitleMarginV NOTIFY subtitleStyleChanged)
   Q_PROPERTY(double subtitleSpacing READ subtitleSpacing NOTIFY subtitleStyleChanged)
-  Q_PROPERTY(int subtitleBold READ subtitleBold NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(int subtitleWeight READ subtitleWeight NOTIFY subtitleStyleChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -154,10 +153,9 @@ public:
   qint64 selectedSubtitleId() const { return m_selectedSubtitleId; }
   QString selectedSubtitleLabel() const { return m_selectedSubtitleLabel; }
   int subtitleFontSize() const { return m_subtitleFontSize; }
-  double subtitleOutline() const { return m_subtitleOutline; }
   int subtitleMarginV() const { return m_subtitleMarginV; }
   double subtitleSpacing() const { return m_subtitleSpacing; }
-  int subtitleBold() const { return m_subtitleBold; }
+  int subtitleWeight() const { return m_subtitleWeight; }
 
   bool loggedIn() const;
   qint64 upUserMid() const { return m_upUserMid; }
@@ -231,10 +229,9 @@ public:
   Q_INVOKABLE void clearSelectedSubtitle();
   Q_INVOKABLE void launchExternalPlayerCurrentSelection();
   Q_INVOKABLE void setSubtitleFontSize(int value);
-  Q_INVOKABLE void setSubtitleOutline(double value);
   Q_INVOKABLE void setSubtitleMarginV(int value);
   Q_INVOKABLE void setSubtitleSpacing(double value);
-  Q_INVOKABLE void setSubtitleBold(int value);
+  Q_INVOKABLE void setSubtitleWeight(int value);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -356,10 +353,9 @@ private:
   qint64 m_selectedSubtitleId = 0;
   QString m_selectedSubtitleLabel;
   int m_subtitleFontSize = 10;
-  double m_subtitleOutline = 2.3;
   int m_subtitleMarginV = 10;
   double m_subtitleSpacing = 2.0;
-  int m_subtitleBold = 1;
+  int m_subtitleWeight = 700;
   QPointer<QNetworkReply> m_downloadReply;
 
   bool m_loggedIn;
@@ -438,10 +434,12 @@ private:
   int m_upUserFollowing = 0;
   QString m_upUserSign;
   bool m_upIsFollowing = false;
+  bool m_upFollowLoading = false;
   int m_upVideoPage = 1;
   bool m_upVideoHasMore = true;
   // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。
   qint64 m_upVideoCursorNext = 0;
+  QString m_lastRecentViewReportKey;
 
   struct DashResult {
     QString videoUrl;
@@ -457,6 +455,7 @@ private:
               std::function<void(const QJsonObject &)> onSuccess,
               std::function<void(int, const QString &)> onError = nullptr,
               bool withLoading = false);
+  void reportCurrentVideoAsRecentViewIfNeeded();
 
   void startDownloadTask(const QString &videoUrl, const QString &audioUrl,
                          const QString &videoPath, const QString &audioPath,

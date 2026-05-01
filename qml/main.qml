@@ -46,17 +46,45 @@ Rectangle {
     // 首页 Tab 记录（0=推荐,1=排行,3=我的）
     property int homeTabIndex: 0
 
+    function stackContains(page) {
+        for (var i = 0; i < pageStack.length; ++i) {
+            var entry = pageStack[i]
+            if (entry && entry.page === page) return true
+        }
+        return false
+    }
+
+    function capturePageProps(page) {
+        if (page === "detail") {
+            return { bvid: detailBvid }
+        }
+        if (page === "up") {
+            return { mid: upUserMid }
+        }
+        return {}
+    }
+
+    function applyPageProps(page, props) {
+        if (!props) return
+        if (page === "detail" && props.bvid) {
+            detailBvid = props.bvid
+        }
+        if (page === "up" && props.mid) {
+            upUserMid = props.mid
+        }
+    }
+
     function navigateTo(page, props) {
         if (_animating) return;
         var newStack = pageStack.slice(0); // Create a copy
-        newStack.push(currentPage);
+        newStack.push({
+            page: currentPage,
+            props: capturePageProps(currentPage)
+        });
         console.log("[navigateTo] from=", currentPage, "to=", page, "stack=", JSON.stringify(newStack));
         pageStack = newStack; // Assign the new array
         lastPage = currentPage;
-        if (props) {
-            if (props.bvid) detailBvid = props.bvid;
-            if (props.mid) upUserMid = props.mid;
-        }
+        applyPageProps(page, props || {})
         _animating = true;
         currentPage = page;
         pageTransition.restart();
@@ -72,11 +100,15 @@ Rectangle {
 
         if (pageStack.length > 0) {
             var newStack = pageStack.slice(0); // Create a copy
-            var prev = newStack.pop();
+            var prevEntry = newStack.pop();
+            var prev = (prevEntry && prevEntry.page) ? prevEntry.page : prevEntry;
             var fromPage = currentPage;
             console.log("[goBack] pop prev=", prev, "newStack=", JSON.stringify(newStack));
             pageStack = newStack; // Assign the new array
             _animating = true;
+            if (prevEntry && prevEntry.props) {
+                applyPageProps(prev, prevEntry.props)
+            }
             currentPage = prev;
 
             // 从详情页返回时恢复对应页面滚动位置
@@ -120,40 +152,46 @@ Rectangle {
 
         SequentialAnimation {
             id: pageTransition
-            NumberAnimation {
-                target: pageContainer; property: "opacity"
-                from: 1; to: 0; duration: Theme.animFast
-                easing.type: Easing.OutQuad
+            ScriptAction {
+                script: {
+                    pageContainer.opacity = 1
+                    pageTranslate.x = 12
+                }
             }
-            NumberAnimation {
-                target: pageTranslate; property: "x"
-                from: 30; to: 0; duration: Theme.animNormal
-                easing.type: Easing.OutCubic
-            }
-            NumberAnimation {
-                target: pageContainer; property: "opacity"
-                from: 0; to: 1; duration: Theme.animFast
-                easing.type: Easing.InQuad
+            ParallelAnimation {
+                NumberAnimation {
+                    target: pageContainer; property: "opacity"
+                    from: 0.96; to: 1; duration: Theme.animNormal
+                    easing.type: Easing.OutQuad
+                }
+                NumberAnimation {
+                    target: pageTranslate; property: "x"
+                    from: 12; to: 0; duration: Theme.animNormal
+                    easing.type: Easing.OutCubic
+                }
             }
             onFinished: root._animating = false
         }
 
         SequentialAnimation {
             id: pageTransitionBack
-            NumberAnimation {
-                target: pageContainer; property: "opacity"
-                from: 1; to: 0; duration: Theme.animFast
-                easing.type: Easing.OutQuad
+            ScriptAction {
+                script: {
+                    pageContainer.opacity = 1
+                    pageTranslate.x = -12
+                }
             }
-            NumberAnimation {
-                target: pageTranslate; property: "x"
-                from: -30; to: 0; duration: Theme.animNormal
-                easing.type: Easing.OutCubic
-            }
-            NumberAnimation {
-                target: pageContainer; property: "opacity"
-                from: 0; to: 1; duration: Theme.animFast
-                easing.type: Easing.InQuad
+            ParallelAnimation {
+                NumberAnimation {
+                    target: pageContainer; property: "opacity"
+                    from: 0.96; to: 1; duration: Theme.animNormal
+                    easing.type: Easing.OutQuad
+                }
+                NumberAnimation {
+                    target: pageTranslate; property: "x"
+                    from: -12; to: 0; duration: Theme.animNormal
+                    easing.type: Easing.OutCubic
+                }
             }
             onFinished: root._animating = false
         }
@@ -193,7 +231,7 @@ Rectangle {
             id: searchLoader
             // 仅在“搜索页自身”或“从搜索页进入的下级页面(栈内仍包含 search)”时保持实例
             // 这样只有在真正退出搜索页（search 出栈）时才会销毁 SearchPage
-            active: currentPage === "search" || root.pageStack.indexOf("search") >= 0
+            active: currentPage === "search" || root.stackContains("search")
             visible: currentPage === "search"
             enabled: visible
             anchors.fill: parent
@@ -221,7 +259,7 @@ Rectangle {
             id: detailLoader
             // 仅在“详情页自身”或“从详情页进入的下级页面(栈内仍包含detail)”时保持实例
             // 这样只有在从详情页返回(goBack 导致 detail 出栈)时才会销毁
-            active: currentPage === "detail" || root.pageStack.indexOf("detail") >= 0
+            active: currentPage === "detail" || root.stackContains("detail")
             visible: currentPage === "detail"
             enabled: visible
             anchors.fill: parent
@@ -273,7 +311,7 @@ Rectangle {
         Loader {
             id: rankingLoader
             // 在排行榜页或从排行榜进入详情页时保持实例
-            active: currentPage === "ranking" || (currentPage === "detail" && lastPage === "ranking")
+            active: currentPage === "ranking" || root.stackContains("ranking")
             visible: currentPage === "ranking"
             enabled: visible
             anchors.fill: parent
@@ -297,7 +335,7 @@ Rectangle {
 
         Loader {
             // 仅在用户页或从用户页进入详情时保持实例
-            active: currentPage === "user" || (currentPage === "detail" && lastPage === "user")
+            active: currentPage === "user" || root.stackContains("user")
             visible: currentPage === "user"
             enabled: visible
             anchors.fill: parent
@@ -316,7 +354,7 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "up"
+            active: currentPage === "up" || root.stackContains("up")
             visible: currentPage === "up"
             enabled: visible
             anchors.fill: parent

@@ -572,6 +572,40 @@ void BiliController::searchMore() {
 
 // ====== API: 视频详情 ======
 
+void BiliController::reportCurrentVideoAsRecentViewIfNeeded() {
+  if (!m_loggedIn)
+    return;
+  if (m_currentVideo.aid <= 0 || m_currentVideo.cid <= 0 || m_currentVideo.bvid.isEmpty())
+    return;
+
+  QString reportKey = m_currentVideo.bvid + "#" + QString::number(m_currentVideo.cid);
+  if (m_lastRecentViewReportKey == reportKey)
+    return;
+  m_lastRecentViewReportKey = reportKey;
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_currentVideo.aid);
+  params["cid"] = QString::number(m_currentVideo.cid);
+  params["bvid"] = m_currentVideo.bvid;
+  params["played_time"] = "1";
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/player/heartbeat", params,
+      [self](const QJsonObject &) {
+        if (!self)
+          return;
+      },
+      [self, reportKey](int, const QString &) {
+        if (!self)
+          return;
+        // 失败时允许后续刷新/重进详情再次尝试。
+        if (self->m_lastRecentViewReportKey == reportKey) {
+          self->m_lastRecentViewReportKey.clear();
+        }
+      });
+}
+
 void BiliController::fetchVideoDetail(const QString &bvid) {
   if (bvid.isEmpty()) {
     emit toastMessage("视频 ID 为空");
@@ -677,6 +711,7 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         }
 
         emit self->videoDetailChanged();
+        self->reportCurrentVideoAsRecentViewIfNeeded();
         self->setIsLoading(false);
       },
       [self](int code, const QString &msg) {
@@ -1797,17 +1832,6 @@ void BiliController::setSubtitleFontSize(int value) {
   emit subtitleStyleChanged();
 }
 
-void BiliController::setSubtitleOutline(double value) {
-  if (value < 0.5) value = 0.5;
-  if (value > 6.0) value = 6.0;
-  if (qFuzzyCompare(m_subtitleOutline, value)) return;
-  m_subtitleOutline = value;
-  QSettings settings("BiliPocket", "BiliPlugin");
-  settings.setValue("subtitleOutline", m_subtitleOutline);
-  settings.sync();
-  emit subtitleStyleChanged();
-}
-
 void BiliController::setSubtitleMarginV(int value) {
   value = qBound(0, value, 30);
   if (m_subtitleMarginV == value) return;
@@ -1829,12 +1853,12 @@ void BiliController::setSubtitleSpacing(double value) {
   emit subtitleStyleChanged();
 }
 
-void BiliController::setSubtitleBold(int value) {
-  value = qBound(0, value, 1);
-  if (m_subtitleBold == value) return;
-  m_subtitleBold = value;
+void BiliController::setSubtitleWeight(int value) {
+  value = qBound(100, value, 900);
+  if (m_subtitleWeight == value) return;
+  m_subtitleWeight = value;
   QSettings settings("BiliPocket", "BiliPlugin");
-  settings.setValue("subtitleBold", m_subtitleBold);
+  settings.setValue("subtitleWeight", m_subtitleWeight);
   settings.sync();
   emit subtitleStyleChanged();
 }
@@ -1856,10 +1880,9 @@ void BiliController::launchExternalPlayerCurrentSelection() {
   params["bvid"] = m_currentVideo.bvid;
   params["sid"] = QString::number(m_selectedSubtitleId);
   params["font_size"] = QString::number(m_subtitleFontSize);
-  params["outline"] = QString::number(m_subtitleOutline, 'f', 2);
   params["margin_v"] = QString::number(m_subtitleMarginV);
   params["spacing"] = QString::number(m_subtitleSpacing, 'f', 2);
-  params["bold"] = QString::number(m_subtitleBold);
+  params["weight"] = QString::number(m_subtitleWeight);
 
   QPointer<BiliController> self(this);
   setIsLoading(true);
@@ -2620,7 +2643,14 @@ void BiliController::fetchUpInfo(qint64 mid) {
         m_upUserFans = toIntSafe(obj.value("follower"));
         m_upUserFollowing = toIntSafe(obj.value("following"));
 
+        bool newFollowState = obj.value("is_following").toBool(false);
+        bool followStateChanged = (m_upIsFollowing != newFollowState);
+        m_upIsFollowing = newFollowState;
+
         emit upUserChanged();
+        if (followStateChanged) {
+          emit upFollowChanged();
+        }
       },
       [this](int, const QString &msg) {
         emit toastMessage(QString("获取UP主信息失败：%1").arg(msg));
@@ -2791,8 +2821,67 @@ void BiliController::fetchMoreUpVideos() {
 }
 
 void BiliController::toggleUpFollow() {
-  m_upIsFollowing = !m_upIsFollowing;
-  emit upFollowChanged();
+  if (!m_loggedIn) {
+    emit toastMessage("请先登录后再关注");
+    return;
+  }
+  if (m_upUserMid <= 0) {
+    emit toastMessage("UP 主信息无效");
+    return;
+  }
+  if (m_userId > 0 && m_userId == m_upUserMid) {
+    emit toastMessage("不能关注自己");
+    return;
+  }
+  if (m_upFollowLoading) {
+    return;
+  }
+
+  const bool targetFollow = !m_upIsFollowing;
+  m_upFollowLoading = true;
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(m_upUserMid);
+  params["action"] = targetFollow ? "1" : "0";
+
+  QPointer<BiliController> self(this);
+  apiGet(
+      "/user/follow/toggle", params,
+      [self, targetFollow](const QJsonObject &data) {
+        if (!self)
+          return;
+
+        self->m_upFollowLoading = false;
+
+        bool finalFollowState = targetFollow;
+        if (data.contains("following")) {
+          finalFollowState = data.value("following").toBool(targetFollow);
+        }
+
+        bool changed = (self->m_upIsFollowing != finalFollowState);
+        self->m_upIsFollowing = finalFollowState;
+
+        if (changed) {
+          if (finalFollowState) {
+            self->m_upUserFans += 1;
+          } else if (self->m_upUserFans > 0) {
+            self->m_upUserFans -= 1;
+          }
+          emit self->upUserChanged();
+          emit self->upFollowChanged();
+        } else {
+          emit self->upFollowChanged();
+        }
+
+        emit self->toastMessage(finalFollowState ? "关注成功" : "已取消关注");
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        self->m_upFollowLoading = false;
+        emit self->toastMessage(QString("关注操作失败：%1").arg(msg));
+      },
+      false);
 }
 
 void BiliController::playVideoPart(int index) {

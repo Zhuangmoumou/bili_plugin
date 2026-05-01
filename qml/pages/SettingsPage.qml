@@ -137,7 +137,7 @@ Item {
                         anchors.margins: 6
                         spacing: 8
 
-                        Text { text: "字粗"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
+                        Text { text: "字重"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
 
                         Rectangle {
                             width: 24; height: 24; radius: 6
@@ -146,11 +146,11 @@ Item {
                             MouseArea {
                                 id: boldMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleBold(controller.subtitleBold - 1) }
+                                onClicked: { if (controller) controller.setSubtitleWeight(controller.subtitleWeight - 100) }
                             }
                         }
 
-                        Text { text: controller ? (controller.subtitleBold === 1 ? "粗" : "细") : "细"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 40; horizontalAlignment: Text.AlignHCenter }
+                        Text { text: controller ? String(controller.subtitleWeight) : "700"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 40; horizontalAlignment: Text.AlignHCenter }
 
                         Rectangle {
                             width: 24; height: 24; radius: 6
@@ -159,48 +159,7 @@ Item {
                             MouseArea {
                                 id: boldPlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleBold(controller.subtitleBold + 1) }
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    width: parent.width
-                    height: 30
-                    radius: Theme.radiusMedium
-                    color: Theme.bgSecondary
-                    border.color: Theme.withAlpha(Theme.primary, 0.12)
-                    border.width: 1
-
-                    Row {
-                        anchors.fill: parent
-                        anchors.margins: 6
-                        spacing: 8
-
-                        Text { text: "描边粗细"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
-
-                        Rectangle {
-                            width: 24; height: 24; radius: 6
-                            color: outlineMinusArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.bgTertiary
-                            Text { anchors.centerIn: parent; text: "-"; color: Theme.textPrimary; font.pixelSize: 14 }
-                            MouseArea {
-                                id: outlineMinusArea
-                                anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleOutline(subtitleSettingsColumn.round1(controller.subtitleOutline - 0.1)) }
-                            }
-                        }
-
-                        Text { text: controller ? subtitleSettingsColumn.round1(controller.subtitleOutline).toFixed(1) : "0.0"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 40; horizontalAlignment: Text.AlignHCenter }
-
-                        Rectangle {
-                            width: 24; height: 24; radius: 6
-                            color: outlinePlusArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.bgTertiary
-                            Text { anchors.centerIn: parent; text: "+"; color: Theme.textPrimary; font.pixelSize: 14 }
-                            MouseArea {
-                                id: outlinePlusArea
-                                anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleOutline(subtitleSettingsColumn.round1(controller.subtitleOutline + 0.1)) }
+                                onClicked: { if (controller) controller.setSubtitleWeight(controller.subtitleWeight + 100) }
                             }
                         }
                     }
