@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -9,11 +10,13 @@ import (
 	"html"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,6 +122,7 @@ var rootEndpoints = []string{
 	"/video/subtitle/list - CC字幕列表",
 	"/video/subtitle/ass - 生成ASS字幕",
 	"/user/info - 用户信息",
+	"/user/follow/toggle - 关注/取消关注UP主",
 	"/user/videos - 用户投稿",
 	"/login/info - 登录信息",
 	"/login/import - 导入登录Cookie",
@@ -153,6 +157,7 @@ var startupEndpoints = []string{
 	"GET  /video/subtitle/list    - CC字幕列表",
 	"GET  /video/subtitle/ass     - 生成ASS字幕",
 	"GET  /user/info              - 用户信息",
+	"GET  /user/follow/toggle     - 关注/取消关注UP主",
 	"GET  /user/videos            - 用户投稿",
 	"GET  /login/info             - 登录信息",
 	"POST /login/import           - 导入登录Cookie",
@@ -305,7 +310,6 @@ func (c *BilibiliClient) setBiliTicket(ticket string) {
 
 func (c *BilibiliClient) UpdateAuth(sessdata, buvid3, biliJct, refreshToken, dedeUserID, dedeUserIDCkMd5 string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	changed := false
 	if sessdata != "" && sessdata != c.sessdata {
@@ -333,19 +337,27 @@ func (c *BilibiliClient) UpdateAuth(sessdata, buvid3, biliJct, refreshToken, ded
 		changed = true
 	}
 
+	// 在锁内先快照，磁盘 IO 放到锁外，避免 saveCookies 期间阻塞所有读路径
+	var snapshot CookieStore
 	if changed {
-		if err := saveCookies(CookieStore{
+		snapshot = CookieStore{
 			Sessdata:        c.sessdata,
 			Buvid3:          c.buvid3,
 			BiliJct:         c.biliJct,
 			DedeUserID:      c.dedeUserID,
 			DedeUserIDCkMd5: c.dedeUserIDCkMd5,
 			RefreshToken:    c.refreshToken,
-		}); err != nil {
-			logWarn("Cookie 持久化失败: %s", err.Error())
-		} else {
-			logInfo("已更新并持久化全局 Cookie")
 		}
+	}
+	c.mu.Unlock()
+
+	if !changed {
+		return
+	}
+	if err := saveCookies(snapshot); err != nil {
+		logWarn("Cookie 持久化失败: %s", err.Error())
+	} else {
+		logInfo("已更新并持久化全局 Cookie")
 	}
 }
 
@@ -384,10 +396,29 @@ type BilibiliClient struct {
 }
 
 func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
+	// 自定义 Transport：限制空闲连接、对每个 host 的并发，避免连接堆积/泄漏
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   8 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		MaxConnsPerHost:       64,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+	}
 	return &BilibiliClient{
-		sessdata:   sessdata,
-		buvid3:     buvid3,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		sessdata: sessdata,
+		buvid3:   buvid3,
+		httpClient: &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 
@@ -840,11 +871,58 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 		}
 	}
 
+	// 补充当前登录用户与该 UP 的关注关系
+	relationRaw, err := c.GetUserRelation(mid)
+	if err == nil {
+		var relationResp map[string]interface{}
+		if json.Unmarshal(relationRaw, &relationResp) == nil {
+			if relationCode, ok := relationResp["code"].(float64); ok && int(relationCode) == 0 {
+				if relationData, ok := relationResp["data"].(map[string]interface{}); ok {
+					attribute := 0
+					if v, ok := relationData["attribute"].(float64); ok {
+						attribute = int(v)
+					}
+					isFollowing := attribute == 2 || attribute == 6 || attribute == 128 || attribute == 129 || attribute == 130
+					dataObj["relation_attribute"] = attribute
+					dataObj["is_following"] = isFollowing
+				}
+			}
+		}
+	}
+
 	merged, err := json.Marshal(baseResp)
 	if err != nil {
 		return nil, err
 	}
 	return merged, nil
+}
+
+func (c *BilibiliClient) GetUserRelation(mid int) (json.RawMessage, error) {
+	logInfo("获取用户关系 mid=%d", mid)
+	return c.request("https://api.bilibili.com/x/relation", map[string]string{
+		"fid": strconv.Itoa(mid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) ToggleUserFollow(mid int, follow bool) (json.RawMessage, error) {
+	_, biliJct, err := c.requireLogin()
+	if err != nil {
+		return nil, err
+	}
+
+	act := "2"
+	if follow {
+		act = "1"
+	}
+
+	logInfo("切换关注状态 mid=%d follow=%t", mid, follow)
+	return c.webPost("https://api.bilibili.com/x/relation/modify", map[string]string{
+		"fid":        strconv.Itoa(mid),
+		"act":        act,
+		"re_src":     "11",
+		"csrf":       biliJct,
+		"csrf_token": biliJct,
+	})
 }
 
 // GetUserVideosApp 使用 APP 游标接口获取投稿。
@@ -1452,33 +1530,31 @@ func getPageParams(w http.ResponseWriter, r *http.Request, defaultPS int) (pn, p
 	return pn, ps, true
 }
 
-func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fontSize int, outline float64, marginV int, spacing float64, bold int, ok bool) {
+func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fontSize int, marginV int, spacing float64, weight int, ok bool) {
 	fontSize, err := intParam(r.URL.Query().Get("font_size"), 6, 10, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, 0, false
-	}
-	outline, err = floatParam(r.URL.Query().Get("outline"), 2.3)
-	if err != nil {
-		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	marginV, err = intParam(r.URL.Query().Get("margin_v"), 0, 2, false)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	spacing, err = floatParam(r.URL.Query().Get("spacing"), 2.0)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
-	bold, err = intParam(r.URL.Query().Get("bold"), 0, 1, false)
+	weight, err = intParam(r.URL.Query().Get("weight"), 100, 700, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
-	return fontSize, outline, marginV, spacing, bold, true
+	if weight > 900 {
+		weight = 900
+	}
+	return fontSize, marginV, spacing, weight, true
 }
 
 func handleAPI(w http.ResponseWriter, action string, call func(*BilibiliClient) (json.RawMessage, error)) {
@@ -1495,7 +1571,6 @@ func handleAPI(w http.ResponseWriter, action string, call func(*BilibiliClient) 
 
 var globalClient *BilibiliClient
 
-
 // 统一使用服务器端持久化的登录态，不接受客户端传入 Cookie
 func getClient() *BilibiliClient {
 	return globalClient
@@ -1503,20 +1578,45 @@ func getClient() *BilibiliClient {
 
 // ==================== 日志中间件 ====================
 
+// loggingResponseWriter 仅缓存响应体的前 N 字节，用于从业务层 JSON 中
+// 提取 code 字段写入访问日志，避免把整个响应（可能数 MB）保留在内存中。
 type loggingResponseWriter struct {
 	http.ResponseWriter
-	body       []byte
-	statusCode int
+	statusCode  int
+	bodyHead    []byte
+	headBudget  int
+	wroteHeader bool
 }
 
 func (lrw *loggingResponseWriter) Write(b []byte) (int, error) {
-	lrw.body = append(lrw.body, b...)
+	if !lrw.wroteHeader {
+		lrw.wroteHeader = true
+	}
+	if lrw.headBudget > 0 {
+		n := lrw.headBudget
+		if n > len(b) {
+			n = len(b)
+		}
+		lrw.bodyHead = append(lrw.bodyHead, b[:n]...)
+		lrw.headBudget -= n
+	}
 	return lrw.ResponseWriter.Write(b)
 }
 
 func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	if lrw.wroteHeader {
+		return
+	}
+	lrw.wroteHeader = true
 	lrw.statusCode = code
 	lrw.ResponseWriter.WriteHeader(code)
+}
+
+// Flush 透传给底层 ResponseWriter（如果支持），便于 SSE / 流式响应
+func (lrw *loggingResponseWriter) Flush() {
+	if f, ok := lrw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -1531,20 +1631,54 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		}
 		logRequest(r.Method, r.URL.Path, params)
 
-		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: 200}
+		lrw := &loggingResponseWriter{
+			ResponseWriter: w,
+			statusCode:     200,
+			headBudget:     512, // 仅保留前 512 字节用于解析业务 code
+		}
 		next.ServeHTTP(lrw, r)
 
 		duration := time.Since(startTime)
 
 		code := -1
-		var respBody map[string]interface{}
-		if err := json.Unmarshal(lrw.body, &respBody); err == nil {
-			if c, ok := respBody["code"].(float64); ok {
-				code = int(c)
+		if len(lrw.bodyHead) > 0 {
+			head := lrw.bodyHead
+			if start := bytes.IndexByte(head, '{'); start >= 0 {
+				end := bytes.LastIndexByte(head, '}')
+				if end > start {
+					var resp map[string]interface{}
+					if json.Unmarshal(head[start:end+1], &resp) == nil {
+						if c, ok := resp["code"].(float64); ok {
+							code = int(c)
+						}
+					}
+				}
 			}
 		}
 
 		logResponse(r.URL.Path, code, duration)
+	})
+}
+
+// recoverMiddleware 在 handler panic 时返回 500 而不是让连接被强制断开，
+// 同时避免单个请求 panic 拖垮整个进程的 goroutine 监控信息。
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				// 客户端连接关闭引发的 ErrAbortHandler 直接重新抛出，让 net/http 自行处理
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				stack := debug.Stack()
+				logError("处理请求时 panic: %s %s err=%v\n%s", r.Method, r.URL.Path, rec, string(stack))
+
+				// 若已写过 header 则只能放弃 —— 双重保险防止再次 panic
+				defer func() { _ = recover() }()
+				writeError(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -1842,7 +1976,7 @@ func fetchSubtitleBody(client *BilibiliClient, subtitleURL string) ([]interface{
 	return body, nil
 }
 
-func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64, marginV int, spacing float64, bold int) string {
+func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spacing float64, weight int) string {
 	var sb strings.Builder
 	sb.WriteString("[Script Info]\n")
 	sb.WriteString("ScriptType: v4.00+\n")
@@ -1852,9 +1986,8 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64,
 	sb.WriteString("ScaledBorderAndShadow: no\n\n")
 	sb.WriteString("[V4+ Styles]\n")
 	sb.WriteString("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-	outlineStr := strconv.FormatFloat(outline, 'f', 1, 64)
 	spacingStr := strconv.FormatFloat(spacing, 'f', 1, 64)
-	styleLine := fmt.Sprintf("Style: Default,Arial,%d,&H00FFFFFF,&H000000FF,&H00111111,&H64000000,%d,0,0,0,100,100,%s,0,1,%s,0,2,8,8,%d,1\n\n", fontSize, bold, spacingStr, outlineStr, marginV)
+	styleLine := fmt.Sprintf("Style: Default,Arial,%d,&H00FFFFFF,&H00FFFFFF,&H00404040,&H88404040,0,0,0,0,100,100,%s,0,3,1,0,2,8,8,%d,1\n\n", fontSize, spacingStr, marginV)
 	sb.WriteString(styleLine)
 	sb.WriteString("[Events]\n")
 	sb.WriteString("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
@@ -1874,7 +2007,7 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, outline float64,
 		text = strings.ReplaceAll(text, "\r\n", "\\N")
 		text = strings.ReplaceAll(text, "\n", "\\N")
 		text = strings.ReplaceAll(text, "\r", "\\N")
-		sb.WriteString(fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", formatAssTime(from), formatAssTime(to), text))
+		sb.WriteString(fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,{\\bord0\\shad0\\b%d}%s\n", formatAssTime(from), formatAssTime(to), weight, text))
 	}
 
 	return sb.String()
@@ -2434,6 +2567,39 @@ func handleFavToggle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleUserFollowToggle(w http.ResponseWriter, r *http.Request) {
+	mid, ok := requireIntQuery(w, r, "mid")
+	if !ok {
+		return
+	}
+
+	action := r.URL.Query().Get("action")
+	follow := action != "0"
+
+	result, err := getClient().ToggleUserFollow(mid, follow)
+	if err != nil {
+		logError("处理 /user/follow/toggle 请求失败: %s", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(result, &resp); err == nil {
+		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
+			writeJSON(w, 200, map[string]interface{}{
+				"code":    0,
+				"message": "success",
+				"data": map[string]interface{}{
+					"following": follow,
+				},
+			})
+			return
+		}
+	}
+
+	writeJSON(w, 200, wrapResult(result))
+}
+
 func handleVideoSubtitleList(w http.ResponseWriter, r *http.Request) {
 	aid, ok := requireIntQuery(w, r, "aid")
 	if !ok {
@@ -2474,7 +2640,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 	}
 	bvid := r.URL.Query().Get("bvid")
 
-	fontSize, outline, marginV, spacing, bold, ok := subtitleStyleParamsFromRequest(w, r)
+	fontSize, marginV, spacing, weight, ok := subtitleStyleParamsFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -2503,7 +2669,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assContent := buildASSFromSubtitleBody(body, fontSize, outline, marginV, spacing, bold)
+	assContent := buildASSFromSubtitleBody(body, fontSize, marginV, spacing, weight)
 	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("bili_cc_%d_%d_%d.ass", aid, cid, sid))
 	if err := os.WriteFile(tmpPath, []byte(assContent), 0644); err != nil {
 		writeError(w, 500, "字幕文件写入失败")
@@ -2535,6 +2701,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/subtitle/list", handleVideoSubtitleList)
 	mux.HandleFunc("/video/subtitle/ass", handleVideoSubtitleASS)
 	mux.HandleFunc("/user/info", handleUserInfo)
+	mux.HandleFunc("/user/follow/toggle", handleUserFollowToggle)
 	mux.HandleFunc("/user/videos", handleUserVideos)
 	mux.HandleFunc("/login/info", handleLoginInfo)
 	mux.HandleFunc("/login/import", handleLoginImport)
@@ -2616,23 +2783,44 @@ func main() {
 	mux := http.NewServeMux()
 	setupRoutes(mux)
 
-	handler := loggingMiddleware(mux)
+	handler := recoverMiddleware(loggingMiddleware(mux))
 
-	// 优雅退出
+	// 关键：给 HTTP 服务器配置超时，避免慢客户端 / 半开连接耗尽 goroutine 与 fd
+	srv := &http.Server{
+		Addr:              "0.0.0.0:" + port,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
+	}
+
+	// 退出：用 Shutdown 替代 os.Exit，让正在处理的请求有机会完成
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		sig := <-sigChan
 		fmt.Println()
-		logWarn("收到 %s 信号，正在关闭服务器...", sig.String())
-		os.Exit(0)
+		logWarn("收到 %s 信号，正在关闭...", sig.String())
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logWarn("优雅关闭超时，强制结束: %s", err.Error())
+			_ = srv.Close()
+		} else {
+			logSuccess("服务器已关闭")
+		}
 	}()
 
 	printEndpoints(port)
 
-	if err := http.ListenAndServe("0.0.0.0:"+port, handler); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logError("❌ 启动失败: %s", err.Error())
 		log.Fatal(err)
 	}
+	logInfo("服务器主循环已退出")
 }
