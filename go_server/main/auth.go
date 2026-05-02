@@ -54,11 +54,11 @@ func saveCookies(cs CookieStore) error {
 	return os.WriteFile(cookieFile, b, 0600)
 }
 
-// 给 BilibiliClient 增加读写认证信息方法
+// getAuth 直接从无锁快照读取，避免每次上游请求都做 RWMutex.RLock。
+// 写路径仍持有 c.mu 并通过 rebuildSnapshotLocked 原子发布最新视图。
 func (c *BilibiliClient) getAuth() (string, string, string, string, string, string) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.sessdata, c.buvid3, c.biliJct, c.refreshToken, c.dedeUserID, c.dedeUserIDCkMd5
+	s := c.loadSnapshot()
+	return s.sessdata, s.buvid3, s.biliJct, s.refreshToken, s.dedeUserID, s.dedeUserIDCkMd5
 }
 
 func hmacSha256(key, message string) string {
@@ -86,8 +86,7 @@ func getBiliTicket() string {
 		logError("bili_ticket 请求创建失败: %s", err.Error())
 		return ""
 	}
-	req.Header.Set("User-Agent", DEFAULT_HEADERS["User-Agent"])
-
+	req.Header.Set("User-Agent", defaultUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
 		logError("bili_ticket 获取异常: %s", err.Error())
@@ -442,7 +441,7 @@ func handleQrcodePoll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	req.Header.Set("User-Agent", DEFAULT_HEADERS["User-Agent"])
+	req.Header.Set("User-Agent", defaultUserAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

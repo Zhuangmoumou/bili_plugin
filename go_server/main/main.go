@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -115,10 +116,10 @@ var MIXIN_KEY_ENC_TAB = []int{
 	36, 20, 34, 44, 52,
 }
 
-var DEFAULT_HEADERS = map[string]string{
-	"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-	"Referer":    "https://www.bilibili.com/",
-}
+const (
+	defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	defaultReferer   = "https://www.bilibili.com/"
+)
 
 var rootEndpoints = []string{
 	"/popular - 热门视频",
@@ -193,77 +194,159 @@ var startupEndpoints = []string{
 // ==================== 工具函数 ====================
 
 func getMixinKey(orig string) string {
-	var sb strings.Builder
-	for _, i := range MIXIN_KEY_ENC_TAB {
-		if i < len(orig) {
-			sb.WriteByte(orig[i])
+	return mixinKeyConcat(orig, "")
+}
+
+// mixinKeyConcat 直接基于两个字符串视图按 MIXIN_KEY_ENC_TAB 挑选最多 32 字节，
+// 既避免了 `imgKey + subKey` 这次 64 字节左右的拼接分配，也用栈上 [32]byte
+// 替代了 strings.Builder。结果与 "原拼接后取 i 字节、最后截到 32" 完全等价。
+func mixinKeyConcat(a, b string) string {
+	var buf [32]byte
+	n := 0
+	total := len(a) + len(b)
+	for _, idx := range MIXIN_KEY_ENC_TAB {
+		if idx >= total {
+			continue
+		}
+		var ch byte
+		if idx < len(a) {
+			ch = a[idx]
+		} else {
+			ch = b[idx-len(a)]
+		}
+		buf[n] = ch
+		n++
+		if n == 32 {
+			break
 		}
 	}
-	result := sb.String()
-	if len(result) > 32 {
-		result = result[:32]
-	}
-	return result
+	return string(buf[:n])
 }
 
 func md5Hash(s string) string {
-	h := md5.New()
-	h.Write([]byte(s))
-	return hex.EncodeToString(h.Sum(nil))
+	return md5HashBytes([]byte(s))
 }
 
-func sortedKeys(params map[string]string) []string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
+// md5HashBytes 用 md5.Sum 直接拿到 [16]byte，再 hex.Encode 到栈上 [32]byte，
+// 最后只产生一次 string 分配；旧版 hex.EncodeToString(h.Sum(nil)) 会多一次
+// []byte 分配，并且 md5.New() 是堆对象。
+func md5HashBytes(b []byte) string {
+	sum := md5.Sum(b)
+	var dst [32]byte
+	hex.Encode(dst[:], sum[:])
+	return string(dst[:])
+}
+
+// keysPool 复用 sortedKeysInto 用到的 []string，避免每次签名/查询都 alloc。
+var keysPool = sync.Pool{
+	New: func() any {
+		s := make([]string, 0, 16)
+		return &s
+	},
+}
+
+// queryBufPool 复用查询构造与签名拼接用到的 bytes.Buffer。
+// 这里不用 strings.Builder：Builder.Reset 会丢掉底层 buffer，无法真正复用，
+// bytes.Buffer.Reset 只把长度归零，能重复利用底层数组。
+var queryBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+func acquireQueryBuf() *bytes.Buffer {
+	return queryBufPool.Get().(*bytes.Buffer)
+}
+
+func releaseQueryBuf(b *bytes.Buffer) {
+	if b.Cap() > 16<<10 {
+		// 防止偶发的大 payload 让池长期持有大内存
+		return
 	}
-	sort.Strings(keys)
-	return keys
+	b.Reset()
+	queryBufPool.Put(b)
+}
+
+func releaseKeys(p *[]string) {
+	if cap(*p) > 64 {
+		// 容量过大不放回池，避免拖累其它请求
+		return
+	}
+	*p = (*p)[:0]
+	keysPool.Put(p)
+}
+
+// sortedKeysInto 把 params 的 key 排序后写入 *p 指向的切片，必要时扩容。
+// 调用方必须把 p 释放回 keysPool（用 releaseKeys）。
+func sortedKeysInto(p *[]string, params map[string]string) []string {
+	s := *p
+	if cap(s) < len(params) {
+		s = make([]string, 0, len(params))
+	} else {
+		s = s[:0]
+	}
+	for k := range params {
+		s = append(s, k)
+	}
+	sort.Strings(s)
+	*p = s
+	return s
+}
+
+// writeSortedQuery 按已排序好的 keys，把 url.QueryEscape 后的 k=v&... 写入 buf。
+func writeSortedQuery(buf *bytes.Buffer, params map[string]string, keys []string) {
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte('&')
+		}
+		buf.WriteString(url.QueryEscape(k))
+		buf.WriteByte('=')
+		buf.WriteString(url.QueryEscape(params[k]))
+	}
 }
 
 func buildSortedQuery(params map[string]string) string {
-	return buildSortedQueryWithKeys(params, sortedKeys(params))
-}
-
-func buildSortedQueryWithKeys(params map[string]string, keys []string) string {
-	if len(keys) == 0 {
+	if len(params) == 0 {
 		return ""
 	}
-
-	var builder strings.Builder
-	for i, k := range keys {
-		if i > 0 {
-			builder.WriteByte('&')
-		}
-		builder.WriteString(url.QueryEscape(k))
-		builder.WriteByte('=')
-		builder.WriteString(url.QueryEscape(params[k]))
-	}
-	return builder.String()
+	pk := keysPool.Get().(*[]string)
+	keys := sortedKeysInto(pk, params)
+	buf := acquireQueryBuf()
+	writeSortedQuery(buf, params, keys)
+	out := buf.String()
+	releaseQueryBuf(buf)
+	releaseKeys(pk)
+	return out
 }
 
 func encWbi(params map[string]string, imgKey, subKey string) map[string]string {
-	mixinKey := getMixinKey(imgKey + subKey)
+	mixinKey := mixinKeyConcat(imgKey, subKey)
 	params["wts"] = strconv.FormatInt(time.Now().Unix(), 10)
 
-	keys := sortedKeys(params)
+	pk := keysPool.Get().(*[]string)
+	keys := sortedKeysInto(pk, params)
+
 	filtered := make(map[string]string, len(params)+1)
-	var builder strings.Builder
+	buf := acquireQueryBuf()
 	for i, k := range keys {
 		v := wbiValueReplacer.Replace(params[k])
 		filtered[k] = v
 		if i > 0 {
-			builder.WriteByte('&')
+			buf.WriteByte('&')
 		}
-		builder.WriteString(url.QueryEscape(k))
-		builder.WriteByte('=')
-		builder.WriteString(url.QueryEscape(v))
+		buf.WriteString(url.QueryEscape(k))
+		buf.WriteByte('=')
+		buf.WriteString(url.QueryEscape(v))
 	}
+	// 直接把 mixinKey 追加到 buffer，避免 builder.String() + mixinKey
+	// 这次额外的 string 分配（query 串可能上百字节）。
+	buf.WriteString(mixinKey)
+	wbiSign := md5HashBytes(buf.Bytes())
 
-	wbiSign := md5Hash(builder.String() + mixinKey)
+	releaseQueryBuf(buf)
+	releaseKeys(pk)
+
 	filtered["w_rid"] = wbiSign
 
-	if len(mixinKey) >= 8 && len(wbiSign) >= 8 {
+	if debugEnabled && len(mixinKey) >= 8 && len(wbiSign) >= 8 {
 		logDebug("WBI 签名计算 mixinKey=%s... w_rid=%s...", mixinKey[:8], wbiSign[:8])
 	}
 
@@ -272,17 +355,20 @@ func encWbi(params map[string]string, imgKey, subKey string) map[string]string {
 
 func appSign(params map[string]string) map[string]string {
 	params["appkey"] = APPKEY
-	query := buildSortedQuery(params)
-	params["sign"] = md5Hash(query + APPSEC)
-	return params
-}
 
-func copyMap(m map[string]string) map[string]string {
-	result := make(map[string]string, len(m))
-	for k, v := range m {
-		result[k] = v
-	}
-	return result
+	pk := keysPool.Get().(*[]string)
+	keys := sortedKeysInto(pk, params)
+	buf := acquireQueryBuf()
+	writeSortedQuery(buf, params, keys)
+	// 同 encWbi：直接在原 buffer 上拼接 APPSEC，避免再分配一个 string。
+	buf.WriteString(APPSEC)
+	sign := md5HashBytes(buf.Bytes())
+
+	releaseQueryBuf(buf)
+	releaseKeys(pk)
+
+	params["sign"] = sign
+	return params
 }
 
 func maskSensitive(value string) string {
@@ -316,22 +402,26 @@ func extractResponseCodeFromHead(head []byte) int {
 		return -1
 	}
 
-	end := 0
+	pos := 0
+	sign := 1
 	if rest[0] == '-' {
-		end = 1
+		sign = -1
+		pos = 1
 	}
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	if end == 0 || (end == 1 && rest[0] == '-') {
+	if pos >= len(rest) || rest[pos] < '0' || rest[pos] > '9' {
 		return -1
 	}
-
-	code, err := strconv.Atoi(string(rest[:end]))
-	if err != nil {
-		return -1
+	// 内联整数解析，避免 strconv.Atoi 接受 string 时产生的 []byte→string 拷贝。
+	val := 0
+	for pos < len(rest) && rest[pos] >= '0' && rest[pos] <= '9' {
+		// 业务 code 都在 ±10^6 量级，1<<30 已足够防御异常输入造成的溢出
+		if val > 1<<30 {
+			return -1
+		}
+		val = val*10 + int(rest[pos]-'0')
+		pos++
 	}
-	return code
+	return val * sign
 }
 
 func isJSONContentType(contentType string) bool {
@@ -384,29 +474,123 @@ func extractKeyFromURL(rawURL string) string {
 	return dotParts[0]
 }
 
+func (c *BilibiliClient) loadSnapshot() *clientSnapshot {
+	s := c.snapshot.Load()
+	if s == nil {
+		return &emptyClientSnapshot
+	}
+	return s
+}
+
+// rebuildSnapshotLocked 必须在持有 c.mu 写锁时调用：根据当前字段构造新的快照
+// 并通过 atomic.Pointer 原子发布，使读路径立即看到最新值。
+func (c *BilibiliClient) rebuildSnapshotLocked() {
+	s := &clientSnapshot{
+		sessdata:        c.sessdata,
+		buvid3:          c.buvid3,
+		biliJct:         c.biliJct,
+		dedeUserID:      c.dedeUserID,
+		dedeUserIDCkMd5: c.dedeUserIDCkMd5,
+		refreshToken:    c.refreshToken,
+		biliTicket:      c.biliTicket,
+		imgKey:          c.imgKey,
+		subKey:          c.subKey,
+	}
+	s.cookie = buildCookieString(s)
+	c.snapshot.Store(s)
+}
+
+func (c *BilibiliClient) rebuildSnapshot() {
+	c.mu.Lock()
+	c.rebuildSnapshotLocked()
+	c.mu.Unlock()
+}
+
+// buildCookieString 根据快照字段拼出 Cookie 头值。各字段为空时跳过。
+// 这一步在写路径完成，读路径直接读结果，省掉每次请求的 6 段拼接 + Join。
+func buildCookieString(s *clientSnapshot) string {
+	// 估算容量，避免 strings.Builder 内部多次扩容
+	estimate := 0
+	add := func(name, value string) {
+		if value == "" {
+			return
+		}
+		if estimate > 0 {
+			estimate += 2 // "; "
+		}
+		estimate += len(name) + 1 + len(value)
+	}
+	add("SESSDATA", s.sessdata)
+	add("buvid3", s.buvid3)
+	add("bili_jct", s.biliJct)
+	add("DedeUserID", s.dedeUserID)
+	add("DedeUserID__ckMd5", s.dedeUserIDCkMd5)
+	add("bili_ticket", s.biliTicket)
+	if estimate == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.Grow(estimate)
+	first := true
+	appendC := func(name, value string) {
+		if value == "" {
+			return
+		}
+		if !first {
+			sb.WriteString("; ")
+		} else {
+			first = false
+		}
+		sb.WriteString(name)
+		sb.WriteByte('=')
+		sb.WriteString(value)
+	}
+	appendC("SESSDATA", s.sessdata)
+	appendC("buvid3", s.buvid3)
+	appendC("bili_jct", s.biliJct)
+	appendC("DedeUserID", s.dedeUserID)
+	appendC("DedeUserID__ckMd5", s.dedeUserIDCkMd5)
+	appendC("bili_ticket", s.biliTicket)
+	return sb.String()
+}
+
+// loadCookieStore 把磁盘持久化的 CookieStore 写入 client，并立即发布快照。
+// 仅在 main() 启动时由单线程调用一次。
+func (c *BilibiliClient) loadCookieStore(cs CookieStore) {
+	c.mu.Lock()
+	c.sessdata = cs.Sessdata
+	c.buvid3 = cs.Buvid3
+	c.biliJct = cs.BiliJct
+	c.dedeUserID = cs.DedeUserID
+	c.dedeUserIDCkMd5 = cs.DedeUserIDCkMd5
+	c.refreshToken = cs.RefreshToken
+	c.rebuildSnapshotLocked()
+	c.mu.Unlock()
+}
+
 func (c *BilibiliClient) getWbiKeys() (string, string) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.imgKey, c.subKey
+	s := c.loadSnapshot()
+	return s.imgKey, s.subKey
 }
 
 func (c *BilibiliClient) setWbiKeys(imgKey, subKey string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.imgKey = imgKey
 	c.subKey = subKey
+	c.rebuildSnapshotLocked()
+	c.mu.Unlock()
 }
 
 func (c *BilibiliClient) getBiliTicket() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.biliTicket
+	return c.loadSnapshot().biliTicket
 }
 
 func (c *BilibiliClient) setBiliTicket(ticket string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.biliTicket = ticket
+	c.rebuildSnapshotLocked()
+	c.mu.Unlock()
 }
 
 func (c *BilibiliClient) UpdateAuth(sessdata, buvid3, biliJct, refreshToken, dedeUserID, dedeUserIDCkMd5 string) {
@@ -441,6 +625,7 @@ func (c *BilibiliClient) UpdateAuth(sessdata, buvid3, biliJct, refreshToken, ded
 	// 在锁内先快照，磁盘 IO 放到锁外，避免 saveCookies 期间阻塞所有读路径
 	var snapshot CookieStore
 	if changed {
+		c.rebuildSnapshotLocked()
 		snapshot = CookieStore{
 			Sessdata:        c.sessdata,
 			Buvid3:          c.buvid3,
@@ -471,6 +656,7 @@ func (c *BilibiliClient) ClearAuth() {
 	c.dedeUserID = ""
 	c.dedeUserIDCkMd5 = ""
 	c.refreshToken = ""
+	c.rebuildSnapshotLocked()
 	c.mu.Unlock()
 
 	if err := saveCookies(CookieStore{}); err != nil {
@@ -482,10 +668,37 @@ func (c *BilibiliClient) ClearAuth() {
 
 // ==================== Bilibili API 客户端 ====================
 
+// clientSnapshot 是 BilibiliClient 在某一时刻的只读快照，包含每次请求都需要读
+// 的认证字段、WBI keys、bili_ticket，以及预先拼接好的 Cookie 字符串。
+// 写路径在持有 BilibiliClient.mu 的情况下重建快照后通过 atomic.Pointer 原子替换；
+// 读路径完全无锁，避免 setHeaders/buildCookie/getWbiKeys 在每次上游请求都做
+// RWMutex.RLock 与字符串 Join。
+type clientSnapshot struct {
+	sessdata        string
+	buvid3          string
+	biliJct         string
+	dedeUserID      string
+	dedeUserIDCkMd5 string
+	refreshToken    string
+	biliTicket      string
+	imgKey          string
+	subKey          string
+	cookie          string // 预先拼好的 Cookie 头值，供 setHeaders 直接使用
+}
+
+// emptyClientSnapshot 在 atomic.Pointer 还未首次发布时充当 zero-value 视图，
+// 让 loadSnapshot 始终返回非 nil 指针，省掉每次读路径的 nil 检查分支。
+var emptyClientSnapshot clientSnapshot
+
+type upstreamRateBucket struct {
+	mu     sync.Mutex
+	lastAt time.Time
+}
+
 type BilibiliClient struct {
 	mu              sync.RWMutex
-	upstreamMu      sync.Mutex
-	lastUpstreamAt  time.Time
+	readBucket      upstreamRateBucket
+	writeBucket     upstreamRateBucket
 	sessdata        string
 	buvid3          string
 	biliJct         string
@@ -496,22 +709,31 @@ type BilibiliClient struct {
 	imgKey          string
 	subKey          string
 	httpClient      *http.Client
+	snapshot        atomic.Pointer[clientSnapshot]
 }
 
-func (c *BilibiliClient) waitBeforeUpstream() {
-	const minInterval = 350 * time.Millisecond
+// waitBeforeUpstream 对上游请求做分桶限速：
+// - GET 读取类请求：80ms，避免所有读接口被全局 350ms 串行拖慢。
+// - 非 GET 写请求：保持原来的 350ms，降低触发风控概率。
+func (c *BilibiliClient) waitBeforeUpstream(apiURL, method string) {
+	interval := 80 * time.Millisecond
+	bucket := &c.readBucket
+	if method != http.MethodGet {
+		interval = 350 * time.Millisecond
+		bucket = &c.writeBucket
+	}
 
-	c.upstreamMu.Lock()
+	bucket.mu.Lock()
 	now := time.Now()
 	nextAllowedAt := now
-	if !c.lastUpstreamAt.IsZero() {
-		candidate := c.lastUpstreamAt.Add(minInterval)
+	if !bucket.lastAt.IsZero() {
+		candidate := bucket.lastAt.Add(interval)
 		if candidate.After(nextAllowedAt) {
 			nextAllowedAt = candidate
 		}
 	}
-	c.lastUpstreamAt = nextAllowedAt
-	c.upstreamMu.Unlock()
+	bucket.lastAt = nextAllowedAt
+	bucket.mu.Unlock()
 
 	if wait := time.Until(nextAllowedAt); wait > 0 {
 		time.Sleep(wait)
@@ -535,7 +757,7 @@ func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
 	}
-	return &BilibiliClient{
+	c := &BilibiliClient{
 		sessdata: sessdata,
 		buvid3:   buvid3,
 		httpClient: &http.Client{
@@ -543,6 +765,9 @@ func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
 			Transport: transport,
 		},
 	}
+	// 发布初始快照，确保所有读路径在第一次请求前就能拿到非空 snapshot。
+	c.rebuildSnapshot()
+	return c
 }
 
 func (c *BilibiliClient) Init() {
@@ -554,23 +779,10 @@ func (c *BilibiliClient) Init() {
 	logSuccess("客户端初始化完成")
 }
 
+// buildCookie 直接读取已经预拼接好的快照 cookie 串，
+// 避免每次请求都做 RLock + 6 段拼接 + strings.Join。
 func (c *BilibiliClient) buildCookie() string {
-	sessdata, buvid3, biliJct, _, dedeUserID, dedeCkMd5 := c.getAuth()
-
-	var parts []string
-	appendCookie := func(name, value string) {
-		if value != "" {
-			parts = append(parts, name+"="+value)
-		}
-	}
-
-	appendCookie("SESSDATA", sessdata)
-	appendCookie("buvid3", buvid3)
-	appendCookie("bili_jct", biliJct)
-	appendCookie("DedeUserID", dedeUserID)
-	appendCookie("DedeUserID__ckMd5", dedeCkMd5)
-	appendCookie("bili_ticket", c.getBiliTicket())
-	return strings.Join(parts, "; ")
+	return c.loadSnapshot().cookie
 }
 
 func (c *BilibiliClient) requireLogin() (string, string, error) {
@@ -593,12 +805,11 @@ func (c *BilibiliClient) requireRiskAuth() (string, string, string, error) {
 }
 
 func (c *BilibiliClient) setHeaders(req *http.Request) {
-	for k, v := range DEFAULT_HEADERS {
-		req.Header.Set(k, v)
-	}
-	cookie := c.buildCookie()
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
+	h := req.Header
+	h.Set("User-Agent", defaultUserAgent)
+	h.Set("Referer", defaultReferer)
+	if cookie := c.loadSnapshot().cookie; cookie != "" {
+		h.Set("Cookie", cookie)
 	}
 }
 
@@ -726,7 +937,7 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
-	c.waitBeforeUpstream()
+	c.waitBeforeUpstream(apiURL, method)
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(startTime)
 	if err != nil {
@@ -748,7 +959,9 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 func (c *BilibiliClient) wbiRequest(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	imgKey, subKey := c.getWbiKeys()
 	logDebug("WBI 请求 %s %s", method, apiURL)
-	return c.doRequest(apiURL, encWbi(copyMap(params), imgKey, subKey), method)
+	// encWbi 会向 params 中写入 wts 并返回新的 filtered map，
+	// 调用方传入的 map 都是当次请求新建的临时 map，无需 copyMap 复制保护。
+	return c.doRequest(apiURL, encWbi(params, imgKey, subKey), method)
 }
 
 func (c *BilibiliClient) request(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
@@ -773,6 +986,7 @@ func (c *BilibiliClient) rawRequest(apiURL string, params map[string]string) ([]
 	}
 	c.setHeaders(req)
 
+	c.waitBeforeUpstream(apiURL, http.MethodGet)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -789,6 +1003,7 @@ func (c *BilibiliClient) rawGetURL(fullURL string) ([]byte, error) {
 	}
 	c.setHeaders(req)
 
+	c.waitBeforeUpstream(fullURL, http.MethodGet)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -803,19 +1018,18 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
-		cookie := c.buildCookie()
 		req, err := http.NewRequest("POST", apiURL, strings.NewReader(query))
 		if err != nil {
 			return nil, err
 		}
+		// setHeaders 已经写入 User-Agent / Referer / Cookie，
+		// 这里只补 Origin、Content-Type、X-Requested-With 三项 webPost 专属头。
 		c.setHeaders(req)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 		req.Header.Set("Origin", "https://www.bilibili.com")
-		req.Header.Set("Referer", "https://www.bilibili.com/")
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
-		req.Header.Set("Cookie", cookie)
 
-		c.waitBeforeUpstream()
+		c.waitBeforeUpstream(apiURL, http.MethodPost)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
@@ -1753,6 +1967,18 @@ func (lrw *loggingResponseWriter) Flush() {
 	}
 }
 
+const loggingHeadBudget = 512
+
+// loggingRWPool 复用 loggingResponseWriter，避免每个请求都做一次 heap 分配。
+// bodyHead 预分配到 loggingHeadBudget 上限，下次请求 reset 到长度 0，cap 不变。
+var loggingRWPool = sync.Pool{
+	New: func() any {
+		return &loggingResponseWriter{
+			bodyHead: make([]byte, 0, loggingHeadBudget),
+		}
+	},
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startTime := time.Now()
@@ -1767,20 +1993,28 @@ func loggingMiddleware(next http.Handler) http.Handler {
 			logRequest(r.Method, r.URL.Path, params)
 		}
 
-		lrw := &loggingResponseWriter{
-			ResponseWriter: w,
-			statusCode:     200,
-			headBudget:     512, // 仅保留前 512 字节用于解析业务 code
-		}
+		lrw := loggingRWPool.Get().(*loggingResponseWriter)
+		lrw.ResponseWriter = w
+		lrw.statusCode = 200
+		lrw.bodyHead = lrw.bodyHead[:0]
+		lrw.headBudget = loggingHeadBudget
+		lrw.wroteHeader = false
+
 		next.ServeHTTP(lrw, r)
 
 		duration := time.Since(startTime)
 
 		code := extractResponseCodeFromHead(lrw.bodyHead)
-		if code == -1 && lrw.statusCode >= 200 && lrw.statusCode < 300 &&
-			!isJSONContentType(lrw.Header().Get("Content-Type")) {
+		statusCode := lrw.statusCode
+		contentType := lrw.Header().Get("Content-Type")
+		if code == -1 && statusCode >= 200 && statusCode < 300 &&
+			!isJSONContentType(contentType) {
 			code = 0
 		}
+
+		// 释放前清空对外引用，避免 sync.Pool 持续持有 ResponseWriter / 上层资源。
+		lrw.ResponseWriter = nil
+		loggingRWPool.Put(lrw)
 
 		logResponse(r.URL.Path, code, duration)
 	})
@@ -2950,14 +3184,9 @@ func main() {
 
 	globalClient = NewBilibiliClient("", "")
 
-	// 启动时加载本地 Cookie 缓存
+	// 启动时加载本地 Cookie 缓存：loadCookieStore 内部会写字段并发布快照
 	if cs, err := loadCookies(); err == nil {
-		globalClient.sessdata = cs.Sessdata
-		globalClient.buvid3 = cs.Buvid3
-		globalClient.biliJct = cs.BiliJct
-		globalClient.dedeUserID = cs.DedeUserID
-		globalClient.dedeUserIDCkMd5 = cs.DedeUserIDCkMd5
-		globalClient.refreshToken = cs.RefreshToken
+		globalClient.loadCookieStore(cs)
 		logInfo("已加载本地 Cookie 缓存")
 	} else {
 		logWarn("未加载到本地 Cookie 缓存: %s", err.Error())
