@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPointer>
@@ -1723,6 +1724,85 @@ void BiliController::toggleWatchLater() {
       });
 }
 
+bool BiliController::isExternalPlayerRunning() const {
+  if (m_externalPlayerProcess && m_externalPlayerProcess->state() != QProcess::NotRunning) {
+    return true;
+  }
+
+  QProcess pgrep;
+  pgrep.start("pgrep", QStringList() << "-f" << "/userdisk/mpv/bin/mpv");
+  if (!pgrep.waitForFinished(1500)) {
+    return false;
+  }
+
+  return pgrep.exitCode() == 0 && !QString::fromLocal8Bit(pgrep.readAllStandardOutput()).trimmed().isEmpty();
+}
+
+QString BiliController::externalPlayerTitle() const {
+  QString title = videoTitle().trimmed();
+  if (title.isEmpty()) {
+    title = m_currentVideo.bvid.trimmed();
+  }
+  return title;
+}
+
+bool BiliController::startExternalPlayer(const QStringList &args) {
+  const QString player = "/userdisk/VideoPlayer";
+  if (!QFile::exists(player)) {
+    emit toastMessage("外部播放器不存在");
+    return false;
+  }
+
+  if (isExternalPlayerRunning()) {
+    emit toastMessage("播放器已在运行，请先关闭当前窗口");
+    return false;
+  }
+
+  auto *process = new QProcess(this);
+  process->setProgram(player);
+  process->setArguments(args);
+
+  connect(process, &QProcess::errorOccurred, this,
+          [this, process](QProcess::ProcessError error) {
+            if (process != m_externalPlayerProcess) {
+              process->deleteLater();
+              return;
+            }
+
+            QString detail = process->errorString();
+            if (detail.isEmpty()) {
+              detail = QString::number(static_cast<int>(error));
+            }
+            emit toastMessage(QString("启动外部播放器失败：%1").arg(detail));
+            m_externalPlayerProcess = nullptr;
+            process->deleteLater();
+          });
+
+  connect(process,
+          QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+          [this, process](int, QProcess::ExitStatus) {
+            if (process == m_externalPlayerProcess) {
+              m_externalPlayerProcess = nullptr;
+            }
+            process->deleteLater();
+          });
+
+  process->start();
+  if (!process->waitForStarted(3000)) {
+    QString detail = process->errorString();
+    const QString stderrText = QString::fromLocal8Bit(process->readAllStandardError()).trimmed();
+    if (!stderrText.isEmpty()) {
+      detail = detail.isEmpty() ? stderrText : detail + " | " + stderrText;
+    }
+    emit toastMessage(QString("启动外部播放器失败：%1").arg(detail.isEmpty() ? QStringLiteral("未知错误") : detail));
+    process->deleteLater();
+    return false;
+  }
+
+  m_externalPlayerProcess = process;
+  return true;
+}
+
 void BiliController::launchExternalPlayer(const QString &path) {
   if (path.isEmpty()) {
     emit toastMessage("播放路径为空");
@@ -1734,16 +1814,9 @@ void BiliController::launchExternalPlayer(const QString &path) {
     filePath = filePath.mid(7);
   }
 
-  QString player = "/userdisk/VideoPlayer";
-  if (!QFile::exists(player)) {
-    emit toastMessage("外部播放器不存在");
-    return;
-  }
-
-  bool ok = QProcess::startDetached(player, QStringList() << filePath);
-  if (!ok) {
-    emit toastMessage("启动外部播放器失败");
-  }
+  QStringList args;
+  args << ("--force-media-title=" + externalPlayerTitle()) << filePath;
+  startExternalPlayer(args);
 }
 
 void BiliController::launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath) {
@@ -1757,18 +1830,10 @@ void BiliController::launchExternalPlayerWithAudio(const QString &videoPath, con
   if (v.startsWith("file://")) v = v.mid(7);
   if (a.startsWith("file://")) a = a.mid(7);
 
-  QString player = "/userdisk/VideoPlayer";
-  if (!QFile::exists(player)) {
-    emit toastMessage("外部播放器不存在");
-    return;
-  }
-
   QStringList args;
-  args << v << ("--audio-file=" + a);
-  bool ok = QProcess::startDetached(player, args);
-  if (!ok) {
-    emit toastMessage("启动外部播放器失败");
-  }
+  args << ("--force-media-title=" + externalPlayerTitle())
+       << v << ("--audio-file=" + a);
+  startExternalPlayer(args);
 }
 
 void BiliController::launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl) {
@@ -1777,35 +1842,21 @@ void BiliController::launchExternalPlayerWithAudioUrl(const QString &videoUrl, c
     return;
   }
 
-  QString player = "/userdisk/VideoPlayer";
-  if (!QFile::exists(player)) {
-    emit toastMessage("外部播放器不存在");
-    return;
-  }
-
   QStringList args;
-  args << videoUrl << ("--audio-file=" + audioUrl)
+  args << ("--force-media-title=" + externalPlayerTitle())
+       << videoUrl << ("--audio-file=" + audioUrl)
        << "--referrer=https://www.bilibili.com"
        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
        << ("--script-opts=bili-aid=" + QString::number(videoAid())
            + ",bili-cid=" + QString::number(m_currentVideo.cid)
            + ",bili-bvid=" + m_currentVideo.bvid);
 
-  bool ok = QProcess::startDetached(player, args);
-  if (!ok) {
-    emit toastMessage("启动外部播放器失败");
-  }
+  startExternalPlayer(args);
 }
 
 void BiliController::launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath) {
   if (videoUrl.isEmpty() || audioUrl.isEmpty()) {
     emit toastMessage("播放地址不完整");
-    return;
-  }
-
-  QString player = "/userdisk/VideoPlayer";
-  if (!QFile::exists(player)) {
-    emit toastMessage("外部播放器不存在");
     return;
   }
 
@@ -1815,7 +1866,8 @@ void BiliController::launchExternalPlayerWithAudioUrlAndSubtitle(const QString &
   }
 
   QStringList args;
-  args << videoUrl << ("--audio-file=" + audioUrl);
+  args << ("--force-media-title=" + externalPlayerTitle())
+       << videoUrl << ("--audio-file=" + audioUrl);
   if (!sub.isEmpty()) {
     args << ("--sub-file=" + sub);
   }
@@ -1826,13 +1878,9 @@ void BiliController::launchExternalPlayerWithAudioUrlAndSubtitle(const QString &
            + ",bili-bvid=" + m_currentVideo.bvid);
 
   qDebug() << "[BiliController] launchExternalPlayerWithAudioUrlAndSubtitle"
-           << "player=" << player
            << "sub=" << sub;
 
-  bool ok = QProcess::startDetached(player, args);
-  if (!ok) {
-    emit toastMessage("启动外部播放器失败");
-  }
+  startExternalPlayer(args);
 }
 
 void BiliController::fetchSubtitleList() {

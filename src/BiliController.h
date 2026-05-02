@@ -220,6 +220,7 @@ public:
   Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
   Q_INVOKABLE void toggleWatchLater();
   // 外部播放器
+  Q_INVOKABLE bool externalPlayerRunning() const { return isExternalPlayerRunning(); }
   Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
   Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
@@ -325,6 +326,9 @@ private:
   void saveLoginStatus();
   void loadSearchHistory();
   void saveSearchHistory();
+  bool isExternalPlayerRunning() const;
+  bool startExternalPlayer(const QStringList &args);
+  QString externalPlayerTitle() const;
 
   // 安全辅助：检查 this 是否仍然有效的回调包装
   template <typename Func> auto safeCallback(Func &&func);
@@ -357,6 +361,7 @@ private:
   double m_subtitleSpacing = 2.0;
   int m_subtitleWeight = 700;
   QPointer<QNetworkReply> m_downloadReply;
+  QPointer<QProcess> m_externalPlayerProcess;
 
   bool m_loggedIn;
   bool m_isFavorited;

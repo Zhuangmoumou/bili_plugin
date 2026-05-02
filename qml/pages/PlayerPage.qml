@@ -25,15 +25,8 @@ Rectangle {
     readonly property color accentColor: "#00A1D6"
     readonly property string fontFamily: "Microsoft YaHei"
 
-    property bool launchRequested: false
-    property bool launchLocked: false
-
     function launchExternalPlayer(path) {
         if (!path || path.length === 0) return;
-        if (launchRequested || launchLocked) return;
-        launchRequested = true;
-        launchLocked = true;
-        launchLockTimer.restart();
         if (controller) controller.launchExternalPlayer(path);
     }
 
@@ -255,21 +248,17 @@ Rectangle {
                     id: playBtnArea
                     anchors.fill: parent
                     onClicked: {
-                        if (launchLocked) {
-                            if (controller) controller.toastMessage("请勿重复点击，10秒后可再次启动");
+                        if (!controller) return;
+                        if (controller.externalPlayerRunning()) {
+                            controller.toastMessage("播放器已在运行，请先关闭当前窗口");
                             return;
                         }
-
-                        launchLocked = true;
-                        launchLockTimer.restart();
-
-                        if (controller) controller.toastMessage("正在启动播放器，不要多次点击，请稍等...");
-                        if (controller && controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
+                        controller.toastMessage("正在启动播放器...");
+                        if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                             controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
-                            launchRequested = false;
                             controller.launchExternalPlayerCurrentSelection();
                         } else {
-                            if (controller) controller.fetchPlayUrl(playQuality);
+                            controller.fetchPlayUrl(playQuality);
                         }
                         hideControlsTimer.restart();
                     }
@@ -363,13 +352,6 @@ Rectangle {
         id: hideControlsTimer
         interval: 3500
         onTriggered: controlsVisible = false
-    }
-
-    Timer {
-        id: launchLockTimer
-        interval: 10000
-        repeat: false
-        onTriggered: launchLocked = false
     }
 
 

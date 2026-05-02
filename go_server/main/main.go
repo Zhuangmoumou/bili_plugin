@@ -39,6 +39,12 @@ const (
 	colorCyan    = "\x1b[36m"
 )
 
+var (
+	debugEnabled     = os.Getenv("DEBUG") == "true"
+	accessLogEnabled = debugEnabled || os.Getenv("ACCESS_LOG") == "true"
+	wbiValueReplacer = strings.NewReplacer("!", "", "'", "", "(", "", ")", "", "*", "")
+)
+
 func getTimestamp() string {
 	return time.Now().Format("2006-01-02 15:04:05")
 }
@@ -64,15 +70,16 @@ func logError(message string, args ...interface{}) {
 }
 
 func logDebug(message string, args ...interface{}) {
-	if os.Getenv("DEBUG") == "true" {
-		msg := fmt.Sprintf(message, args...)
-		fmt.Printf("%s[DEBUG]%s %s%s%s %s\n", colorMagenta, colorReset, colorDim, getTimestamp(), colorReset, msg)
+	if !debugEnabled {
+		return
 	}
+	msg := fmt.Sprintf(message, args...)
+	fmt.Printf("%s[DEBUG]%s %s%s%s %s\n", colorMagenta, colorReset, colorDim, getTimestamp(), colorReset, msg)
 }
 
 func logRequest(method, path string, params map[string]string) {
 	paramStr := ""
-	if len(params) > 0 {
+	if accessLogEnabled && len(params) > 0 {
 		b, _ := json.Marshal(params)
 		paramStr = string(b)
 	}
@@ -82,6 +89,9 @@ func logRequest(method, path string, params map[string]string) {
 }
 
 func logResponse(path string, code int, duration time.Duration) {
+	if !accessLogEnabled && code == 0 {
+		return
+	}
 	color := colorGreen
 	if code != 0 {
 		color = colorRed
@@ -202,43 +212,55 @@ func md5Hash(s string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func buildSortedQuery(params map[string]string) string {
+func sortedKeys(params map[string]string) []string {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	return keys
+}
 
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, url.QueryEscape(k)+"="+url.QueryEscape(params[k]))
+func buildSortedQuery(params map[string]string) string {
+	return buildSortedQueryWithKeys(params, sortedKeys(params))
+}
+
+func buildSortedQueryWithKeys(params map[string]string, keys []string) string {
+	if len(keys) == 0 {
+		return ""
 	}
-	return strings.Join(parts, "&")
+
+	var builder strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			builder.WriteByte('&')
+		}
+		builder.WriteString(url.QueryEscape(k))
+		builder.WriteByte('=')
+		builder.WriteString(url.QueryEscape(params[k]))
+	}
+	return builder.String()
 }
 
 func encWbi(params map[string]string, imgKey, subKey string) map[string]string {
 	mixinKey := getMixinKey(imgKey + subKey)
-	currTime := strconv.FormatInt(time.Now().Unix(), 10)
-	params["wts"] = currTime
+	params["wts"] = strconv.FormatInt(time.Now().Unix(), 10)
 
-	// 按 key 排序
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	// 过滤特殊字符
-	filtered := make(map[string]string)
-	for _, k := range keys {
-		v := params[k]
-		v = strings.NewReplacer("!", "", "'", "", "(", "", ")", "", "*", "").Replace(v)
+	keys := sortedKeys(params)
+	filtered := make(map[string]string, len(params)+1)
+	var builder strings.Builder
+	for i, k := range keys {
+		v := wbiValueReplacer.Replace(params[k])
 		filtered[k] = v
+		if i > 0 {
+			builder.WriteByte('&')
+		}
+		builder.WriteString(url.QueryEscape(k))
+		builder.WriteByte('=')
+		builder.WriteString(url.QueryEscape(v))
 	}
 
-	// 构建查询字符串并签名
-	query := buildSortedQuery(filtered)
-	wbiSign := md5Hash(query + mixinKey)
+	wbiSign := md5Hash(builder.String() + mixinKey)
 	filtered["w_rid"] = wbiSign
 
 	if len(mixinKey) >= 8 && len(wbiSign) >= 8 {
@@ -330,19 +352,26 @@ func limitLogBody(body []byte) string {
 }
 
 func logUpstreamBusinessError(apiURL string, body []byte) {
-	var resp map[string]interface{}
-	if err := json.Unmarshal(body, &resp); err != nil {
+	code := extractResponseCodeFromHead(body)
+	if code == -1 || code == 0 {
 		return
 	}
-	code, ok := resp["code"].(float64)
-	if !ok || int(code) == 0 {
-		return
+
+	msg := ""
+	if debugEnabled || code != 0 {
+		var resp struct {
+			Message string `json:"message"`
+			Msg     string `json:"msg"`
+		}
+		if err := json.Unmarshal(body, &resp); err == nil {
+			msg = resp.Message
+			if msg == "" {
+				msg = resp.Msg
+			}
+		}
 	}
-	msg, _ := resp["message"].(string)
-	if msg == "" {
-		msg, _ = resp["msg"].(string)
-	}
-	logWarn("上游业务错误 url=%s code=%d message=%s body=%s", apiURL, int(code), msg, limitLogBody(body))
+
+	logWarn("上游业务错误 url=%s code=%d message=%s body=%s", apiURL, code, msg, limitLogBody(body))
 }
 
 func extractKeyFromURL(rawURL string) string {
@@ -473,15 +502,20 @@ func (c *BilibiliClient) waitBeforeUpstream() {
 	const minInterval = 350 * time.Millisecond
 
 	c.upstreamMu.Lock()
-	defer c.upstreamMu.Unlock()
-
+	now := time.Now()
+	nextAllowedAt := now
 	if !c.lastUpstreamAt.IsZero() {
-		wait := minInterval - time.Since(c.lastUpstreamAt)
-		if wait > 0 {
-			time.Sleep(wait)
+		candidate := c.lastUpstreamAt.Add(minInterval)
+		if candidate.After(nextAllowedAt) {
+			nextAllowedAt = candidate
 		}
 	}
-	c.lastUpstreamAt = time.Now()
+	c.lastUpstreamAt = nextAllowedAt
+	c.upstreamMu.Unlock()
+
+	if wait := time.Until(nextAllowedAt); wait > 0 {
+		time.Sleep(wait)
+	}
 }
 
 func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
@@ -833,17 +867,8 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 			return nil, lastErr
 		}
 
-		// 业务层错误日志（code != 0）
-		var respObj map[string]interface{}
-		if err := json.Unmarshal(body, &respObj); err == nil {
-			if c, ok := respObj["code"].(float64); ok && int(c) != 0 {
-				msg, _ := respObj["message"].(string)
-				logWarn("webPost 业务错误 url=%s code=%d message=%s", apiURL, int(c), msg)
-				if os.Getenv("DEBUG") == "true" {
-					logDebug("webPost 业务响应 body=%s", string(body))
-				}
-			}
-		} else if os.Getenv("DEBUG") == "true" {
+		logUpstreamBusinessError(apiURL, body)
+		if debugEnabled && extractResponseCodeFromHead(body) == -1 {
 			logDebug("webPost 非JSON响应 body=%s", string(body))
 		}
 
@@ -1653,6 +1678,12 @@ func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fon
 	return fontSize, marginV, spacing, weight, true
 }
 
+func writeJSONBytes(w http.ResponseWriter, statusCode int, data []byte) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(data)
+}
+
 func handleAPI(w http.ResponseWriter, action string, call func(*BilibiliClient) (json.RawMessage, error)) {
 	result, err := call(getClient())
 	if err != nil {
@@ -1660,6 +1691,13 @@ func handleAPI(w http.ResponseWriter, action string, call func(*BilibiliClient) 
 		writeError(w, 500, err.Error())
 		return
 	}
+
+	trimmed := bytes.TrimSpace(result)
+	if len(trimmed) > 0 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' && json.Valid(trimmed) {
+		writeJSONBytes(w, 200, trimmed)
+		return
+	}
+
 	writeJSON(w, 200, wrapResult(result))
 }
 
@@ -1719,13 +1757,15 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startTime := time.Now()
 
-		params := make(map[string]string)
-		for k, v := range r.URL.Query() {
-			if len(v) > 0 {
-				params[k] = v[0]
+		if accessLogEnabled {
+			params := make(map[string]string)
+			for k, v := range r.URL.Query() {
+				if len(v) > 0 {
+					params[k] = v[0]
+				}
 			}
+			logRequest(r.Method, r.URL.Path, params)
 		}
-		logRequest(r.Method, r.URL.Path, params)
 
 		lrw := &loggingResponseWriter{
 			ResponseWriter: w,
