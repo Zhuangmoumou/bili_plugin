@@ -59,7 +59,7 @@ Rectangle {
         controller.fetchUpInfo(midVal)
         // 刷新时回到“视频”默认筛选
         if (controller.upSelectedSeasonId !== 0) {
-            controller.selectUpSeason(0, "", false)
+            controller.selectUpSeason(0, "", false, 0)
         } else {
             controller.fetchUpVideos(midVal, 1, 20)
         }
@@ -407,8 +407,8 @@ Rectangle {
                         Text {
                             id: listCountText
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: !!upVideoList.model && upVideoList.count > 0
-                            text: " · " + upVideoList.count + " 个视频"
+                            visible: controller && (controller.upVideoTotal > 0 || (!!upVideoList.model && upVideoList.count > 0))
+                            text: " · " + (controller.upVideoTotal > 0 ? controller.upVideoTotal : upVideoList.count) + " 个视频"
                             color: Theme.textTertiary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
@@ -420,7 +420,7 @@ Rectangle {
                 Item {
                     id: filterStrip
                     width: parent.width
-                    height: 22
+                    height: 24
 
                     Flickable {
                         id: filterFlick
@@ -441,7 +441,7 @@ Rectangle {
                             Rectangle {
                                 id: allChip
                                 height: filterStrip.height
-                                width: allChipText.implicitWidth + 18
+                                width: allChipText.implicitWidth + 26
                                 radius: height / 2
                                 property bool selected: !controller || controller.upSelectedSeasonId === 0
                                 color: selected ? Theme.primary
@@ -468,7 +468,7 @@ Rectangle {
                                     onClicked: {
                                         if (!controller) return
                                         if (controller.upSelectedSeasonId !== 0) {
-                                            controller.selectUpSeason(0, "", false)
+                                            controller.selectUpSeason(0, "", false, 0)
                                             upVideoList.contentX = 0
                                             filterFlick.contentX = 0
                                         }
@@ -482,7 +482,7 @@ Rectangle {
                                 delegate: Rectangle {
                                     id: seasonChip
                                     height: filterStrip.height
-                                    width: Math.min(seasonChipText.implicitWidth + 18, 140)
+                                    width: Math.min(seasonChipText.implicitWidth + 26, 172)
                                     radius: height / 2
                                     property bool selected: controller && controller.upSelectedSeasonId === model.seasonId
                                     color: selected ? Theme.primary
@@ -528,8 +528,8 @@ Rectangle {
                                             font.pixelSize: Theme.fontSmall
                                             font.bold: seasonChip.selected
                                             elide: Text.ElideRight
-                                            // chip 总宽 max 140，扣掉左右内边距与图标和间距 ≈ 110
-                                            width: Math.min(implicitWidth, 110)
+                                            // chip 总宽 max 172，扣掉左右内边距与图标和间距 ≈ 140
+                                            width: Math.min(implicitWidth, 140)
                                         }
                                     }
 
@@ -541,7 +541,8 @@ Rectangle {
                                             if (!seasonChip.selected) {
                                                 controller.selectUpSeason(model.seasonId,
                                                                           model.name || "",
-                                                                          model.isSeries === true)
+                                                                          model.isSeries === true,
+                                                                          model.total || 0)
                                                 upVideoList.contentX = 0
                                             }
                                         }

@@ -88,6 +88,7 @@ class BiliController : public QObject {
   Q_PROPERTY(int upUserFollowing READ upUserFollowing NOTIFY upUserChanged)
   Q_PROPERTY(QString upUserSign READ upUserSign NOTIFY upUserChanged)
   Q_PROPERTY(bool upIsFollowing READ upIsFollowing NOTIFY upFollowChanged)
+  Q_PROPERTY(int upVideoTotal READ upVideoTotal NOTIFY upVideoTotalChanged)
   // UP 主合集筛选状态：当前选中的 season_id（0 表示“视频”全部投稿）
   Q_PROPERTY(qint64 upSelectedSeasonId READ upSelectedSeasonId NOTIFY upSelectedSeasonChanged)
   Q_PROPERTY(QString upSelectedSeasonName READ upSelectedSeasonName NOTIFY upSelectedSeasonChanged)
@@ -170,6 +171,7 @@ public:
   int upUserFollowing() const { return m_upUserFollowing; }
   QString upUserSign() const { return m_upUserSign; }
   bool upIsFollowing() const { return m_upIsFollowing; }
+  int upVideoTotal() const { return m_upVideoTotal; }
   qint64 upSelectedSeasonId() const { return m_upSelectedSeasonId; }
   QString upSelectedSeasonName() const { return m_upSelectedSeasonName; }
   bool isFavorited() const { return m_isFavorited; }
@@ -299,7 +301,7 @@ public:
   Q_INVOKABLE QObject *upSeasonModel();
   Q_INVOKABLE void fetchUpSeasons(qint64 mid);
   // 选择合集：seasonId=0 表示恢复为“视频”（所有投稿）；name 仅用于显示
-  Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false);
+  Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false, int total = 0);
   Q_INVOKABLE void fetchUpSeasonVideos(int page = 1, int pageSize = 30);
   Q_INVOKABLE void fetchMoreUpSeasonVideos();
 
@@ -318,6 +320,7 @@ signals:
   void replyHasMoreChanged();
   void upUserChanged();
   void upFollowChanged();
+  void upVideoTotalChanged();
   void upSelectedSeasonChanged();
 
   void toastMessage(const QString &message);
@@ -336,6 +339,7 @@ private:
   void clearLocalLoginState();
   void setGlobalError(const QString &error);
   void setIsLoading(bool loading);
+  void setUpVideoTotal(int total);
   void loadLoginStatus();
   void saveLoginStatus();
   void loadSearchHistory();
@@ -455,6 +459,7 @@ private:
   QString m_upUserSign;
   bool m_upIsFollowing = false;
   bool m_upFollowLoading = false;
+  int m_upVideoTotal = 0;
   int m_upVideoPage = 1;
   bool m_upVideoHasMore = true;
   // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。

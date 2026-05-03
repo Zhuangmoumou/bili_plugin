@@ -28,6 +28,23 @@
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
+namespace {
+int jsonIntValue(const QJsonValue &value, bool *ok) {
+  if (value.isDouble()) {
+    if (ok) *ok = true;
+    return value.toInt();
+  }
+  if (value.isString()) {
+    bool converted = false;
+    int result = value.toString().toInt(&converted);
+    if (ok) *ok = converted;
+    return converted ? result : 0;
+  }
+  if (ok) *ok = false;
+  return 0;
+}
+}
+
 // ====== 内部辅助方法 ======
 
 void BiliController::apiGet(const QString &path,
@@ -2672,6 +2689,13 @@ void BiliController::addToWatchLater() {
 
 // ====== UP 主主页 ======
 
+void BiliController::setUpVideoTotal(int total) {
+  total = qMax(0, total);
+  if (m_upVideoTotal == total) return;
+  m_upVideoTotal = total;
+  emit upVideoTotalChanged();
+}
+
 void BiliController::fetchUpInfo(qint64 mid) {
   if (mid <= 0) {
     return;
@@ -2682,6 +2706,7 @@ void BiliController::fetchUpInfo(qint64 mid) {
     m_upVideoPage = 1;
     m_upVideoHasMore = true;
     m_upVideoCursorNext = 0;
+    setUpVideoTotal(0);
     if (m_upVideoModel) {
       m_upVideoModel->clear();
       m_upVideoModel->setHasMore(true);
@@ -2852,6 +2877,13 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
 
         m_upVideoModel->appendItems(items);
 
+        QJsonObject pageObj = data.value("page").toObject();
+        bool totalKnown = false;
+        int total = jsonIntValue(data.value("count"), &totalKnown);
+        if (!totalKnown) total = jsonIntValue(pageObj.value("count"), &totalKnown);
+        if (!totalKnown) total = jsonIntValue(pageObj.value("total"), &totalKnown);
+        if (totalKnown) setUpVideoTotal(total);
+
         // 解析游标（APP cursor）
         // space/archive/cursor 在很多情况下不返回 data.cursor，而是要求客户端用“上一页最后一个 aid”继续翻页。
         qint64 nextCursor = 0;
@@ -2882,7 +2914,6 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
           hasMore = data.value("has_next").toBool(false);
         } else {
           // 兼容 web 分页
-          QJsonObject pageObj = data.value("page").toObject();
           int count = pageObj.value("count").toInt(0);
           int num = pageObj.value("pn").toInt(page);
           int size = pageObj.value("ps").toInt(pageSize);
@@ -2982,7 +3013,7 @@ void BiliController::fetchUpSeasons(qint64 mid) {
       false);
 }
 
-void BiliController::selectUpSeason(qint64 seasonId, const QString &name, bool isSeries) {
+void BiliController::selectUpSeason(qint64 seasonId, const QString &name, bool isSeries, int total) {
   if (m_upUserMid <= 0) return;
   if (m_upSelectedSeasonId == seasonId && m_upSelectedIsSeries == isSeries) {
     // 已选中，无需切换
@@ -2991,6 +3022,7 @@ void BiliController::selectUpSeason(qint64 seasonId, const QString &name, bool i
   m_upSelectedSeasonId = seasonId;
   m_upSelectedSeasonName = (seasonId == 0) ? QString() : name;
   m_upSelectedIsSeries = (seasonId == 0) ? false : isSeries;
+  setUpVideoTotal(seasonId == 0 ? 0 : total);
   emit upSelectedSeasonChanged();
 
   if (!m_upVideoModel) return;
@@ -3086,7 +3118,11 @@ void BiliController::fetchUpSeasonVideos(int page, int pageSize) {
 
         bool hasMore = false;
         QJsonObject pageObj = data.value("page").toObject();
-        int total = pageObj.value("total").toInt(0);
+        QJsonObject metaObj = data.value("meta").toObject();
+        bool totalKnown = false;
+        int total = jsonIntValue(pageObj.value("total"), &totalKnown);
+        if (!totalKnown) total = jsonIntValue(metaObj.value("total"), &totalKnown);
+        if (totalKnown) self->setUpVideoTotal(total);
         int pn = pageObj.value("page_num").toInt(page);
         int ps = pageObj.value("page_size").toInt(pageSize);
         if (total > 0 && ps > 0) {
