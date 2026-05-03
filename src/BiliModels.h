@@ -83,6 +83,15 @@ struct FavoriteFolderItem {
     int attr = 0;
 };
 
+// UP 主合集/系列条目
+struct UpSeasonItem {
+    qint64 seasonId = 0;
+    QString name;
+    QString cover;
+    int total = 0;
+    bool isSeries = false; // false: 合集(seasons)，true: 系列(series)
+};
+
 // ============ Model 基类 ============
 
 class VideoListModel : public QAbstractListModel
@@ -401,5 +410,45 @@ signals:
 
 private:
     QVector<FavoriteFolderItem> m_items;
+    bool m_loading = false;
+};
+
+// ============ UP 主合集/系列模型 ============
+
+class UpSeasonListModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+
+public:
+    enum Roles {
+        SeasonIdRole = Qt::UserRole + 1,
+        NameRole,
+        CoverRole,
+        TotalRole,
+        IsSeriesRole
+    };
+    Q_ENUM(Roles)
+
+    explicit UpSeasonListModel(QObject *parent = nullptr);
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    int count() const { return m_items.count(); }
+    bool loading() const { return m_loading; }
+
+    Q_INVOKABLE void clear();
+    void setItems(const QVector<UpSeasonItem> &items);
+    void setLoading(bool loading);
+
+signals:
+    void countChanged();
+    void loadingChanged();
+
+private:
+    QVector<UpSeasonItem> m_items;
     bool m_loading = false;
 };

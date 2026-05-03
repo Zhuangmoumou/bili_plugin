@@ -805,3 +805,67 @@ FavoriteFolderItem FavoriteFolderModel::parseFavoriteFolderItem(const QJsonObjec
     item.attr = obj.value("attr").toInt();
     return item;
 }
+
+// ============ UpSeasonListModel ============
+
+UpSeasonListModel::UpSeasonListModel(QObject *parent)
+    : QAbstractListModel(parent)
+{
+}
+
+int UpSeasonListModel::rowCount(const QModelIndex &parent) const
+{
+    Q_UNUSED(parent)
+    return m_items.count();
+}
+
+QVariant UpSeasonListModel::data(const QModelIndex &index, int role) const
+{
+    if (index.row() < 0 || index.row() >= m_items.count())
+        return QVariant();
+    const UpSeasonItem &item = m_items[index.row()];
+    switch (role) {
+    case SeasonIdRole: return item.seasonId;
+    case NameRole:     return item.name;
+    case CoverRole:    return item.cover;
+    case TotalRole:    return item.total;
+    case IsSeriesRole: return item.isSeries;
+    default: return QVariant();
+    }
+}
+
+QHash<int, QByteArray> UpSeasonListModel::roleNames() const
+{
+    return {
+        {SeasonIdRole, "seasonId"},
+        {NameRole, "name"},
+        {CoverRole, "cover"},
+        {TotalRole, "total"},
+        {IsSeriesRole, "isSeries"}
+    };
+}
+
+void UpSeasonListModel::clear()
+{
+    if (m_items.isEmpty()) return;
+    beginResetModel();
+    m_items.clear();
+    endResetModel();
+    emit countChanged();
+}
+
+void UpSeasonListModel::setItems(const QVector<UpSeasonItem> &items)
+{
+    beginResetModel();
+    m_items = items;
+    endResetModel();
+    emit countChanged();
+}
+
+void UpSeasonListModel::setLoading(bool loading)
+{
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit loadingChanged();
+    }
+}

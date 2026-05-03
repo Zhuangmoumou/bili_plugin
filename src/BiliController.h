@@ -25,6 +25,7 @@ class HotSearchModel;
 class SearchResultModel;
 class QStringListModel;
 class FavoriteFolderModel;
+class UpSeasonListModel;
 class BiliNetwork;
 
 class BiliController : public QObject {
@@ -87,6 +88,9 @@ class BiliController : public QObject {
   Q_PROPERTY(int upUserFollowing READ upUserFollowing NOTIFY upUserChanged)
   Q_PROPERTY(QString upUserSign READ upUserSign NOTIFY upUserChanged)
   Q_PROPERTY(bool upIsFollowing READ upIsFollowing NOTIFY upFollowChanged)
+  // UP 主合集筛选状态：当前选中的 season_id（0 表示“视频”全部投稿）
+  Q_PROPERTY(qint64 upSelectedSeasonId READ upSelectedSeasonId NOTIFY upSelectedSeasonChanged)
+  Q_PROPERTY(QString upSelectedSeasonName READ upSelectedSeasonName NOTIFY upSelectedSeasonChanged)
   // 收藏/投币/点赞状态
   Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
   Q_PROPERTY(bool isCoined READ isCoined NOTIFY coinStatusChanged)
@@ -166,6 +170,8 @@ public:
   int upUserFollowing() const { return m_upUserFollowing; }
   QString upUserSign() const { return m_upUserSign; }
   bool upIsFollowing() const { return m_upIsFollowing; }
+  qint64 upSelectedSeasonId() const { return m_upSelectedSeasonId; }
+  QString upSelectedSeasonName() const { return m_upSelectedSeasonName; }
   bool isFavorited() const { return m_isFavorited; }
   bool isCoined() const { return m_isCoined; }
   bool isLiked() const { return m_isLiked; }
@@ -289,6 +295,13 @@ public:
   Q_INVOKABLE void fetchUpVideos(qint64 mid, int page = 1, int pageSize = 20);
   Q_INVOKABLE void fetchMoreUpVideos();
   Q_INVOKABLE void toggleUpFollow();
+  // UP 主合集（含系列）
+  Q_INVOKABLE QObject *upSeasonModel();
+  Q_INVOKABLE void fetchUpSeasons(qint64 mid);
+  // 选择合集：seasonId=0 表示恢复为“视频”（所有投稿）；name 仅用于显示
+  Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false);
+  Q_INVOKABLE void fetchUpSeasonVideos(int page = 1, int pageSize = 30);
+  Q_INVOKABLE void fetchMoreUpSeasonVideos();
 
 signals:
   void currentPageChanged();
@@ -305,6 +318,7 @@ signals:
   void replyHasMoreChanged();
   void upUserChanged();
   void upFollowChanged();
+  void upSelectedSeasonChanged();
 
   void toastMessage(const QString &message);
   void qrcodeLoginSuccess();
@@ -423,6 +437,7 @@ private:
   VideoListModel *m_recentHistoryModel;
   VideoListModel *m_watchLaterModel;
   VideoListModel *m_upVideoModel;
+  UpSeasonListModel *m_upSeasonModel = nullptr;
   int m_favoritePage;
   qint64 m_currentFavoriteId;
   int m_recentHistoryMax = 0;
@@ -444,6 +459,12 @@ private:
   bool m_upVideoHasMore = true;
   // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。
   qint64 m_upVideoCursorNext = 0;
+  // UP 主合集筛选状态
+  qint64 m_upSelectedSeasonId = 0;
+  QString m_upSelectedSeasonName;
+  bool m_upSelectedIsSeries = false;
+  int m_upSeasonVideoPage = 1;
+  bool m_upSeasonVideoHasMore = true;
   QString m_lastRecentViewReportKey;
   QString m_videoDetailLoadingBvid;
   QString m_playUrlLoadingKey;

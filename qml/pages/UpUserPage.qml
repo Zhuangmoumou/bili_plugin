@@ -13,6 +13,7 @@ Rectangle {
     property var controller: null
     property var upMid: 0
     property bool upVideosRequested: false
+    property bool upSeasonsRequested: false
     property bool refreshing: false
 
     signal backClicked()
@@ -43,6 +44,7 @@ Rectangle {
                 refreshing = false
                 // 允许后续 onUpUserChanged 再次触发自动加载
                 upVideosRequested = false
+                upSeasonsRequested = false
             }
         }
     }
@@ -51,14 +53,22 @@ Rectangle {
         var midVal = Number(upMid)
         if (!controller || !midVal || midVal <= 0) return
         refreshing = true
-        // 避免 onUpUserChanged 再触发一次 fetchUpVideos
+        // 避免 onUpUserChanged 再触发一次 fetchUpVideos / fetchUpSeasons
         upVideosRequested = true
+        upSeasonsRequested = true
         controller.fetchUpInfo(midVal)
-        controller.fetchUpVideos(midVal, 1, 20)
+        // 刷新时回到“视频”默认筛选
+        if (controller.upSelectedSeasonId !== 0) {
+            controller.selectUpSeason(0, "", false)
+        } else {
+            controller.fetchUpVideos(midVal, 1, 20)
+        }
+        controller.fetchUpSeasons(midVal)
     }
 
     onUpMidChanged: {
         upVideosRequested = false
+        upSeasonsRequested = false
         refresh()
     }
 
@@ -71,12 +81,22 @@ Rectangle {
         function onUpUserChanged() {
             var midVal = Number(upMid)
             if (!controller || !midVal || controller.upUserMid !== midVal) return
-            if (upVideosRequested) return
-            upVideosRequested = true
-            Qt.callLater(function() {
-                if (!controller || controller.upUserMid !== midVal) return
-                controller.fetchUpVideos(midVal, 1, 20)
-            })
+            if (!upVideosRequested) {
+                upVideosRequested = true
+                Qt.callLater(function() {
+                    if (!controller || controller.upUserMid !== midVal) return
+                    if (controller.upSelectedSeasonId === 0) {
+                        controller.fetchUpVideos(midVal, 1, 20)
+                    }
+                })
+            }
+            if (!upSeasonsRequested) {
+                upSeasonsRequested = true
+                Qt.callLater(function() {
+                    if (!controller || controller.upUserMid !== midVal) return
+                    controller.fetchUpSeasons(midVal)
+                })
+            }
         }
     }
 
@@ -344,19 +364,193 @@ Rectangle {
                 }
             }
 
-            // 投稿视频
+            // 投稿视频 / 合集筛选
             Column {
                 width: parent.width
                 spacing: Theme.spacingSmall
 
-                Text {
-                    text: "投稿视频"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontMedium
-                    font.bold: true
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingLarge
+                // 标题行：当前筛选名 + 视频数量提示
+                Item {
+                    width: parent.width
+                    height: titleHeaderText.implicitHeight
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: Theme.spacingLarge
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.spacingSmall
+
+                        // 装饰条
+                        Rectangle {
+                            width: 3
+                            height: titleHeaderText.implicitHeight - 2
+                            radius: 1.5
+                            color: Theme.primary
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Text {
+                            id: titleHeaderText
+                            text: controller && controller.upSelectedSeasonId !== 0
+                                  ? (controller.upSelectedSeasonName || "合集")
+                                  : "投稿视频"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontMedium
+                            font.bold: true
+                            elide: Text.ElideRight
+                            // 限制最大宽度，避免过长合集名挤掉计数
+                            // 这里 listCountText 宽度可变，取一个保守上限
+                            width: Math.min(implicitWidth, upPage.width - 90)
+                        }
+
+                        Text {
+                            id: listCountText
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: !!upVideoList.model && upVideoList.count > 0
+                            text: " · " + upVideoList.count + " 个视频"
+                            color: Theme.textTertiary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
+                    }
+                }
+
+                // 合集筛选条：水平滚动 chip 列表
+                Item {
+                    id: filterStrip
+                    width: parent.width
+                    height: 22
+
+                    Flickable {
+                        id: filterFlick
+                        anchors.fill: parent
+                        contentWidth: filterRow.width + Theme.spacingLarge * 2
+                        contentHeight: filterStrip.height
+                        flickableDirection: Flickable.HorizontalFlick
+                        boundsBehavior: Flickable.StopAtBounds
+                        clip: true
+
+                        Row {
+                            id: filterRow
+                            x: Theme.spacingLarge
+                            spacing: 6
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            // “视频”全部 chip
+                            Rectangle {
+                                id: allChip
+                                height: filterStrip.height
+                                width: allChipText.implicitWidth + 18
+                                radius: height / 2
+                                property bool selected: !controller || controller.upSelectedSeasonId === 0
+                                color: selected ? Theme.primary
+                                                : (allChipArea.pressed ? Theme.bgTertiary : Theme.bgSecondary)
+                                border.color: selected ? "transparent"
+                                                       : Theme.withAlpha(Theme.primary, 0.25)
+                                border.width: selected ? 0 : 1
+
+                                Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+                                Text {
+                                    id: allChipText
+                                    anchors.centerIn: parent
+                                    text: "视频"
+                                    color: parent.selected ? Theme.textOnPrimary : Theme.textSecondary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSmall
+                                    font.bold: parent.selected
+                                }
+
+                                MouseArea {
+                                    id: allChipArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        if (!controller) return
+                                        if (controller.upSelectedSeasonId !== 0) {
+                                            controller.selectUpSeason(0, "", false)
+                                            upVideoList.contentX = 0
+                                            filterFlick.contentX = 0
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: controller ? controller.upSeasonModel() : null
+
+                                delegate: Rectangle {
+                                    id: seasonChip
+                                    height: filterStrip.height
+                                    width: Math.min(seasonChipText.implicitWidth + 18, 140)
+                                    radius: height / 2
+                                    property bool selected: controller && controller.upSelectedSeasonId === model.seasonId
+                                    color: selected ? Theme.primary
+                                                    : (seasonChipArea.pressed ? Theme.bgTertiary : Theme.bgSecondary)
+                                    border.color: selected ? "transparent"
+                                                           : Theme.withAlpha(Theme.primary, 0.25)
+                                    border.width: selected ? 0 : 1
+
+                                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+                                    Row {
+                                        anchors.centerIn: parent
+                                        spacing: 4
+
+                                        // 合集小图标：两层错位的小方块，暗示叠放/合集
+                                        Item {
+                                            width: 10; height: 10
+                                            anchors.verticalCenter: parent.verticalCenter
+
+                                            Rectangle {
+                                                width: 7; height: 7
+                                                radius: 1.5
+                                                color: "transparent"
+                                                border.color: seasonChip.selected ? Theme.textOnPrimary : Theme.textSecondary
+                                                border.width: 1
+                                                x: 0; y: 3
+                                            }
+                                            Rectangle {
+                                                width: 7; height: 7
+                                                radius: 1.5
+                                                color: seasonChip.selected ? Theme.textOnPrimary : Theme.textSecondary
+                                                x: 3; y: 0
+                                            }
+                                        }
+
+                                        Text {
+                                            id: seasonChipText
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: (model.name || "合集")
+                                                  + (model.total > 0 ? "·" + model.total : "")
+                                            color: seasonChip.selected ? Theme.textOnPrimary : Theme.textSecondary
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSmall
+                                            font.bold: seasonChip.selected
+                                            elide: Text.ElideRight
+                                            // chip 总宽 max 140，扣掉左右内边距与图标和间距 ≈ 110
+                                            width: Math.min(implicitWidth, 110)
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: seasonChipArea
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (!controller) return
+                                            if (!seasonChip.selected) {
+                                                controller.selectUpSeason(model.seasonId,
+                                                                          model.name || "",
+                                                                          model.isSeries === true)
+                                                upVideoList.contentX = 0
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                 }
 
                 ListView {
@@ -400,7 +594,7 @@ Rectangle {
 
                 Text {
                     visible: upVideoList.count === 0 && controller && !controller.isLoading
-                    text: "暂无投稿"
+                    text: controller && controller.upSelectedSeasonId !== 0 ? "该合集暂无视频" : "暂无投稿"
                     color: Theme.textTertiary
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: upVideoList.bottom

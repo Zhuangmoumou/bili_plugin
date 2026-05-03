@@ -203,6 +203,7 @@ void init_plugin() {
   qmlRegisterType<SearchResultModel>("BiliPlugin", 1, 0, "SearchResultModel");
   qmlRegisterType<VideoPartListModel>("BiliPlugin", 1, 0, "VideoPartListModel");
   qmlRegisterType<FavoriteFolderModel>("BiliPlugin", 1, 0, "FavoriteFolderModel");
+  qmlRegisterType<UpSeasonListModel>("BiliPlugin", 1, 0, "UpSeasonListModel");
 
   // 启动 API 服务器
   if (!bili_startApiServer()) {

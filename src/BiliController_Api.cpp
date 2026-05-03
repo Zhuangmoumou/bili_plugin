@@ -2690,6 +2690,17 @@ void BiliController::fetchUpInfo(qint64 mid) {
       m_upIsFollowing = false;
       emit upFollowChanged();
     }
+    // 重置合集筛选 / 合集列表
+    if (m_upSeasonModel) m_upSeasonModel->clear();
+    bool seasonChanged = (m_upSelectedSeasonId != 0)
+                         || !m_upSelectedSeasonName.isEmpty()
+                         || m_upSelectedIsSeries;
+    m_upSelectedSeasonId = 0;
+    m_upSelectedSeasonName.clear();
+    m_upSelectedIsSeries = false;
+    m_upSeasonVideoPage = 1;
+    m_upSeasonVideoHasMore = true;
+    if (seasonChanged) emit upSelectedSeasonChanged();
   }
 
   QMap<QString, QString> params;
@@ -2899,10 +2910,212 @@ void BiliController::fetchUpVideos(qint64 mid, int page, int pageSize) {
 }
 
 void BiliController::fetchMoreUpVideos() {
+  // 若当前选中的是合集/系列，则委托到合集翻页
+  if (m_upSelectedSeasonId > 0) {
+    fetchMoreUpSeasonVideos();
+    return;
+  }
   if (!m_upVideoHasMore || m_upVideoModel->loading())
     return;
   m_upVideoPage++;
   fetchUpVideos(m_upUserMid, m_upVideoPage);
+}
+
+void BiliController::fetchUpSeasons(qint64 mid) {
+  if (mid <= 0 || !m_upSeasonModel) return;
+  if (m_upSeasonModel->loading()) return;
+
+  // 切换 UP 主时由 fetchUpInfo 负责清空 model；这里只在 mid 一致时拉取
+  if (m_upUserMid != mid) {
+    m_upUserMid = mid;
+  }
+
+  m_upSeasonModel->setLoading(true);
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(mid);
+  params["pn"] = "1";
+  params["ps"] = "20";
+
+  QPointer<BiliController> self(this);
+  apiGet(
+      "/user/seasons", params,
+      [self, mid](const QJsonObject &data) {
+        if (!self || self->m_upUserMid != mid) return;
+        if (!self->m_upSeasonModel) return;
+
+        QVector<UpSeasonItem> items;
+        QJsonObject itemsLists = data.value("items_lists").toObject();
+
+        auto parseList = [&](const QJsonArray &arr, bool isSeries) {
+          for (const QJsonValue &v : arr) {
+            if (!v.isObject()) continue;
+            QJsonObject obj = v.toObject();
+            QJsonObject meta = obj.value("meta").toObject();
+            UpSeasonItem it;
+            if (isSeries) {
+              it.seasonId = meta.value("series_id").toVariant().toLongLong();
+            } else {
+              it.seasonId = meta.value("season_id").toVariant().toLongLong();
+            }
+            it.name = meta.value("name").toString();
+            it.cover = meta.value("cover").toString();
+            it.total = meta.value("total").toInt();
+            it.isSeries = isSeries;
+            if (it.seasonId > 0 && !it.name.isEmpty())
+              items.append(it);
+          }
+        };
+
+        parseList(itemsLists.value("seasons_list").toArray(), false);
+        parseList(itemsLists.value("series_list").toArray(), true);
+
+        self->m_upSeasonModel->setItems(items);
+        self->m_upSeasonModel->setLoading(false);
+      },
+      [self](int, const QString &msg) {
+        if (!self || !self->m_upSeasonModel) return;
+        self->m_upSeasonModel->setLoading(false);
+        // 静默：合集列表失败不弹 toast，避免主页打扰
+        Q_UNUSED(msg);
+      },
+      false);
+}
+
+void BiliController::selectUpSeason(qint64 seasonId, const QString &name, bool isSeries) {
+  if (m_upUserMid <= 0) return;
+  if (m_upSelectedSeasonId == seasonId && m_upSelectedIsSeries == isSeries) {
+    // 已选中，无需切换
+    return;
+  }
+  m_upSelectedSeasonId = seasonId;
+  m_upSelectedSeasonName = (seasonId == 0) ? QString() : name;
+  m_upSelectedIsSeries = (seasonId == 0) ? false : isSeries;
+  emit upSelectedSeasonChanged();
+
+  if (!m_upVideoModel) return;
+  // 切换：清空当前视频列表，重置翻页状态，重新拉取
+  m_upVideoModel->clear();
+  m_upVideoModel->setHasMore(true);
+  m_upVideoModel->setErrorMessage("");
+
+  if (seasonId == 0) {
+    // 恢复为“视频”全部投稿
+    m_upVideoPage = 1;
+    m_upVideoHasMore = true;
+    m_upVideoCursorNext = 0;
+    fetchUpVideos(m_upUserMid, 1, 20);
+  } else {
+    m_upSeasonVideoPage = 1;
+    m_upSeasonVideoHasMore = true;
+    fetchUpSeasonVideos(1, 30);
+  }
+}
+
+void BiliController::fetchUpSeasonVideos(int page, int pageSize) {
+  if (m_upUserMid <= 0 || m_upSelectedSeasonId <= 0) return;
+  if (!m_upVideoModel) return;
+  if (m_upVideoModel->loading()) return;
+
+  page = qBound(1, page, 9999);
+  pageSize = qBound(1, pageSize, 100);
+
+  m_upSeasonVideoPage = page;
+  m_upVideoModel->setLoading(true);
+  m_upVideoModel->setErrorMessage("");
+
+  const qint64 mid = m_upUserMid;
+  const qint64 seasonId = m_upSelectedSeasonId;
+  const bool isSeries = m_upSelectedIsSeries;
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(mid);
+  params["season_id"] = QString::number(seasonId);
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+
+  // 注：当前 Go 端只代理了合集 (seasons_archives_list)。
+  // 系列接口暂未代理；先用同一路径请求，若 isSeries 不可用则走相同接口（多数官方端也接受 season_id）
+  Q_UNUSED(isSeries);
+
+  QPointer<BiliController> self(this);
+  apiGet(
+      "/user/season/videos", params,
+      [self, mid, seasonId, page, pageSize](const QJsonObject &data) {
+        if (!self || !self->m_upVideoModel) return;
+        if (self->m_upUserMid != mid || self->m_upSelectedSeasonId != seasonId) return;
+
+        QJsonArray archives = data.value("archives").toArray();
+        QVector<VideoItem> items;
+        items.reserve(archives.size());
+
+        // 尝试拿到 UP 主名字以便填充列表显示
+        QString ownerName = self->m_upUserName;
+
+        for (const QJsonValue &v : archives) {
+          if (!v.isObject()) continue;
+          QJsonObject obj = v.toObject();
+          VideoItem item = VideoListModel::parseVideoItem(obj);
+          if (item.aid <= 0) {
+            item.aid = obj.value("aid").toVariant().toLongLong();
+          }
+          if (item.pubdate <= 0) {
+            item.pubdate = obj.value("pubdate").toVariant().toLongLong();
+          }
+          if (item.pubdate <= 0) {
+            item.pubdate = obj.value("ctime").toVariant().toLongLong();
+          }
+          if (item.duration == 0) {
+            item.duration = obj.value("duration").toInt();
+          }
+          // stat
+          QJsonObject statObj = obj.value("stat").toObject();
+          if (item.views == 0) {
+            item.views = statObj.value("view").toVariant().toLongLong();
+          }
+          if (item.ownerName.isEmpty()) {
+            item.ownerName = ownerName;
+          }
+          if (item.ownerMid == 0) {
+            item.ownerMid = mid;
+          }
+          items.append(item);
+        }
+
+        self->m_upVideoModel->appendItems(items);
+
+        bool hasMore = false;
+        QJsonObject pageObj = data.value("page").toObject();
+        int total = pageObj.value("total").toInt(0);
+        int pn = pageObj.value("page_num").toInt(page);
+        int ps = pageObj.value("page_size").toInt(pageSize);
+        if (total > 0 && ps > 0) {
+          hasMore = (pn * ps < total);
+        } else {
+          hasMore = (items.size() >= pageSize);
+        }
+        self->m_upSeasonVideoHasMore = hasMore;
+        self->m_upVideoModel->setHasMore(hasMore);
+        self->m_upVideoModel->setLoading(false);
+
+        if (items.isEmpty() && page == 1) {
+          self->m_upVideoModel->setErrorMessage("该合集暂无视频");
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self || !self->m_upVideoModel) return;
+        self->m_upVideoModel->setLoading(false);
+        self->m_upVideoModel->setErrorMessage(msg);
+        emit self->toastMessage(QString("加载合集失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliController::fetchMoreUpSeasonVideos() {
+  if (!m_upSeasonVideoHasMore) return;
+  if (!m_upVideoModel || m_upVideoModel->loading()) return;
+  m_upSeasonVideoPage++;
+  fetchUpSeasonVideos(m_upSeasonVideoPage, 30);
 }
 
 void BiliController::toggleUpFollow() {

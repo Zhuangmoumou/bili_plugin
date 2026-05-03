@@ -135,6 +135,8 @@ var rootEndpoints = []string{
 	"/user/info - 用户信息",
 	"/user/follow/toggle - 关注/取消关注UP主",
 	"/user/videos - 用户投稿",
+	"/user/seasons - UP主合集列表",
+	"/user/season/videos - UP主合集内视频",
 	"/login/info - 登录信息",
 	"/login/import - 导入登录Cookie",
 	"/hot/search - 热搜",
@@ -170,6 +172,8 @@ var startupEndpoints = []string{
 	"GET  /user/info              - 用户信息",
 	"GET  /user/follow/toggle     - 关注/取消关注UP主",
 	"GET  /user/videos            - 用户投稿",
+	"GET  /user/seasons           - UP主合集列表",
+	"GET  /user/season/videos     - UP主合集内视频",
 	"GET  /login/info             - 登录信息",
 	"POST /login/import           - 导入登录Cookie",
 	"GET  /hot/search             - 热搜榜",
@@ -1424,6 +1428,34 @@ func (c *BilibiliClient) GetUserVideos(mid, pn, ps int, max int64) (json.RawMess
 	return raw, nil
 }
 
+// 获取 UP 主的合集与系列列表（合集 = seasons，系列 = series）
+// 返回结构与官方 seasons_series_list 保持一致：data.items_lists.{seasons_list, series_list, page}
+func (c *BilibiliClient) GetUserSeasonsSeries(mid, pn, ps int) (json.RawMessage, error) {
+	logInfo("获取 UP 合集列表 mid=%d pn=%d ps=%d", mid, pn, ps)
+	return c.wbiRequest("https://api.bilibili.com/x/polymer/web-space/seasons_series_list", map[string]string{
+		"mid":          strconv.Itoa(mid),
+		"page_num":     strconv.Itoa(pn),
+		"page_size":    strconv.Itoa(ps),
+		"web_location": "333.999",
+	}, "GET")
+}
+
+// 获取 UP 主合集内的视频列表
+func (c *BilibiliClient) GetUserSeasonVideos(mid, seasonID, pn, ps int, sortReverse bool) (json.RawMessage, error) {
+	logInfo("获取 UP 合集视频 mid=%d season=%d pn=%d ps=%d", mid, seasonID, pn, ps)
+	sr := "false"
+	if sortReverse {
+		sr = "true"
+	}
+	return c.wbiRequest("https://api.bilibili.com/x/polymer/web-space/seasons_archives_list", map[string]string{
+		"mid":          strconv.Itoa(mid),
+		"season_id":    strconv.Itoa(seasonID),
+		"sort_reverse": sr,
+		"page_num":     strconv.Itoa(pn),
+		"page_size":    strconv.Itoa(ps),
+	}, "GET")
+}
+
 func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
 	logInfo("获取登录信息")
 	return c.request("https://api.bilibili.com/x/web-interface/nav", map[string]string{}, "GET")
@@ -2459,6 +2491,39 @@ func handleUserVideos(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleUserSeasons(w http.ResponseWriter, r *http.Request) {
+	mid, ok := requireIntQuery(w, r, "mid")
+	if !ok {
+		return
+	}
+	pn, ps, ok := getPageParams(w, r, 20)
+	if !ok {
+		return
+	}
+	handleAPI(w, "/user/seasons", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetUserSeasonsSeries(mid, pn, ps)
+	})
+}
+
+func handleUserSeasonVideos(w http.ResponseWriter, r *http.Request) {
+	mid, ok := requireIntQuery(w, r, "mid")
+	if !ok {
+		return
+	}
+	seasonID, ok := requireIntQuery(w, r, "season_id")
+	if !ok {
+		return
+	}
+	pn, ps, ok := getPageParams(w, r, 30)
+	if !ok {
+		return
+	}
+	sortReverse := strings.EqualFold(r.URL.Query().Get("sort_reverse"), "true")
+	handleAPI(w, "/user/season/videos", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetUserSeasonVideos(mid, seasonID, pn, ps, sortReverse)
+	})
+}
+
 func handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	mid, ok := requireIntQuery(w, r, "mid")
 	if !ok {
@@ -3122,6 +3187,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/user/info", handleUserInfo)
 	mux.HandleFunc("/user/follow/toggle", handleUserFollowToggle)
 	mux.HandleFunc("/user/videos", handleUserVideos)
+	mux.HandleFunc("/user/seasons", handleUserSeasons)
+	mux.HandleFunc("/user/season/videos", handleUserSeasonVideos)
 	mux.HandleFunc("/login/info", handleLoginInfo)
 	mux.HandleFunc("/login/import", handleLoginImport)
 	mux.HandleFunc("/logout", handleLogout)
