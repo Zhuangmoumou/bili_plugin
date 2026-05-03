@@ -17,7 +17,7 @@ Rectangle {
     property string viewCount: ""
     property string durationText: ""
     property bool showViewCount: true
-    // 稳妥显示：由外部显式控制是否显示合集
+    // 由外部显式控制是否显示选集角标
     property bool showCollection: false
 
     signal clicked(string bvid)
@@ -116,7 +116,7 @@ Rectangle {
                 }
             }
 
-            // 合集标识（多P视频）
+            // 选集角标（多P视频）
             Rectangle {
                 visible: showCollection
                 anchors.left: parent.left
@@ -124,16 +124,18 @@ Rectangle {
                 anchors.leftMargin: 4
                 anchors.bottomMargin: 4
                 height: 13
-                width: collectionText.implicitWidth + 8
-                radius: Theme.radiusSmall
-                color: Qt.rgba(0.6, 0.6, 0.6, 0.9)
+                width: collectionText.implicitWidth + 10
+                radius: 6
+                color: Qt.rgba(0, 0, 0, 0.58)
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.18)
                 z: 2
 
                 Text {
                     id: collectionText
                     anchors.centerIn: parent
-                    text: "合集"
-                    color: "#222222"
+                    text: "选集"
+                    color: "#F8FAFC"
                     font.pixelSize: Theme.fontTiny
                     font.family: Theme.fontFamily
                     font.bold: true

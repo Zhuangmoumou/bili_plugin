@@ -13,7 +13,7 @@ Item {
     property string durationText: ""
     property string bvid: ""
     property int rankIndex: 0
-    // 稳妥显示：由外部显式控制是否显示合集
+    // 由外部显式控制是否显示选集角标
     property bool showCollection: false
     property bool showRank: false
     property string fontFamily: "Microsoft YaHei"
@@ -94,22 +94,24 @@ Item {
                 }
             }
 
-            // 合集标识（多P视频）
+            // 选集角标（多P视频）
             Rectangle {
                 visible: showCollection
-                anchors { left: parent.left; bottom: parent.bottom; leftMargin: 3; bottomMargin: 3 }
-                width: collectionText.implicitWidth + 8
+                anchors { left: parent.left; bottom: parent.bottom; leftMargin: 4; bottomMargin: 4 }
+                width: collectionText.implicitWidth + 10
                 height: 14
-                radius: 3
-                color: "#CC999999"
+                radius: 6
+                color: Qt.rgba(0, 0, 0, 0.58)
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.18)
                 z: 2
 
                 Text {
                     id: collectionText
-                    text: "合集"
-                    color: "#222222"
+                    text: "选集"
+                    color: "#F8FAFC"
                     font.family: card.fontFamily
-                    font.pixelSize: 9
+                    font.pixelSize: 8
                     font.bold: true
                     anchors.centerIn: parent
                 }

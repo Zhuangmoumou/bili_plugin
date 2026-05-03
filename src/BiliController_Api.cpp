@@ -1305,9 +1305,7 @@ void BiliController::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) 
             continue;
 
           QJsonObject obj = v.toObject();
-          VideoItem item;
-          item.bvid = obj.value("bvid").toString();
-          item.title = obj.value("title").toString();
+          VideoItem item = VideoListModel::parseVideoItem(obj);
           item.pic = obj.value("cover").toString();
           item.duration = obj.value("duration").toInt();
 
@@ -2468,7 +2466,7 @@ void BiliController::fetchRecentHistory() {
                 QJsonObject obj = v.toObject();
                 QJsonObject history = obj.value("history").toObject();
 
-                VideoItem item;
+                VideoItem item = VideoListModel::parseVideoItem(obj);
                 item.bvid = history.value("bvid").toString();
                 item.aid = history.value("oid").toVariant().toLongLong();
                 item.cid = history.value("cid").toVariant().toLongLong();
@@ -2537,7 +2535,7 @@ void BiliController::fetchMoreRecentHistory() {
                 QJsonObject obj = v.toObject();
                 QJsonObject history = obj.value("history").toObject();
 
-                VideoItem item;
+                VideoItem item = VideoListModel::parseVideoItem(obj);
                 item.bvid = history.value("bvid").toString();
                 item.aid = history.value("oid").toVariant().toLongLong();
                 item.cid = history.value("cid").toVariant().toLongLong();
@@ -2612,10 +2610,8 @@ void BiliController::fetchWatchLater(int page, int pageSize) {
             continue;
           QJsonObject obj = v.toObject();
 
-          VideoItem item;
+          VideoItem item = VideoListModel::parseVideoItem(obj);
           item.aid = obj.value("aid").toVariant().toLongLong();
-          item.bvid = obj.value("bvid").toString();
-          item.title = obj.value("title").toString();
           item.pic = obj.value("pic").toString();
           if (item.pic.isEmpty()) {
             item.pic = obj.value("cover").toString();
@@ -3030,7 +3026,7 @@ void BiliController::downloadVideoToDisk(int quality) {
   // 2. 构建并净化文件名
   QString title = videoTitle();
 
-  // 多P视频：合集前10字符 + ... + 当前P标题
+  // 多P视频：选集标题前10字符 + ... + 当前P标题
   if (m_videoPartModel && m_videoPartModel->count() > 1) {
       QString partTitle;
       for (int i = 0; i < m_videoPartModel->count(); ++i) {

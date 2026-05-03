@@ -287,7 +287,7 @@ Rectangle {
                         styleColor: Qt.rgba(0, 0, 0, 0.6)
                     }
 
-                    // 合集标签（右下）
+                    // 选集标签（右下）
                     Rectangle {
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
@@ -296,16 +296,16 @@ Rectangle {
                         height: 13
                         width: collectionText.implicitWidth + 8
                         radius: 6
-                        color: Qt.rgba(0, 0, 0, 0.55)
+                        color: Qt.rgba(0, 0, 0, 0.58)
                         border.width: 1
-                        border.color: Qt.rgba(1, 1, 1, 0.25)
+                        border.color: Qt.rgba(1, 1, 1, 0.18)
                         visible: controller && controller.videoPartModel() && controller.videoPartModel().count > 1
 
                         Text {
                             id: collectionText
                             anchors.centerIn: parent
-                            text: "合集 " + (controller && controller.videoPartModel() ? controller.videoPartModel().count : 0) + "P"
-                            color: "white"
+                            text: "选集 " + (controller && controller.videoPartModel() ? controller.videoPartModel().count : 0) + "P"
+                            color: "#F8FAFC"
                             font.pixelSize: 8
                             font.family: fontFamily
                             font.bold: true

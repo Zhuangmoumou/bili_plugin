@@ -1124,6 +1124,7 @@ Rectangle {
                                 viewCount: ""
                                 durationText: model.durationText || ""
                                 bvid: model.bvid || ""
+                                showCollection: model.partCount > 1
                                 onClicked: {
                                     userPage.recentHistoryContentX = recentList.contentX
                                     userPage.videoSelected(bvid)
@@ -1206,6 +1207,7 @@ Rectangle {
                                 viewCount: ""
                                 durationText: model.durationText || ""
                                 bvid: model.bvid || ""
+                                showCollection: model.partCount > 1
                                 onClicked: {
                                     userPage.watchLaterContentX = watchLaterList.contentX
                                     userPage.videoSelected(bvid)
