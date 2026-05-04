@@ -10,6 +10,7 @@ Rectangle {
     z: 10
 
     property string title: ""
+    property string titleSuffix: ""
     property bool showBack: true
     property bool showSearch: false
 
@@ -67,16 +68,36 @@ Rectangle {
     }
 
     // ── 标题 ──
-    Text {
-        text: titleBar.title
-        color: Theme.textPrimary
-        font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontMedium
-        font.bold: true
+    Row {
+        id: titleGroup
+        property int maxWidth: parent.width - 110
         anchors.centerIn: parent
-        elide: Text.ElideRight
-        width: parent.width - 110
-        horizontalAlignment: Text.AlignHCenter
+        width: Math.min(maxWidth, titleText.implicitWidth + (suffixText.visible ? spacing + suffixText.implicitWidth : 0))
+        height: parent.height
+        spacing: suffixText.visible ? 4 : 0
+
+        Text {
+            id: titleText
+            width: Math.max(0, titleGroup.width - (suffixText.visible ? titleGroup.spacing + suffixText.implicitWidth : 0))
+            text: titleBar.title
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontMedium
+            font.bold: true
+            anchors.verticalCenter: parent.verticalCenter
+            elide: Text.ElideRight
+            horizontalAlignment: suffixText.visible ? Text.AlignRight : Text.AlignHCenter
+        }
+
+        Text {
+            id: suffixText
+            visible: titleBar.titleSuffix.length > 0
+            text: titleBar.titleSuffix
+            color: Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSmall
+            anchors.verticalCenter: parent.verticalCenter
+        }
     }
 
     // ── 搜索按钮 ──

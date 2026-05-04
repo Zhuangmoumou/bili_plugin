@@ -43,6 +43,62 @@ int jsonIntValue(const QJsonValue &value, bool *ok) {
   if (ok) *ok = false;
   return 0;
 }
+
+QVector<VideoItem> parseSeasonArchiveItems(const QJsonArray &archives, qint64 ownerMid,
+                                          const QString &ownerName) {
+  QVector<VideoItem> items;
+  items.reserve(archives.size());
+
+  for (const QJsonValue &v : archives) {
+    if (!v.isObject()) continue;
+    QJsonObject obj = v.toObject();
+    VideoItem item = VideoListModel::parseVideoItem(obj);
+    if (item.aid <= 0) {
+      item.aid = obj.value("aid").toVariant().toLongLong();
+    }
+    if (item.pubdate <= 0) {
+      item.pubdate = obj.value("pubdate").toVariant().toLongLong();
+    }
+    if (item.pubdate <= 0) {
+      item.pubdate = obj.value("ctime").toVariant().toLongLong();
+    }
+    if (item.duration == 0) {
+      item.duration = obj.value("duration").toInt();
+    }
+    QJsonObject statObj = obj.value("stat").toObject();
+    if (item.views == 0) {
+      item.views = statObj.value("view").toVariant().toLongLong();
+    }
+    if (item.ownerName.isEmpty()) {
+      item.ownerName = ownerName;
+    }
+    if (item.ownerMid == 0) {
+      item.ownerMid = ownerMid;
+    }
+    items.append(item);
+  }
+
+  return items;
+}
+
+int seasonArchiveTotal(const QJsonObject &data, bool *ok) {
+  QJsonObject pageObj = data.value("page").toObject();
+  QJsonObject metaObj = data.value("meta").toObject();
+  int total = jsonIntValue(pageObj.value("total"), ok);
+  if (ok && !*ok) total = jsonIntValue(metaObj.value("total"), ok);
+  return total;
+}
+
+bool seasonArchiveHasMore(const QJsonObject &data, int page, int pageSize, int total,
+                          int itemCount) {
+  QJsonObject pageObj = data.value("page").toObject();
+  int pn = pageObj.value("page_num").toInt(page);
+  int ps = pageObj.value("page_size").toInt(pageSize);
+  if (total > 0 && ps > 0) {
+    return pn * ps < total;
+  }
+  return itemCount >= pageSize;
+}
 }
 
 // ====== 内部辅助方法 ======
@@ -617,7 +673,6 @@ void BiliController::reportCurrentVideoAsRecentViewIfNeeded() {
       [self, reportKey](int, const QString &) {
         if (!self)
           return;
-        // 失败时允许后续刷新/重进详情再次尝试。
         if (self->m_lastRecentViewReportKey == reportKey) {
           self->m_lastRecentViewReportKey.clear();
         }
@@ -674,6 +729,15 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
     return;
   }
 
+  if (!sameVideoRefresh && m_relatedVideoModel) {
+    m_relatedVideoModel->clear();
+    m_relatedVideoModel->setHasMore(false);
+    m_relatedVideoModel->setLoading(false);
+    m_relatedVideoModel->setErrorMessage("");
+    m_relatedVideoBvid.clear();
+    m_relatedVideoLoadingBvid.clear();
+  }
+
   setIsLoading(true);
   m_videoDetailLoadingBvid = bvid;
 
@@ -691,6 +755,36 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         self->m_videoDetailLoadingBvid.clear();
         self->m_currentVideo = VideoListModel::parseVideoItem(data);
         self->m_currentVideo.aid = data.value("aid").toVariant().toLongLong();
+
+        self->m_videoSeasonId = 0;
+        self->m_videoSeasonTitle.clear();
+        self->m_videoSeasonCover.clear();
+        self->m_videoSeasonMid = 0;
+        self->m_videoSeasonTotal = 0;
+        QJsonObject ugcSeason = data.value("ugc_season").toObject();
+        qint64 seasonId = ugcSeason.value("id").toVariant().toLongLong();
+        if (seasonId > 0) {
+          self->m_videoSeasonId = seasonId;
+          self->m_videoSeasonTitle = ugcSeason.value("title").toString();
+          self->m_videoSeasonCover = ugcSeason.value("cover").toString();
+          if (self->m_videoSeasonCover.isEmpty()) {
+            self->m_videoSeasonCover = self->m_currentVideo.pic;
+          }
+          self->m_videoSeasonMid = ugcSeason.value("mid").toVariant().toLongLong();
+          if (self->m_videoSeasonMid <= 0) {
+            self->m_videoSeasonMid = self->m_currentVideo.ownerMid;
+          }
+          bool totalKnown = false;
+          int total = jsonIntValue(ugcSeason.value("ep_count"), &totalKnown);
+          if (!totalKnown || total <= 0) {
+            total = 0;
+            QJsonArray sections = ugcSeason.value("sections").toArray();
+            for (const QJsonValue &sectionValue : sections) {
+              total += sectionValue.toObject().value("episodes").toArray().size();
+            }
+          }
+          self->m_videoSeasonTotal = qMax(0, total);
+        }
 
         QJsonArray pages = data.value("pages").toArray();
 
@@ -734,7 +828,6 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         }
 
         emit self->videoDetailChanged();
-        self->reportCurrentVideoAsRecentViewIfNeeded();
         self->setIsLoading(false);
       },
       [self](int code, const QString &msg) {
@@ -746,6 +839,68 @@ void BiliController::fetchVideoDetail(const QString &bvid) {
         self->setIsLoading(false);
         self->m_videoPartModel->clear();
         emit self->toastMessage(QString("获取视频信息失败：%1").arg(msg));
+      });
+}
+
+void BiliController::fetchRelatedVideos() {
+  if (!m_relatedVideoModel) return;
+  if (!m_videoDetailLoadingBvid.isEmpty()) return;
+  if (m_currentVideo.bvid.isEmpty() && m_currentVideo.aid <= 0) return;
+
+  const QString requestKey = !m_currentVideo.bvid.isEmpty()
+                                 ? m_currentVideo.bvid
+                                 : QString::number(m_currentVideo.aid);
+  if (m_relatedVideoLoadingBvid == requestKey) return;
+  if (m_relatedVideoBvid == requestKey) return;
+
+  if (m_relatedVideoBvid != requestKey) {
+    m_relatedVideoModel->clear();
+    m_relatedVideoModel->setHasMore(false);
+    m_relatedVideoModel->setErrorMessage("");
+  }
+
+  QMap<QString, QString> params;
+  if (!m_currentVideo.bvid.isEmpty()) {
+    params["bvid"] = m_currentVideo.bvid;
+  } else {
+    params["aid"] = QString::number(m_currentVideo.aid);
+  }
+
+  m_relatedVideoLoadingBvid = requestKey;
+  m_relatedVideoModel->setLoading(true);
+
+  QPointer<BiliController> self(this);
+  m_network->get(
+      "/video/related", params,
+      [self, requestKey](const QJsonObject &data) {
+        if (!self || !self->m_relatedVideoModel) return;
+        const QString currentKey = !self->m_currentVideo.bvid.isEmpty()
+                                       ? self->m_currentVideo.bvid
+                                       : QString::number(self->m_currentVideo.aid);
+        if (currentKey != requestKey) return;
+
+        QVector<VideoItem> items;
+        QJsonArray list = data.value("list").toArray();
+        items.reserve(list.size());
+        for (const QJsonValue &value : list) {
+          if (!value.isObject()) continue;
+          VideoItem item = VideoListModel::parseVideoItem(value.toObject());
+          if (item.bvid.isEmpty() || item.bvid == self->m_currentVideo.bvid) continue;
+          items.append(item);
+        }
+
+        self->m_relatedVideoModel->clear();
+        self->m_relatedVideoModel->appendItems(items);
+        self->m_relatedVideoModel->setHasMore(false);
+        self->m_relatedVideoModel->setLoading(false);
+        self->m_relatedVideoBvid = requestKey;
+        self->m_relatedVideoLoadingBvid.clear();
+      },
+      [self, requestKey](int, const QString &) {
+        if (!self || !self->m_relatedVideoModel) return;
+        if (self->m_relatedVideoLoadingBvid != requestKey) return;
+        self->m_relatedVideoModel->setLoading(false);
+        self->m_relatedVideoLoadingBvid.clear();
       });
 }
 
@@ -2696,6 +2851,13 @@ void BiliController::setUpVideoTotal(int total) {
   emit upVideoTotalChanged();
 }
 
+void BiliController::setSeasonVideoTotal(int total) {
+  total = qMax(0, total);
+  if (m_seasonVideoTotal == total) return;
+  m_seasonVideoTotal = total;
+  emit seasonVideoTotalChanged();
+}
+
 void BiliController::fetchUpInfo(qint64 mid) {
   if (mid <= 0) {
     return;
@@ -3063,6 +3225,7 @@ void BiliController::fetchUpSeasonVideos(int page, int pageSize) {
   QMap<QString, QString> params;
   params["mid"] = QString::number(mid);
   params["season_id"] = QString::number(seasonId);
+  params["sort_reverse"] = "false";
   params["pn"] = QString::number(page);
   params["ps"] = QString::number(pageSize);
 
@@ -3077,59 +3240,18 @@ void BiliController::fetchUpSeasonVideos(int page, int pageSize) {
         if (!self || !self->m_upVideoModel) return;
         if (self->m_upUserMid != mid || self->m_upSelectedSeasonId != seasonId) return;
 
-        QJsonArray archives = data.value("archives").toArray();
-        QVector<VideoItem> items;
-        items.reserve(archives.size());
-
-        // 尝试拿到 UP 主名字以便填充列表显示
-        QString ownerName = self->m_upUserName;
-
-        for (const QJsonValue &v : archives) {
-          if (!v.isObject()) continue;
-          QJsonObject obj = v.toObject();
-          VideoItem item = VideoListModel::parseVideoItem(obj);
-          if (item.aid <= 0) {
-            item.aid = obj.value("aid").toVariant().toLongLong();
-          }
-          if (item.pubdate <= 0) {
-            item.pubdate = obj.value("pubdate").toVariant().toLongLong();
-          }
-          if (item.pubdate <= 0) {
-            item.pubdate = obj.value("ctime").toVariant().toLongLong();
-          }
-          if (item.duration == 0) {
-            item.duration = obj.value("duration").toInt();
-          }
-          // stat
-          QJsonObject statObj = obj.value("stat").toObject();
-          if (item.views == 0) {
-            item.views = statObj.value("view").toVariant().toLongLong();
-          }
-          if (item.ownerName.isEmpty()) {
-            item.ownerName = ownerName;
-          }
-          if (item.ownerMid == 0) {
-            item.ownerMid = mid;
-          }
-          items.append(item);
-        }
+        QVector<VideoItem> items = parseSeasonArchiveItems(data.value("archives").toArray(), mid,
+                                                           self->m_upUserName);
+        std::sort(items.begin(), items.end(), [](const VideoItem &a, const VideoItem &b) {
+          return a.pubdate > b.pubdate;
+        });
 
         self->m_upVideoModel->appendItems(items);
 
-        bool hasMore = false;
-        QJsonObject pageObj = data.value("page").toObject();
-        QJsonObject metaObj = data.value("meta").toObject();
         bool totalKnown = false;
-        int total = jsonIntValue(pageObj.value("total"), &totalKnown);
-        if (!totalKnown) total = jsonIntValue(metaObj.value("total"), &totalKnown);
+        int total = seasonArchiveTotal(data, &totalKnown);
         if (totalKnown) self->setUpVideoTotal(total);
-        int pn = pageObj.value("page_num").toInt(page);
-        int ps = pageObj.value("page_size").toInt(pageSize);
-        if (total > 0 && ps > 0) {
-          hasMore = (pn * ps < total);
-        } else {
-          hasMore = (items.size() >= pageSize);
-        }
+        bool hasMore = seasonArchiveHasMore(data, page, pageSize, total, items.size());
         self->m_upSeasonVideoHasMore = hasMore;
         self->m_upVideoModel->setHasMore(hasMore);
         self->m_upVideoModel->setLoading(false);
@@ -3152,6 +3274,80 @@ void BiliController::fetchMoreUpSeasonVideos() {
   if (!m_upVideoModel || m_upVideoModel->loading()) return;
   m_upSeasonVideoPage++;
   fetchUpSeasonVideos(m_upSeasonVideoPage, 30);
+}
+
+void BiliController::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, int pageSize) {
+  if (mid <= 0 || seasonId <= 0) return;
+  if (!m_seasonVideoModel) return;
+  if (m_seasonVideoModel->loading()) return;
+
+  page = qBound(1, page, 9999);
+  pageSize = qBound(1, pageSize, 100);
+
+  bool reset = page == 1 || m_seasonVideoMid != mid || m_seasonVideoSeasonId != seasonId;
+  m_seasonVideoMid = mid;
+  m_seasonVideoSeasonId = seasonId;
+  m_seasonVideoPage = page;
+
+  if (reset) {
+    m_seasonVideoModel->clear();
+    m_seasonVideoModel->setHasMore(true);
+    m_seasonVideoHasMore = true;
+    setSeasonVideoTotal(0);
+  }
+
+  m_seasonVideoModel->setLoading(true);
+  m_seasonVideoModel->setErrorMessage("");
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(mid);
+  params["season_id"] = QString::number(seasonId);
+  params["sort_reverse"] = "false";
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+
+  QString ownerName = m_currentVideo.ownerName;
+  QPointer<BiliController> self(this);
+  apiGet(
+      "/user/season/videos", params,
+      [self, mid, seasonId, page, pageSize, ownerName](const QJsonObject &data) {
+        if (!self || !self->m_seasonVideoModel) return;
+        if (self->m_seasonVideoMid != mid || self->m_seasonVideoSeasonId != seasonId) return;
+
+        QVector<VideoItem> items = parseSeasonArchiveItems(data.value("archives").toArray(), mid,
+                                                           ownerName);
+        std::sort(items.begin(), items.end(), [](const VideoItem &a, const VideoItem &b) {
+          return a.pubdate > b.pubdate;
+        });
+
+        self->m_seasonVideoModel->appendItems(items);
+
+        bool totalKnown = false;
+        int total = seasonArchiveTotal(data, &totalKnown);
+        if (totalKnown) self->setSeasonVideoTotal(total);
+        bool hasMore = seasonArchiveHasMore(data, page, pageSize, total, items.size());
+        self->m_seasonVideoHasMore = hasMore;
+        self->m_seasonVideoModel->setHasMore(hasMore);
+        self->m_seasonVideoModel->setLoading(false);
+
+        if (items.isEmpty() && page == 1) {
+          self->m_seasonVideoModel->setErrorMessage("该合集暂无视频");
+        }
+      },
+      [self](int, const QString &msg) {
+        if (!self || !self->m_seasonVideoModel) return;
+        self->m_seasonVideoModel->setLoading(false);
+        self->m_seasonVideoModel->setErrorMessage(msg);
+        emit self->toastMessage(QString("加载合集失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliController::fetchMoreSeasonVideos() {
+  if (!m_seasonVideoHasMore) return;
+  if (!m_seasonVideoModel || m_seasonVideoModel->loading()) return;
+  m_seasonVideoPage++;
+  fetchSeasonVideos(m_seasonVideoMid, m_seasonVideoSeasonId, m_seasonVideoPage, 30);
 }
 
 void BiliController::toggleUpFollow() {

@@ -22,8 +22,17 @@ Rectangle {
     property string currentPage: "home"
     property var pageStack: []
     property string detailBvid: ""
+    property int detailSessionId: 0
+    property int nextDetailSessionId: 1
+    property var reportedDetailSessions: ({})
     property string lastPage: "home"
     property var upUserMid: 0
+    property var seasonMid: 0
+    property var seasonId: 0
+    property string seasonTitle: ""
+    property string seasonCover: ""
+    property int seasonTotal: 0
+    property string seasonCurrentBvid: ""
     property bool _animating: false
     property real rankingPageX: 0
     property bool restoreRankingPageOnShow: false
@@ -56,10 +65,20 @@ Rectangle {
 
     function capturePageProps(page) {
         if (page === "detail") {
-            return { bvid: detailBvid }
+            return { bvid: detailBvid, sessionId: detailSessionId }
         }
         if (page === "up") {
             return { mid: upUserMid }
+        }
+        if (page === "season") {
+            return {
+                mid: seasonMid,
+                seasonId: seasonId,
+                title: seasonTitle,
+                cover: seasonCover,
+                total: seasonTotal,
+                currentBvid: seasonCurrentBvid
+            }
         }
         return {}
     }
@@ -67,10 +86,19 @@ Rectangle {
     function applyPageProps(page, props) {
         if (!props) return
         if (page === "detail" && props.bvid) {
+            detailSessionId = props.sessionId || nextDetailSessionId++
             detailBvid = props.bvid
         }
         if (page === "up" && props.mid) {
             upUserMid = props.mid
+        }
+        if (page === "season") {
+            seasonMid = props.mid || 0
+            seasonId = props.seasonId || 0
+            seasonTitle = props.title || ""
+            seasonCover = props.cover || ""
+            seasonTotal = props.total || 0
+            seasonCurrentBvid = props.currentBvid || ""
         }
     }
 
@@ -269,6 +297,7 @@ Rectangle {
                 Pages.VideoDetailPage {
                     controller: root.rootController
                     bvid: root.detailBvid
+                    detailSessionId: root.detailSessionId
                     rootRef: root
                     onBackClicked: root.goBack()
                     onPlayRequested: {
@@ -278,6 +307,12 @@ Rectangle {
                     onCommentsRequested: root.navigateTo("comments")
                     onUpRequested: {
                         if (mid > 0) root.navigateTo("up", { mid: mid });
+                    }
+                    onSeasonRequested: {
+                        if (props && props.seasonId > 0) root.navigateTo("season", props)
+                    }
+                    onVideoSelected: {
+                        if (bvid) root.navigateTo("detail", { bvid: bvid })
                     }
                 }
             }
@@ -374,6 +409,31 @@ Rectangle {
                 }
             }
         }
+
+        Loader {
+            active: currentPage === "season" || root.stackContains("season")
+            visible: currentPage === "season"
+            enabled: visible
+            anchors.fill: parent
+            sourceComponent: Component {
+                Pages.VideoSeasonPage {
+                    controller: root.rootController
+                    seasonMid: root.seasonMid
+                    seasonId: root.seasonId
+                    seasonTitle: root.seasonTitle
+                    seasonCover: root.seasonCover
+                    seasonTotal: root.seasonTotal
+                    currentBvid: root.seasonCurrentBvid
+                    onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
+                }
+            }
+        }
     }
 
     // ── 全局错误遮罩 ──
@@ -384,6 +444,7 @@ Rectangle {
             controller.clearError();
             if (currentPage === "home") controller.fetchPopular();
             else if (currentPage === "detail") controller.fetchVideoDetail(root.detailBvid);
+            else if (currentPage === "season") controller.fetchSeasonVideos(root.seasonMid, root.seasonId, 1, 30);
         }
         onDismissed: controller.clearError()
     }

@@ -126,6 +126,7 @@ var rootEndpoints = []string{
 	"/ranking - 排行榜",
 	"/search - 搜索视频",
 	"/video/info - 视频详情",
+	"/video/related - 视频相关推荐",
 	"/video/playurl - 播放地址",
 	"/video/danmaku - 弹幕",
 	"/video/comments - 评论",
@@ -163,6 +164,7 @@ var startupEndpoints = []string{
 	"GET  /ranking                - 排行榜",
 	"GET  /search                 - 搜索视频",
 	"GET  /video/info             - 视频详情",
+	"GET  /video/related          - 视频相关推荐",
 	"GET  /video/playurl          - 播放地址",
 	"GET  /video/danmaku          - 弹幕数据",
 	"GET  /video/comments         - 评论列表",
@@ -1137,6 +1139,32 @@ func (c *BilibiliClient) GetVideoInfo(aid int, bvid string) (json.RawMessage, er
 		params["bvid"] = bvid
 	}
 	return c.wbiRequest("https://api.bilibili.com/x/web-interface/wbi/view", params, "GET")
+}
+
+func (c *BilibiliClient) GetVideoRelated(aid int, bvid string) (json.RawMessage, error) {
+	logInfo("获取视频相关推荐 aid=%d bvid=%s", aid, bvid)
+	params := map[string]string{}
+	if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
+	}
+	if bvid != "" {
+		params["bvid"] = bvid
+	}
+	raw, err := c.request("https://api.bilibili.com/x/web-interface/archive/related", params, "GET")
+	if err != nil {
+		return nil, err
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err == nil {
+		if arr, ok := resp["data"].([]interface{}); ok {
+			resp["data"] = map[string]interface{}{"list": arr}
+			if merged, mErr := json.Marshal(resp); mErr == nil {
+				return merged, nil
+			}
+		}
+	}
+	return raw, nil
 }
 
 func (c *BilibiliClient) GetVideoComments(oid, typ, sortVal, ps, pn int) (json.RawMessage, error) {
@@ -2153,6 +2181,22 @@ func handleVideoInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	handleAPI(w, "/video/info", func(c *BilibiliClient) (json.RawMessage, error) {
 		return c.GetVideoInfo(aid, bvid)
+	})
+}
+
+func handleVideoRelated(w http.ResponseWriter, r *http.Request) {
+	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	if !ok {
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 都未提供")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
+		return
+	}
+	handleAPI(w, "/video/related", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetVideoRelated(aid, bvid)
 	})
 }
 
@@ -3176,6 +3220,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/ranking", handleRanking)
 	mux.HandleFunc("/search", handleSearch)
 	mux.HandleFunc("/video/info", handleVideoInfo)
+	mux.HandleFunc("/video/related", handleVideoRelated)
 	mux.HandleFunc("/video/playurl", handleVideoPlayurl)
 	mux.HandleFunc("/video/danmaku", handleVideoDanmaku)
 	mux.HandleFunc("/video/danmaku/config", handleVideoDanmakuConfig)

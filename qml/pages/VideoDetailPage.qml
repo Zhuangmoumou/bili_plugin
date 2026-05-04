@@ -12,10 +12,12 @@ Rectangle {
 
     property var controller: null
     property string bvid: ""
+    property int detailSessionId: 0
     property bool fullTitleVisible: false
     property var rootRef: null
     property bool fullPartTitleVisible: false
     property string fullPartTitleText: ""
+    property bool relatedExpanded: false
 
     // 清晰度选择（默认16）
     property int selectedQuality: 16
@@ -88,6 +90,17 @@ Rectangle {
     signal playRequested(int quality)
     signal commentsRequested()
     signal upRequested(var mid)
+    signal seasonRequested(var props)
+    signal videoSelected(string bvid)
+
+    function reportRecentViewForCurrentSession() {
+        if (!rootRef || !controller || detailSessionId <= 0) return
+        if (rootRef.reportedDetailSessions[detailSessionId]) return
+        var reported = rootRef.reportedDetailSessions
+        reported[detailSessionId] = true
+        rootRef.reportedDetailSessions = reported
+        controller.reportCurrentVideoAsRecentViewIfNeeded()
+    }
 
     // 分P列表横向滚动位置
     property real savedPartListX: (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
@@ -108,6 +121,7 @@ Rectangle {
         savedPartCid = 0
         _needRestorePartAfterRefresh = false
         _restoringPartNow = false
+        relatedExpanded = false
         refreshDetail(true)
     }
 
@@ -984,6 +998,318 @@ Rectangle {
                 }
             }
 
+            Rectangle {
+                id: seasonEntryCard
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: controller && controller.videoSeasonId > 0
+                height: visible ? 42 : 0
+                radius: 10
+                color: seasonEntryArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.16) : surfaceColor
+                border.color: seasonEntryArea.pressed ? Qt.rgba(0.38, 0.70, 1.0, 0.36) : surfaceBorder
+                border.width: 1
+
+                Behavior on color { ColorAnimation { duration: 120 } }
+                Behavior on border.color { ColorAnimation { duration: 120 } }
+
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 8
+
+                    Rectangle {
+                        width: 24
+                        height: 24
+                        radius: 12
+                        color: Qt.rgba(0.23, 0.51, 0.96, 0.16)
+                        border.color: Qt.rgba(0.38, 0.70, 1.0, 0.24)
+                        border.width: 1
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Item {
+                            width: 12
+                            height: 12
+                            anchors.centerIn: parent
+
+                            Rectangle {
+                                width: 8
+                                height: 8
+                                radius: 1.8
+                                color: "transparent"
+                                border.color: primaryLight
+                                border.width: 1
+                                x: 0
+                                y: 4
+                            }
+                            Rectangle {
+                                width: 8
+                                height: 8
+                                radius: 1.8
+                                color: primaryLight
+                                x: 4
+                                y: 0
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width - 60
+                        spacing: 3
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Text {
+                            width: parent.width
+                            text: "合集·" + (controller && controller.videoSeasonTitle ? controller.videoSeasonTitle : "合集")
+                            color: "#f1f5f9"
+                            font.family: fontFamily
+                            font.pixelSize: 11
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: controller && controller.videoSeasonTotal > 0
+                                  ? "共 " + controller.videoSeasonTotal + " 个视频"
+                                  : "点击查看合集视频"
+                            color: "#94a3b8"
+                            font.family: fontFamily
+                            font.pixelSize: 9
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Text {
+                        text: "›"
+                        color: primaryLight
+                        font.family: fontFamily
+                        font.pixelSize: 18
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                MouseArea {
+                    id: seasonEntryArea
+                    anchors.fill: parent
+                    onClicked: {
+                        if (!controller || controller.videoSeasonId <= 0) return
+                        detailPage.seasonRequested({
+                            mid: controller.videoSeasonMid,
+                            seasonId: controller.videoSeasonId,
+                            title: controller.videoSeasonTitle,
+                            cover: controller.videoSeasonCover,
+                            total: controller.videoSeasonTotal,
+                            currentBvid: detailPage.bvid
+                        })
+                    }
+                }
+            }
+
+            Column {
+                id: relatedSection
+                width: parent.width - 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 6
+                visible: controller && controller.videoBvid === detailPage.bvid
+                readonly property var relatedModel: controller ? controller.relatedVideoModel() : null
+
+                Rectangle {
+                    id: relatedEntryCard
+                    width: parent.width
+                    height: 42
+                    radius: 10
+                    color: relatedArea.pressed ? Qt.rgba(0.55, 0.36, 0.96, 0.17) : surfaceColor
+                    border.color: relatedArea.pressed ? Qt.rgba(0.78, 0.68, 1.0, 0.38) : surfaceBorder
+                    border.width: 1
+
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Behavior on border.color { ColorAnimation { duration: 120 } }
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 8
+
+                        Canvas {
+                            width: 24
+                            height: 24
+                            anchors.verticalCenter: parent.verticalCenter
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                var bg = ctx.createLinearGradient(3, 2, 21, 22)
+                                bg.addColorStop(0, "#8b5cf6")
+                                bg.addColorStop(0.55, "#3b82f6")
+                                bg.addColorStop(1, "#06b6d4")
+                                ctx.beginPath()
+                                ctx.arc(12, 12, 11, 0, Math.PI * 2)
+                                ctx.fillStyle = bg
+                                ctx.fill()
+
+                                ctx.strokeStyle = "rgba(255,255,255,0.45)"
+                                ctx.lineWidth = 1.2
+                                ctx.lineCap = "round"
+                                ctx.beginPath()
+                                ctx.arc(12, 12, 7.2, -0.55, Math.PI * 1.25)
+                                ctx.stroke()
+
+                                ctx.beginPath()
+                                ctx.moveTo(10, 7.6)
+                                ctx.lineTo(17, 12)
+                                ctx.lineTo(10, 16.4)
+                                ctx.closePath()
+                                ctx.fillStyle = "rgba(255,255,255,0.94)"
+                                ctx.fill()
+
+                                ctx.strokeStyle = "rgba(255,255,255,0.82)"
+                                ctx.lineWidth = 1
+                                ctx.beginPath()
+                                ctx.moveTo(6.2, 5.1)
+                                ctx.lineTo(6.2, 8.3)
+                                ctx.moveTo(4.6, 6.7)
+                                ctx.lineTo(7.8, 6.7)
+                                ctx.moveTo(18.6, 16.2)
+                                ctx.lineTo(18.6, 18.8)
+                                ctx.moveTo(17.3, 17.5)
+                                ctx.lineTo(19.9, 17.5)
+                                ctx.stroke()
+                            }
+                        }
+
+                        Column {
+                            width: parent.width - 60
+                            spacing: 3
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                width: parent.width
+                                text: "更多推荐"
+                                color: "#f1f5f9"
+                                font.family: fontFamily
+                                font.pixelSize: 11
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: relatedSection.relatedModel && relatedSection.relatedModel.loading
+                                      ? "正在加载相关视频"
+                                      : (detailPage.relatedExpanded && relatedSection.relatedModel && relatedSection.relatedModel.count > 0
+                                         ? "为你找到 " + relatedSection.relatedModel.count + " 个相关视频"
+                                         : (detailPage.relatedExpanded ? "暂无推荐" : "点击加载相关视频"))
+                                color: "#94a3b8"
+                                font.family: fontFamily
+                                font.pixelSize: 9
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Canvas {
+                            width: 14
+                            height: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            rotation: detailPage.relatedExpanded ? 90 : 0
+                            Behavior on rotation { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.strokeStyle = primaryLight
+                                ctx.lineWidth = 2
+                                ctx.lineCap = "round"
+                                ctx.lineJoin = "round"
+                                ctx.beginPath()
+                                ctx.moveTo(5, 3)
+                                ctx.lineTo(9, 7)
+                                ctx.lineTo(5, 11)
+                                ctx.stroke()
+                            }
+                        }
+                    }
+
+                    MouseArea {
+                        id: relatedArea
+                        anchors.fill: parent
+                        onClicked: {
+                            if (!controller || controller.videoBvid !== detailPage.bvid) return
+                            detailPage.relatedExpanded = true
+                            controller.fetchRelatedVideos()
+                        }
+                    }
+                }
+
+                Item {
+                    width: parent.width
+                    height: detailPage.relatedExpanded
+                            ? ((relatedSection.relatedModel && relatedSection.relatedModel.count > 0) ? 135 : 30)
+                            : 0
+                    visible: detailPage.relatedExpanded
+                    clip: true
+
+                    ListView {
+                        id: relatedList
+                        anchors.fill: parent
+                        orientation: ListView.Horizontal
+                        spacing: 6
+                        clip: true
+                        model: relatedSection.relatedModel
+                        leftMargin: 2
+                        rightMargin: 2
+                        visible: relatedSection.relatedModel && relatedSection.relatedModel.count > 0
+
+                        delegate: Components.VideoCardCompact {
+                            width: 105
+                            height: relatedList.height
+                            videoTitle: model.title || ""
+                            coverUrl: model.pic || ""
+                            upName: model.ownerName || ""
+                            viewCount: model.views || ""
+                            durationText: model.durationText || ""
+                            bvid: model.bvid || ""
+                            showCollection: model.partCount > 1
+                            fontFamily: detailPage.fontFamily
+                            titleScale: 0.9
+                            subScale: 0.85
+                            onClicked: {
+                                if (bvid && bvid !== detailPage.bvid) detailPage.videoSelected(bvid)
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        visible: relatedSection.relatedModel && relatedSection.relatedModel.loading && relatedSection.relatedModel.count === 0
+                        anchors.centerIn: parent
+                        width: loadingRelatedText.implicitWidth + 18
+                        height: 22
+                        radius: 11
+                        color: Qt.rgba(1, 1, 1, 0.06)
+                        border.color: surfaceBorder
+                        border.width: 1
+
+                        Text {
+                            id: loadingRelatedText
+                            anchors.centerIn: parent
+                            text: "加载中"
+                            color: "#94a3b8"
+                            font.family: fontFamily
+                            font.pixelSize: 9
+                        }
+                    }
+
+                    Text {
+                        visible: relatedSection.relatedModel && !relatedSection.relatedModel.loading && relatedSection.relatedModel.count === 0
+                        anchors.centerIn: parent
+                        text: "暂无推荐"
+                        color: "#64748b"
+                        font.family: fontFamily
+                        font.pixelSize: 9
+                    }
+                }
+            }
+
             // 底部保留轻微呼吸感
             Item {
                 width: parent.width
@@ -1815,6 +2141,8 @@ Rectangle {
 
         if (controller && bvid.length > 0 && controller.videoBvid !== bvid) {
             refreshDetail(true)
+        } else if (controller && bvid.length > 0 && controller.videoCid > 0) {
+            reportRecentViewForCurrentSession()
         }
 
         enterAnimation.start()
@@ -1841,12 +2169,13 @@ Rectangle {
         target: controller
         function onAcceptQualitiesChanged() { detailPage.updateQualities(); }
         function onVideoDetailChanged() {
-            if (controller && controller.videoCid > 0) {
+            if (controller && controller.videoCid > 0 && controller.videoBvid === detailPage.bvid) {
                 controller.fetchAcceptQualities(detailPage.selectedQuality)
                 controller.fetchFavoriteStatus()
                 controller.fetchCoinStatus()
                 controller.fetchLikeStatus()
                 controller.fetchWatchLaterStatus()
+                detailPage.reportRecentViewForCurrentSession()
             }
 
             if (detailPage._needRestorePartAfterRefresh && !detailPage._restoringPartNow) {

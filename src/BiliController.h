@@ -54,6 +54,11 @@ class BiliController : public QObject {
   Q_PROPERTY(qint64 videoCid READ videoCid NOTIFY videoDetailChanged)
   Q_PROPERTY(qint64 videoAid READ videoAid NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoPubDate READ videoPubDate NOTIFY videoDetailChanged)
+  Q_PROPERTY(qint64 videoSeasonId READ videoSeasonId NOTIFY videoDetailChanged)
+  Q_PROPERTY(QString videoSeasonTitle READ videoSeasonTitle NOTIFY videoDetailChanged)
+  Q_PROPERTY(QString videoSeasonCover READ videoSeasonCover NOTIFY videoDetailChanged)
+  Q_PROPERTY(qint64 videoSeasonMid READ videoSeasonMid NOTIFY videoDetailChanged)
+  Q_PROPERTY(int videoSeasonTotal READ videoSeasonTotal NOTIFY videoDetailChanged)
 
   // 播放地址
   Q_PROPERTY(QString playUrl READ playUrl NOTIFY playUrlChanged)
@@ -113,6 +118,8 @@ class BiliController : public QObject {
   Q_PROPERTY(QString userVipLabel READ userVipLabel NOTIFY loginStateChanged)
   Q_PROPERTY(bool userIsVip READ userIsVip NOTIFY loginStateChanged)
 
+  Q_PROPERTY(int seasonVideoTotal READ seasonVideoTotal NOTIFY seasonVideoTotalChanged)
+
   // 全局错误
   Q_PROPERTY(QString globalError READ globalError NOTIFY globalErrorChanged)
   Q_PROPERTY(bool isLoading READ isLoading NOTIFY isLoadingChanged)
@@ -142,6 +149,11 @@ public:
   qint64 videoCid() const;
   qint64 videoAid() const;
   QString videoPubDate() const;
+  qint64 videoSeasonId() const { return m_videoSeasonId; }
+  QString videoSeasonTitle() const { return m_videoSeasonTitle; }
+  QString videoSeasonCover() const { return m_videoSeasonCover; }
+  qint64 videoSeasonMid() const { return m_videoSeasonMid; }
+  int videoSeasonTotal() const { return m_videoSeasonTotal; }
 
   QString playUrl() const;
   int playQuality() const;
@@ -194,6 +206,7 @@ public:
   QString userVipLabel() const;
   bool userIsVip() const;
 
+  int seasonVideoTotal() const { return m_seasonVideoTotal; }
   QString globalError() const;
   bool isLoading() const;
   bool replyHasMore() const { return m_commentReplyHasMore; }
@@ -207,6 +220,8 @@ public:
   Q_INVOKABLE void search(const QString &keyword, int page = 1);
   Q_INVOKABLE void searchMore();
   Q_INVOKABLE void fetchVideoDetail(const QString &bvid);
+  Q_INVOKABLE void fetchRelatedVideos();
+  Q_INVOKABLE void reportCurrentVideoAsRecentViewIfNeeded();
   Q_INVOKABLE void fetchPlayUrl(int quality = 64);
   // 仅获取可用清晰度列表（不触发播放）
   Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
@@ -285,6 +300,8 @@ public:
   Q_INVOKABLE QObject *recentHistoryModel();
   Q_INVOKABLE QObject *watchLaterModel();
   Q_INVOKABLE QObject *upVideoModel();
+  Q_INVOKABLE QObject *seasonVideoModel();
+  Q_INVOKABLE QObject *relatedVideoModel();
   Q_INVOKABLE void fetchRecentHistory();
   Q_INVOKABLE void fetchMoreRecentHistory();
   Q_INVOKABLE void fetchWatchLater(int page = 1, int pageSize = 20);
@@ -304,6 +321,8 @@ public:
   Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false, int total = 0);
   Q_INVOKABLE void fetchUpSeasonVideos(int page = 1, int pageSize = 30);
   Q_INVOKABLE void fetchMoreUpSeasonVideos();
+  Q_INVOKABLE void fetchSeasonVideos(qint64 mid, qint64 seasonId, int page = 1, int pageSize = 30);
+  Q_INVOKABLE void fetchMoreSeasonVideos();
 
 signals:
   void currentPageChanged();
@@ -322,6 +341,7 @@ signals:
   void upFollowChanged();
   void upVideoTotalChanged();
   void upSelectedSeasonChanged();
+  void seasonVideoTotalChanged();
 
   void toastMessage(const QString &message);
   void qrcodeLoginSuccess();
@@ -340,6 +360,7 @@ private:
   void setGlobalError(const QString &error);
   void setIsLoading(bool loading);
   void setUpVideoTotal(int total);
+  void setSeasonVideoTotal(int total);
   void loadLoginStatus();
   void saveLoginStatus();
   void loadSearchHistory();
@@ -358,6 +379,11 @@ private:
   static constexpr int MAX_PAGE_STACK_SIZE = 50;
 
   VideoItem m_currentVideo;
+  qint64 m_videoSeasonId = 0;
+  QString m_videoSeasonTitle;
+  QString m_videoSeasonCover;
+  qint64 m_videoSeasonMid = 0;
+  int m_videoSeasonTotal = 0;
 
   QString m_playUrl;
   int m_playQuality;
@@ -441,6 +467,8 @@ private:
   VideoListModel *m_recentHistoryModel;
   VideoListModel *m_watchLaterModel;
   VideoListModel *m_upVideoModel;
+  VideoListModel *m_seasonVideoModel;
+  VideoListModel *m_relatedVideoModel;
   UpSeasonListModel *m_upSeasonModel = nullptr;
   int m_favoritePage;
   qint64 m_currentFavoriteId;
@@ -471,7 +499,14 @@ private:
   int m_upSeasonVideoPage = 1;
   bool m_upSeasonVideoHasMore = true;
   QString m_lastRecentViewReportKey;
+  qint64 m_seasonVideoMid = 0;
+  qint64 m_seasonVideoSeasonId = 0;
+  int m_seasonVideoPage = 1;
+  bool m_seasonVideoHasMore = true;
+  int m_seasonVideoTotal = 0;
   QString m_videoDetailLoadingBvid;
+  QString m_relatedVideoBvid;
+  QString m_relatedVideoLoadingBvid;
   QString m_playUrlLoadingKey;
   QString m_acceptQualitiesLoadingKey;
   qint64 m_favoriteStatusLoadingAid = 0;
@@ -493,8 +528,6 @@ private:
               std::function<void(const QJsonObject &)> onSuccess,
               std::function<void(int, const QString &)> onError = nullptr,
               bool withLoading = false);
-  void reportCurrentVideoAsRecentViewIfNeeded();
-
   void startDownloadTask(const QString &videoUrl, const QString &audioUrl,
                          const QString &videoPath, const QString &audioPath,
                          int finalQuality, bool playAfter,

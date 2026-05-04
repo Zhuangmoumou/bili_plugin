@@ -14,7 +14,6 @@ Rectangle {
     property var upMid: 0
     property bool upVideosRequested: false
     property bool upSeasonsRequested: false
-    property bool refreshing: false
 
     signal backClicked()
     signal videoSelected(string bvid)
@@ -33,37 +32,6 @@ Rectangle {
         var s = wan.toFixed(2)
         s = s.replace(/\.?0+$/, "")
         return s + "万"
-    }
-
-    // 刷新结束：用 controller.isLoading 的变化来收口
-    Connections {
-        target: controller
-        function onIsLoadingChanged() {
-            if (!controller || controller.isLoading) return
-            if (refreshing) {
-                refreshing = false
-                // 允许后续 onUpUserChanged 再次触发自动加载
-                upVideosRequested = false
-                upSeasonsRequested = false
-            }
-        }
-    }
-
-    function refreshAll() {
-        var midVal = Number(upMid)
-        if (!controller || !midVal || midVal <= 0) return
-        refreshing = true
-        // 避免 onUpUserChanged 再触发一次 fetchUpVideos / fetchUpSeasons
-        upVideosRequested = true
-        upSeasonsRequested = true
-        controller.fetchUpInfo(midVal)
-        // 刷新时回到“视频”默认筛选
-        if (controller.upSelectedSeasonId !== 0) {
-            controller.selectUpSeason(0, "", false, 0)
-        } else {
-            controller.fetchUpVideos(midVal, 1, 20)
-        }
-        controller.fetchUpSeasons(midVal)
     }
 
     onUpMidChanged: {
@@ -115,31 +83,8 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         contentHeight: contentColumn.height + Theme.spacingLarge
+        boundsBehavior: Flickable.StopAtBounds
         clip: true
-
-        // 下拉刷新触发
-        onMovementEnded: {
-            if (contentY < -28 && !refreshing) {
-                refreshAll()
-            }
-        }
-
-        // 下拉刷新提示（会在 contentY<0 时露出）
-        Item {
-            id: refreshHeader
-            width: parent.width
-            height: 24
-            y: -24
-            visible: mainFlick.contentY < 0 || refreshing
-
-            Text {
-                anchors.centerIn: parent
-                text: refreshing ? "刷新中..." : "下拉刷新"
-                color: Theme.textTertiary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontTiny
-            }
-        }
 
         Column {
             id: contentColumn
