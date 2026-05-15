@@ -167,6 +167,156 @@ Item {
 
                 Rectangle {
                     width: parent.width
+                    height: 36
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 6
+
+                        Text { text: "字幕颜色"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64; anchors.verticalCenter: parent.verticalCenter }
+
+                        Repeater {
+                            model: [
+                                { key: "white", label: "白", color: "#FFFFFF" },
+                                { key: "yellow", label: "黄", color: "#FFD54A" },
+                                { key: "cyan", label: "青", color: "#7DD3FC" },
+                                { key: "black", label: "黑", color: "#000000" }
+                            ]
+
+                            Rectangle {
+                                width: 38
+                                height: 24
+                                radius: 6
+                                color: controller && controller.subtitleColorPreset === modelData.key
+                                       ? Theme.withAlpha(Theme.primary, 0.25)
+                                       : Theme.bgTertiary
+                                border.width: 1
+                                border.color: controller && controller.subtitleColorPreset === modelData.key
+                                              ? Theme.primary
+                                              : Theme.withAlpha(Theme.primary, 0.16)
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 3
+
+                                    Rectangle {
+                                        width: 9
+                                        height: 9
+                                        radius: 4
+                                        color: modelData.color
+                                        border.width: modelData.key === "white" ? 1 : 0
+                                        border.color: Theme.withAlpha(Theme.textPrimary, 0.4)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: modelData.label
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 9
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: { if (controller) controller.setSubtitleColorPreset(modelData.key) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 30
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
+                        Text { text: "描边"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
+
+                        Rectangle {
+                            width: 44; height: 24; radius: 6
+                            color: controller && controller.subtitleOutlineEnabled ? Theme.withAlpha(Theme.primary, 0.25) : Theme.bgTertiary
+                            border.width: 1
+                            border.color: controller && controller.subtitleOutlineEnabled ? Theme.primary : Theme.withAlpha(Theme.primary, 0.16)
+                            Text { anchors.centerIn: parent; text: "开"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleOutlineEnabled(true) }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 44; height: 24; radius: 6
+                            color: controller && !controller.subtitleOutlineEnabled ? Theme.withAlpha(Theme.primary, 0.25) : Theme.bgTertiary
+                            border.width: 1
+                            border.color: controller && !controller.subtitleOutlineEnabled ? Theme.primary : Theme.withAlpha(Theme.primary, 0.16)
+                            Text { anchors.centerIn: parent; text: "关"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleOutlineEnabled(false) }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 30
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
+                        Text { text: "描边粗细"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
+
+                        Rectangle {
+                            width: 24; height: 24; radius: 6
+                            color: outlineMinusArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.bgTertiary
+                            Text { anchors.centerIn: parent; text: "-"; color: Theme.textPrimary; font.pixelSize: 14 }
+                            MouseArea {
+                                id: outlineMinusArea
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleOutlineWidth(controller.subtitleOutlineWidth - 1) }
+                            }
+                        }
+
+                        Text { text: controller ? controller.subtitleOutlineWidth : 1; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 30; horizontalAlignment: Text.AlignHCenter }
+
+                        Rectangle {
+                            width: 24; height: 24; radius: 6
+                            color: outlinePlusArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.bgTertiary
+                            Text { anchors.centerIn: parent; text: "+"; color: Theme.textPrimary; font.pixelSize: 14 }
+                            MouseArea {
+                                id: outlinePlusArea
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleOutlineWidth(controller.subtitleOutlineWidth + 1) }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
                     height: 30
                     radius: Theme.radiusMedium
                     color: Theme.bgSecondary

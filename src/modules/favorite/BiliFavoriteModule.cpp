@@ -1,0 +1,566 @@
+#include "modules/favorite/BiliFavoriteModule.h"
+#include "BiliController.h"
+#include "BiliJsonUtils.h"
+#include "BiliModels.h"
+#include "BiliNetwork.h"
+#include "modules/history/BiliHistoryModule.h"
+#include "modules/login/BiliLoginModule.h"
+#include "modules/season/BiliSeasonModule.h"
+
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPointer>
+#include <QProcess>
+#include <QRegExp>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QStringListModel>
+#include <QTimer>
+#include <QUrl>
+#include <QUrlQuery>
+#include <QtGlobal>
+#include <algorithm>
+#include <functional>
+#include <iostream>
+
+// 由插件文件提供的 Go 服务控制函数
+extern bool bili_startApiServer();
+extern void bili_stopApiServer();
+
+BiliFavoriteModule::BiliFavoriteModule(BiliController *controller)
+    : m_controller(controller) {}
+
+// ====== API: 收藏夹 ======
+
+void BiliFavoriteModule::fetchFavoriteFolders() {
+  if (!m_controller->m_loggedIn || m_controller->m_userId <= 0) {
+    emit m_controller->toastMessage("请先登录后查看收藏夹");
+    return;
+  }
+  if (m_controller->m_favoriteFolderModel->loading())
+    return;
+
+  m_controller->m_favoriteFolderModel->setLoading(true);
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(m_controller->m_userId);
+
+  m_controller->apiGet(
+      "/fav/folder/list", params,
+      [this](const QJsonObject &data) {
+
+        QJsonArray list = data.value("list").toArray();
+        QVector<FavoriteFolderItem> items;
+        items.reserve(list.size());
+        for (const QJsonValue &v : list) {
+          if (v.isObject()) {
+            items.append(FavoriteFolderModel::parseFavoriteFolderItem(v.toObject()));
+          }
+        }
+
+        m_controller->m_favoriteFolderModel->setItems(items);
+        m_controller->m_favoriteFolderModel->setLoading(false);
+
+        // 更新封面为每个收藏夹的首个视频封面
+        for (const FavoriteFolderItem &folder : items) {
+          QMap<QString, QString> p;
+          qint64 mediaId = folder.id > 0 ? folder.id : folder.fid;
+          if (mediaId <= 0) continue;
+          p["media_id"] = QString::number(mediaId);
+          p["pn"] = "1";
+          p["ps"] = "1";
+          p["order"] = "mtime";
+          p["type"] = "0";
+
+          QPointer<BiliController> self2(m_controller);
+          m_controller->m_network->get(
+              "/fav/resource/list", p,
+              [self2, mediaId](const QJsonObject &data2) {
+                if (!self2) return;
+                QJsonArray medias = data2.value("medias").toArray();
+                if (!medias.isEmpty()) {
+                  QJsonObject first = medias.first().toObject();
+                  QString cover = first.value("cover").toString();
+                  if (!cover.isEmpty()) {
+                    self2->m_favoriteFolderModel->updateCover(mediaId, cover);
+                  }
+                }
+              },
+              nullptr);
+        }
+
+        if (items.isEmpty()) {
+          emit m_controller->toastMessage("暂无收藏夹");
+        }
+      },
+      [this](int, const QString &msg) {
+        m_controller->m_favoriteFolderModel->setLoading(false);
+        emit m_controller->toastMessage(QString("收藏夹加载失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliFavoriteModule::fetchFavoriteItems(qint64 mediaId, int page, int pageSize) {
+  if (mediaId <= 0) {
+    emit m_controller->toastMessage("收藏夹 ID 无效");
+    return;
+  }
+  if (m_controller->m_favoriteItemModel->loading())
+    return;
+
+  page = qBound(1, page, 2000);
+  pageSize = qBound(1, pageSize, 20);
+
+  m_controller->m_currentFavoriteId = mediaId;
+  m_controller->m_favoritePage = page;
+
+  if (page == 1) {
+    m_controller->m_favoriteItemModel->clear();
+  }
+  m_controller->m_favoriteItemModel->setLoading(true);
+  m_controller->m_favoriteItemModel->setErrorMessage("");
+
+  QMap<QString, QString> params;
+  params["media_id"] = QString::number(mediaId);
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+  params["order"] = "mtime";
+  params["type"] = "0";
+
+  m_controller->apiGet(
+      "/fav/resource/list", params,
+      [this](const QJsonObject &data) {
+
+        QJsonArray list = data.value("medias").toArray();
+        QVector<VideoItem> items;
+        items.reserve(list.size());
+        for (const QJsonValue &v : list) {
+          if (!v.isObject())
+            continue;
+
+          QJsonObject obj = v.toObject();
+          VideoItem item = VideoListModel::parseVideoItem(obj);
+          item.pic = obj.value("cover").toString();
+          item.duration = obj.value("duration").toInt();
+
+          QJsonObject upper = obj.value("upper").toObject();
+          item.ownerName = upper.value("name").toString();
+          item.ownerMid = upper.value("mid").toVariant().toLongLong();
+          item.ownerFace = upper.value("face").toString();
+
+          QJsonObject cntInfo = obj.value("cnt_info").toObject();
+          item.views = cntInfo.value("play").toVariant().toLongLong();
+          if (item.views <= 0) {
+            item.views = cntInfo.value("view").toVariant().toLongLong();
+          }
+          item.danmaku = cntInfo.value("danmaku").toVariant().toLongLong();
+          item.likes = cntInfo.value("like").toVariant().toLongLong();
+          item.favorites = cntInfo.value("favorite").toVariant().toLongLong();
+
+          items.append(item);
+        }
+
+        m_controller->m_favoriteItemModel->appendItems(items);
+        bool hasMore = data.value("has_more").toBool(false);
+        m_controller->m_favoriteItemModel->setHasMore(hasMore ? true : !items.isEmpty());
+        m_controller->m_favoriteItemModel->setLoading(false);
+
+        if (items.isEmpty() && m_controller->m_favoritePage == 1) {
+          m_controller->m_favoriteItemModel->setErrorMessage("收藏夹为空");
+        }
+      },
+      [this](int, const QString &msg) {
+        m_controller->m_favoriteItemModel->setLoading(false);
+        m_controller->m_favoriteItemModel->setErrorMessage(msg);
+        emit m_controller->toastMessage(QString("收藏夹加载失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliFavoriteModule::fetchMoreFavoriteItems() {
+  if (!m_controller->m_favoriteItemModel->hasMore() || m_controller->m_favoriteItemModel->loading())
+    return;
+  if (m_controller->m_favoriteItemModel->count() <= 0)
+    return;
+  m_controller->m_favoritePage++;
+  fetchFavoriteItems(m_controller->m_currentFavoriteId, m_controller->m_favoritePage);
+}
+
+// ====== API: 收藏状态 ======
+
+void BiliFavoriteModule::fetchFavoriteStatus() {
+  if (!m_controller->m_loggedIn) {
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    return;
+  }
+  const qint64 aid = m_controller->m_currentVideo.aid;
+  if (m_controller->m_favoriteStatusLoadingAid == aid) {
+    return;
+  }
+  m_controller->m_favoriteStatusLoadingAid = aid;
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(aid);
+
+  m_controller->apiGet(
+      "/fav/status", params,
+      [this](const QJsonObject &data) {
+        m_controller->m_favoriteStatusLoadingAid = 0;
+
+        bool fav = false;
+        if (data.value("favoured").isBool()) {
+          fav = data.value("favoured").toBool(false);
+        } else {
+          fav = data.value("favoured").toInt(0) == 1;
+        }
+        if (m_controller->m_isFavorited != fav) {
+          m_controller->m_isFavorited = fav;
+          emit m_controller->favoriteStatusChanged();
+        }
+      },
+      [this](int, const QString &msg) {
+        m_controller->m_favoriteStatusLoadingAid = 0;
+        emit m_controller->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::fetchCoinStatus() {
+  if (!m_controller->m_loggedIn) {
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    return;
+  }
+  const qint64 aid = m_controller->m_currentVideo.aid;
+  if (m_controller->m_coinStatusLoadingAid == aid) {
+    return;
+  }
+  m_controller->m_coinStatusLoadingAid = aid;
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(aid);
+
+  m_controller->apiGet(
+      "/coin/status", params,
+      [this](const QJsonObject &data) {
+        m_controller->m_coinStatusLoadingAid = 0;
+
+        bool coined = false;
+        int multiply = data.value("multiply").toInt(0);
+        if (multiply > 0) {
+          coined = true;
+        } else if (data.value("multiply").isString()) {
+          coined = data.value("multiply").toString().toInt() > 0;
+        }
+        if (m_controller->m_isCoined != coined) {
+          m_controller->m_isCoined = coined;
+          emit m_controller->coinStatusChanged();
+        }
+      },
+      [this](int, const QString &msg) {
+        m_controller->m_coinStatusLoadingAid = 0;
+        emit m_controller->toastMessage(QString("获取投币状态失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::addCoin(int multiply, bool selectLike) {
+  if (!m_controller->m_loggedIn) {
+    emit m_controller->toastMessage("请先登录后再投币");
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    emit m_controller->toastMessage("视频信息不完整");
+    return;
+  }
+  if (m_controller->m_isCoined) {
+    emit m_controller->toastMessage("已经投过币了");
+    return;
+  }
+
+  multiply = qBound(1, multiply, 2);
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_controller->m_currentVideo.aid);
+  params["bvid"] = m_controller->m_currentVideo.bvid;
+  params["multiply"] = QString::number(multiply);
+  params["select_like"] = selectLike ? "1" : "0";
+
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->get(
+      "/coin/add", params,
+      [self, multiply, selectLike](const QJsonObject &) {
+        if (!self)
+          return;
+        self->m_isCoined = true;
+        if (selectLike) {
+          self->m_isLiked = true;
+          emit self->likeStatusChanged();
+        }
+        emit self->coinStatusChanged();
+        emit self->toastMessage(QString("投币成功（%1个）").arg(multiply));
+        self->fetchVideoDetail(self->m_currentVideo.bvid);
+        self->fetchCoinStatus();
+        self->fetchLikeStatus();
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("投币失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::fetchLikeStatus() {
+  if (!m_controller->m_loggedIn) {
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    return;
+  }
+  const qint64 aid = m_controller->m_currentVideo.aid;
+  if (m_controller->m_likeStatusLoadingAid == aid) {
+    return;
+  }
+  m_controller->m_likeStatusLoadingAid = aid;
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(aid);
+
+  m_controller->apiGet(
+      "/like/status", params,
+      [this](const QJsonObject &data) {
+        m_controller->m_likeStatusLoadingAid = 0;
+
+        int liked = 0;
+        if (data.value("liked").isBool()) {
+          liked = data.value("liked").toBool() ? 1 : 0;
+        } else if (data.value("liked").isString()) {
+          liked = data.value("liked").toString().toInt();
+        } else {
+          liked = data.value("liked").toInt(0);
+        }
+        bool isLiked = liked == 1;
+        if (m_controller->m_isLiked != isLiked) {
+          m_controller->m_isLiked = isLiked;
+          emit m_controller->likeStatusChanged();
+        }
+      },
+      [this](int, const QString &msg) {
+        m_controller->m_likeStatusLoadingAid = 0;
+        emit m_controller->toastMessage(QString("获取点赞状态失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::fetchWatchLaterStatus() {
+  if (!m_controller->m_loggedIn) {
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    return;
+  }
+  const qint64 aid = m_controller->m_currentVideo.aid;
+  if (m_controller->m_watchLaterStatusLoadingAid == aid) {
+    return;
+  }
+  m_controller->m_watchLaterStatusLoadingAid = aid;
+
+  QMap<QString, QString> params;
+  params["pn"] = "1";
+  params["ps"] = "100";
+
+  m_controller->apiGet(
+      "/toview/list", params,
+      [this](const QJsonObject &data) {
+        m_controller->m_watchLaterStatusLoadingAid = 0;
+        QJsonArray list = data.value("list").toArray();
+        if (list.isEmpty()) {
+          list = data.value("data").toArray();
+        }
+
+        bool found = false;
+        for (const QJsonValue &v : list) {
+          if (!v.isObject())
+            continue;
+          QJsonObject obj = v.toObject();
+          qint64 aid = obj.value("aid").toVariant().toLongLong();
+          QString bvid = obj.value("bvid").toString();
+          if ((aid > 0 && aid == m_controller->m_currentVideo.aid) || (!bvid.isEmpty() && bvid == m_controller->m_currentVideo.bvid)) {
+            found = true;
+            break;
+          }
+        }
+
+        if (m_controller->m_isWatchLater != found) {
+          m_controller->m_isWatchLater = found;
+          emit m_controller->watchLaterStatusChanged();
+        }
+      },
+      [this](int, const QString &msg) {
+        m_controller->m_watchLaterStatusLoadingAid = 0;
+        emit m_controller->toastMessage(QString("获取稍后再看状态失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::toggleLike() {
+  if (!m_controller->m_loggedIn) {
+    emit m_controller->toastMessage("请先登录后再点赞");
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    emit m_controller->toastMessage("视频信息不完整");
+    return;
+  }
+
+  int likeAction = m_controller->m_isLiked ? 2 : 1; // 1=点赞,2=取消
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_controller->m_currentVideo.aid);
+  params["bvid"] = m_controller->m_currentVideo.bvid;
+  params["like"] = QString::number(likeAction);
+
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->get(
+      "/like/toggle", params,
+      [self, likeAction](const QJsonObject &) {
+        if (!self)
+          return;
+        bool newLiked = (likeAction == 1);
+        self->m_isLiked = newLiked;
+        if (newLiked) {
+          emit self->toastMessage("点赞爆棚，感谢推荐！");
+        } else {
+          emit self->toastMessage("已取消点赞");
+        }
+        emit self->likeStatusChanged();
+        self->fetchVideoDetail(self->m_currentVideo.bvid);
+        self->fetchLikeStatus();
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("点赞操作失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::toggleFavorite() {
+  if (!m_controller->m_loggedIn) {
+    emit m_controller->toastMessage("请先登录后再收藏");
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    emit m_controller->toastMessage("视频信息不完整");
+    return;
+  }
+
+  if (m_controller->m_isFavorited) {
+    QMap<QString, QString> params;
+    params["aid"] = QString::number(m_controller->m_currentVideo.aid);
+    params["action"] = "0";
+
+    QPointer<BiliController> self(m_controller);
+    m_controller->m_network->get(
+        "/fav/toggle", params,
+        [self](const QJsonObject &) {
+          if (!self)
+            return;
+          self->m_isFavorited = false;
+          emit self->favoriteStatusChanged();
+          emit self->toastMessage("已取消收藏");
+        },
+        [self](int, const QString &msg) {
+          if (!self)
+            return;
+          emit self->toastMessage(QString("取消收藏失败：%1").arg(msg));
+        });
+    return;
+  }
+
+  fetchFavoriteFolders();
+  emit m_controller->toastMessage("请选择收藏夹");
+}
+
+void BiliFavoriteModule::toggleFavoriteTo(qint64 mediaId) {
+  if (!m_controller->m_loggedIn) {
+    emit m_controller->toastMessage("请先登录后再收藏");
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    emit m_controller->toastMessage("视频信息不完整");
+    return;
+  }
+  if (mediaId <= 0) {
+    emit m_controller->toastMessage("收藏夹无效");
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_controller->m_currentVideo.aid);
+  params["action"] = "1";
+  params["media_id"] = QString::number(mediaId);
+
+  QPointer<BiliController> self(m_controller);
+
+  m_controller->m_network->get(
+      "/fav/toggle", params,
+      [self](const QJsonObject &) {
+        if (!self)
+          return;
+
+        self->m_isFavorited = true;
+        emit self->favoriteStatusChanged();
+        emit self->toastMessage("已收藏到收藏夹");
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("收藏操作失败：%1").arg(msg));
+      });
+}
+
+void BiliFavoriteModule::toggleWatchLater() {
+  if (!m_controller->m_loggedIn) {
+    emit m_controller->toastMessage("请先登录后再添加稍后再看");
+    return;
+  }
+  if (m_controller->m_currentVideo.aid <= 0) {
+    emit m_controller->toastMessage("视频信息不完整");
+    return;
+  }
+
+  const QString apiPath = m_controller->m_isWatchLater ? "/toview/del" : "/toview/add";
+  const QString okMsg = m_controller->m_isWatchLater ? "已从稍后再看移除" : "已添加到稍后再看";
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(m_controller->m_currentVideo.aid);
+  // 删除接口只支持 aid，添加接口支持 aid 和 bvid
+  if (!m_controller->m_isWatchLater) {
+    params["bvid"] = m_controller->m_currentVideo.bvid;
+  }
+
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->get(
+      apiPath, params,
+      [self, okMsg](const QJsonObject &) {
+        if (!self)
+          return;
+        self->m_isWatchLater = !self->m_isWatchLater;
+        emit self->watchLaterStatusChanged();
+        emit self->toastMessage(okMsg);
+        self->fetchWatchLater(1, 20);
+      },
+      [self](int, const QString &msg) {
+        if (!self)
+          return;
+        emit self->toastMessage(QString("稍后再看操作失败：%1").arg(msg));
+      });
+}

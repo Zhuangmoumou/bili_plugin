@@ -11,6 +11,8 @@ Rectangle {
 
     property var controller: null
     property var rootRef: null
+    property bool initialRankingRequested: false
+    property bool rankingModelAttached: false
 
     signal backClicked()
     signal videoSelected(string bvid)
@@ -23,6 +25,20 @@ Rectangle {
         if (rankList) {
             Qt.callLater(function() { rankList.contentX = x; })
         }
+    }
+
+    function requestInitialRanking() {
+        if (!controller || initialRankingRequested) return
+        initialRankingRequested = true
+        controller.fetchRanking(categoryBar.selectedRid)
+        rankingModelAttached = true
+    }
+
+    Timer {
+        id: initialRankingTimer
+        interval: 50
+        repeat: false
+        onTriggered: rankingPage.requestInitialRanking()
     }
 
     Components.TitleBar {
@@ -93,7 +109,12 @@ Rectangle {
                     anchors.margins: -2
                     onClicked: {
                         categoryBar.selectedRid = rid;
-                        if (controller) controller.fetchRanking(rid);
+                        initialRankingTimer.stop();
+                        initialRankingRequested = true;
+                        if (controller) {
+                            controller.fetchRanking(rid);
+                            rankingModelAttached = true;
+                        }
                     }
                 }
             }
@@ -116,7 +137,7 @@ Rectangle {
         anchors.rightMargin: Theme.spacingSmall
         anchors.topMargin: Theme.spacingSmall
         anchors.bottomMargin: Math.max(0, Theme.spacingSmall - 3)
-        model: controller ? controller.rankingModel() : null
+        model: controller && rankingPage.rankingModelAttached ? controller.rankingModel() : null
         orientation: ListView.Horizontal
         spacing: Theme.spacingMedium
         clip: true
@@ -140,7 +161,7 @@ Rectangle {
         }
 
         Column {
-            visible: rankList.count === 0 && controller && !controller.isLoading
+            visible: initialRankingRequested && rankList.count === 0 && controller && !controller.isLoading
             anchors.centerIn: parent
             spacing: Theme.spacingSmall
 
@@ -169,7 +190,7 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        if (controller) controller.fetchRanking(categoryBar.selectedRid);
+        initialRankingTimer.restart()
         if (rootRef && rootRef.restoreRankingPageOnShow) {
             restoreContentX(rootRef.rankingPageX)
             rootRef.restoreRankingPageOnShow = false
@@ -177,9 +198,12 @@ Rectangle {
     }
 
     onVisibleChanged: {
-        if (visible && rootRef && rootRef.restoreRankingPageOnShow) {
-            restoreContentX(rootRef.rankingPageX)
-            rootRef.restoreRankingPageOnShow = false
+        if (visible) {
+            if (!initialRankingRequested) initialRankingTimer.restart()
+            if (rootRef && rootRef.restoreRankingPageOnShow) {
+                restoreContentX(rootRef.rankingPageX)
+                rootRef.restoreRankingPageOnShow = false
+            }
         }
     }
 }

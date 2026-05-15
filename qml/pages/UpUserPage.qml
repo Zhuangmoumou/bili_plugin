@@ -18,6 +18,31 @@ Rectangle {
     signal backClicked()
     signal videoSelected(string bvid)
 
+    function clampScrollState() {
+        Qt.callLater(function() {
+            var maxY = Math.max(0, mainFlick.contentHeight - mainFlick.height)
+            if (mainFlick.contentY > maxY) mainFlick.contentY = maxY
+            if (mainFlick.contentY < 0) mainFlick.contentY = 0
+        })
+    }
+
+    function resetScrollState() {
+        Qt.callLater(function() {
+            mainFlick.contentY = 0
+            filterFlick.contentX = 0
+            upVideoList.contentX = 0
+            clampScrollState()
+        })
+    }
+
+    function resetListState() {
+        Qt.callLater(function() {
+            filterFlick.contentX = 0
+            upVideoList.contentX = 0
+            clampScrollState()
+        })
+    }
+
     function refresh() {
         var midVal = Number(upMid)
         if (!controller || !midVal || midVal <= 0) return
@@ -37,6 +62,12 @@ Rectangle {
     onUpMidChanged: {
         upVideosRequested = false
         upSeasonsRequested = false
+        var midVal = Number(upMid)
+        if (controller && controller.upUserMid === midVal && controller.upSelectedSeasonId !== 0) {
+            controller.selectUpSeason(0, "", false, 0)
+            upVideosRequested = true
+        }
+        resetScrollState()
         refresh()
     }
 
@@ -82,7 +113,8 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        contentHeight: contentColumn.height + Theme.spacingLarge
+        contentHeight: Math.max(height, contentColumn.implicitHeight + Theme.spacingLarge * 2)
+        onContentHeightChanged: upPage.clampScrollState()
         boundsBehavior: Flickable.StopAtBounds
         clip: true
 
@@ -414,8 +446,7 @@ Rectangle {
                                         if (!controller) return
                                         if (controller.upSelectedSeasonId !== 0) {
                                             controller.selectUpSeason(0, "", false, 0)
-                                            upVideoList.contentX = 0
-                                            filterFlick.contentX = 0
+                                            upPage.resetListState()
                                         }
                                     }
                                 }
@@ -488,7 +519,7 @@ Rectangle {
                                                                           model.name || "",
                                                                           model.isSeries === true,
                                                                           model.total || 0)
-                                                upVideoList.contentX = 0
+                                                upPage.resetListState()
                                             }
                                         }
                                     }
@@ -497,6 +528,14 @@ Rectangle {
                         }
                     }
 
+                }
+
+                Connections {
+                    target: controller ? controller.upSeasonModel() : null
+                    function onLoadingChanged() {
+                        if (!target || target.loading) return
+                        upPage.clampScrollState()
+                    }
                 }
 
                 ListView {
@@ -535,6 +574,14 @@ Rectangle {
                         titleScale: 0.9
                         subScale: 0.85
                         onClicked: upPage.videoSelected(bvid)
+                    }
+                }
+
+                Connections {
+                    target: upVideoList.model
+                    function onLoadingChanged() {
+                        if (!target || target.loading) return
+                        upPage.clampScrollState()
                     }
                 }
 

@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QTimer>
 #include <functional>
+#include <memory>
 
 #include "BiliModels.h"
 
@@ -27,6 +28,17 @@ class QStringListModel;
 class FavoriteFolderModel;
 class UpSeasonListModel;
 class BiliNetwork;
+class BiliCommentModule;
+class BiliFavoriteModule;
+class BiliFeedModule;
+class BiliPlaybackModule;
+class BiliSearchModule;
+class BiliUpModule;
+class BiliVideoModule;
+class BiliViewerModule;
+class BiliLoginModule;
+class BiliHistoryModule;
+class BiliSeasonModule;
 
 class BiliController : public QObject {
   Q_OBJECT
@@ -80,6 +92,9 @@ class BiliController : public QObject {
   Q_PROPERTY(int subtitleMarginV READ subtitleMarginV NOTIFY subtitleStyleChanged)
   Q_PROPERTY(double subtitleSpacing READ subtitleSpacing NOTIFY subtitleStyleChanged)
   Q_PROPERTY(int subtitleWeight READ subtitleWeight NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(QString subtitleColorPreset READ subtitleColorPreset NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(bool subtitleOutlineEnabled READ subtitleOutlineEnabled NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(int subtitleOutlineWidth READ subtitleOutlineWidth NOTIFY subtitleStyleChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -173,6 +188,9 @@ public:
   int subtitleMarginV() const { return m_subtitleMarginV; }
   double subtitleSpacing() const { return m_subtitleSpacing; }
   int subtitleWeight() const { return m_subtitleWeight; }
+  QString subtitleColorPreset() const { return m_subtitleColorPreset; }
+  bool subtitleOutlineEnabled() const { return m_subtitleOutlineEnabled; }
+  int subtitleOutlineWidth() const { return m_subtitleOutlineWidth; }
 
   bool loggedIn() const;
   qint64 upUserMid() const { return m_upUserMid; }
@@ -243,7 +261,7 @@ public:
   Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
   Q_INVOKABLE void toggleWatchLater();
   // 外部播放器
-  Q_INVOKABLE bool externalPlayerRunning() const { return isExternalPlayerRunning(); }
+  Q_INVOKABLE bool externalPlayerRunning() const;
   Q_INVOKABLE void launchExternalPlayer(const QString &path);
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
   Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
@@ -256,6 +274,9 @@ public:
   Q_INVOKABLE void setSubtitleMarginV(int value);
   Q_INVOKABLE void setSubtitleSpacing(double value);
   Q_INVOKABLE void setSubtitleWeight(int value);
+  Q_INVOKABLE void setSubtitleColorPreset(const QString &value);
+  Q_INVOKABLE void setSubtitleOutlineEnabled(bool enabled);
+  Q_INVOKABLE void setSubtitleOutlineWidth(int value);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -355,6 +376,18 @@ signals:
   void commentImageReadyForViewer(const QString &localPath);
 
 private:
+  friend class BiliCommentModule;
+  friend class BiliFavoriteModule;
+  friend class BiliFeedModule;
+  friend class BiliPlaybackModule;
+  friend class BiliSearchModule;
+  friend class BiliUpModule;
+  friend class BiliVideoModule;
+  friend class BiliViewerModule;
+  friend class BiliLoginModule;
+  friend class BiliHistoryModule;
+  friend class BiliSeasonModule;
+
   void fetchUserInfo(qint64 mid);
   void clearLocalLoginState();
   void setGlobalError(const QString &error);
@@ -365,14 +398,22 @@ private:
   void saveLoginStatus();
   void loadSearchHistory();
   void saveSearchHistory();
-  bool isExternalPlayerRunning() const;
-  bool startExternalPlayer(const QStringList &args);
-  QString externalPlayerTitle() const;
 
   // 安全辅助：检查 this 是否仍然有效的回调包装
   template <typename Func> auto safeCallback(Func &&func);
 
   BiliNetwork *m_network;
+  std::unique_ptr<BiliCommentModule> m_commentModule;
+  std::unique_ptr<BiliFavoriteModule> m_favoriteModule;
+  std::unique_ptr<BiliFeedModule> m_feedModule;
+  std::unique_ptr<BiliPlaybackModule> m_playbackModule;
+  std::unique_ptr<BiliSearchModule> m_searchModule;
+  std::unique_ptr<BiliUpModule> m_upModule;
+  std::unique_ptr<BiliVideoModule> m_videoModule;
+  std::unique_ptr<BiliViewerModule> m_viewerModule;
+  std::unique_ptr<BiliLoginModule> m_loginModule;
+  std::unique_ptr<BiliHistoryModule> m_historyModule;
+  std::unique_ptr<BiliSeasonModule> m_seasonModule;
 
   QString m_currentPage;
   QStringList m_pageStack;
@@ -404,6 +445,9 @@ private:
   int m_subtitleMarginV = 10;
   double m_subtitleSpacing = 2.0;
   int m_subtitleWeight = 700;
+  QString m_subtitleColorPreset = "white";
+  bool m_subtitleOutlineEnabled = false;
+  int m_subtitleOutlineWidth = 1;
   QPointer<QNetworkReply> m_downloadReply;
   QPointer<QProcess> m_externalPlayerProcess;
 

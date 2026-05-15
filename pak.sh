@@ -1,11 +1,13 @@
 #!/bin/bash
 
+set -euo pipefail
+
 pwd=$(pwd)
 echo '当前目录：'
 echo $pwd
 
 echo '编译插件'
-xmake
+#xmake
 
 echo '编译Go服务器'
 cd $pwd/go_server

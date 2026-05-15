@@ -35,7 +35,40 @@ Rectangle {
     property string fullscreenImageUrl: ""
     property bool autoLoadingComments: false
     property bool autoLoadingReplies: false
+    property bool initialCommentsRequested: false
+    property bool commentsModelAttached: false
+    property bool commentImagesDeferred: false
     signal backClicked()
+
+    function deferCommentImages() {
+        commentImageResumeTimer.stop()
+        commentImagesDeferred = true
+    }
+
+    function resumeCommentImagesSoon() {
+        commentImageResumeTimer.restart()
+    }
+
+    Timer {
+        id: commentImageResumeTimer
+        interval: 120
+        repeat: false
+        onTriggered: commentsPage.commentImagesDeferred = false
+    }
+
+    function requestInitialComments() {
+        if (!controller || initialCommentsRequested) return
+        initialCommentsRequested = true
+        controller.fetchComments()
+        commentsModelAttached = true
+    }
+
+    Timer {
+        id: initialCommentsTimer
+        interval: 50
+        repeat: false
+        onTriggered: commentsPage.requestInitialComments()
+    }
 
     function openCommentDetail(commentObj) {
         selectedComment = commentObj
@@ -286,11 +319,15 @@ Rectangle {
         anchors.leftMargin: 6
         anchors.rightMargin: 6
         anchors.bottomMargin: 4
-        model: controller ? controller.commentModel() : null
+        model: controller && commentsPage.commentsModelAttached ? controller.commentModel() : null
         spacing: 5
         clip: true
         visible: viewMode === 0
+        onMovementStarted: commentsPage.deferCommentImages()
+        onFlickStarted: commentsPage.deferCommentImages()
+        onFlickEnded: commentsPage.resumeCommentImagesSoon()
         onMovementEnded: {
+            commentsPage.resumeCommentImagesSoon()
             if (contentY + height >= contentHeight - 18) {
                 commentsPage.requestMoreCommentsIfNeeded()
             }
@@ -306,6 +343,29 @@ Rectangle {
                                   || (typeof is_top !== "undefined" && !!is_top)
                                   || (!!model && !!model.isTop)
                                   || (!!model && !!model.is_top)
+            property string avatarImageSource: ""
+            property string pictureImageSource: ""
+
+            function loadDeferredImages() {
+                if (commentsPage.commentImagesDeferred) return
+                if (!avatarImageSource && model.avatar) {
+                    avatarImageSource = "image://bili/" + encodeURIComponent(model.avatar)
+                }
+                if (!pictureImageSource) {
+                    var pic = commentsPage.firstPicture(model.pictures)
+                    if (pic) pictureImageSource = commentsPage.commentImageSource(pic)
+                }
+            }
+
+            Component.onCompleted: Qt.callLater(loadDeferredImages)
+
+            Connections {
+                target: commentsPage
+                function onCommentImagesDeferredChanged() {
+                    if (!commentsPage.commentImagesDeferred) Qt.callLater(loadDeferredImages)
+                }
+            }
+
             width: commentList.width
             height: commentBodyColumn.height + 12
             radius: 12
@@ -339,11 +399,12 @@ Rectangle {
                     Image {
                         id: commentAvatarImage
                         anchors.fill: parent
-                        source: model.avatar ? "image://bili/" + encodeURIComponent(model.avatar) : ""
+                        source: avatarImageSource
+                        sourceSize: Qt.size(44, 44)
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
-                        smooth: true
-                        mipmap: true
+                        smooth: false
+                        mipmap: false
                         visible: false
                     }
 
@@ -490,10 +551,12 @@ Rectangle {
 
                             Image {
                                 anchors.fill: parent
-                                source: commentsPage.commentImageSource(commentsPage.firstPicture(model.pictures))
+                                source: pictureImageSource
+                                sourceSize: Qt.size(116, 72)
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
-                                mipmap: true
+                                smooth: false
+                                mipmap: false
                             }
 
                             MouseArea {
@@ -569,7 +632,7 @@ Rectangle {
         }
 
         Column {
-            visible: commentList.count === 0 && controller && !commentsPage.isAnyCommentLoading()
+            visible: commentsPage.initialCommentsRequested && commentList.count === 0 && controller && !commentsPage.isAnyCommentLoading()
             anchors.centerIn: parent
             spacing: 2
 
@@ -1263,6 +1326,10 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        if (controller) controller.fetchComments()
+        initialCommentsTimer.restart()
+    }
+
+    onVisibleChanged: {
+        if (visible && !initialCommentsRequested) initialCommentsTimer.restart()
     }
 }

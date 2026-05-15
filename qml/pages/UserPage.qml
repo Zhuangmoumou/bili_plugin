@@ -20,6 +20,8 @@ Rectangle {
     property int currentFavId: 0
     property real recentHistoryContentX: 0
     property real watchLaterContentX: 0
+    property bool restoreWatchLaterOnShow: false
+    property bool watchLaterForceStart: false
     property int previousFavView: 0
     property int lastAnimatedFavView: 0
     property int favViewDirection: 1
@@ -862,6 +864,12 @@ Rectangle {
                                     id: watchLaterEntryArea
                                     anchors.fill: parent
                                     onClicked: {
+                                        restoreWatchLaterOnShow = false
+                                        watchLaterForceStart = true
+                                        watchLaterContentX = 0
+                                        if (watchLaterLoader.item && watchLaterLoader.item.resetPosition) {
+                                            watchLaterLoader.item.resetPosition()
+                                        }
                                         favView = 6
                                         if (controller) Qt.callLater(function() { controller.fetchWatchLater(1, 20) })
                                     }
@@ -1170,9 +1178,33 @@ Rectangle {
                     Item {
                         anchors.fill: parent
 
+                        function resetPosition() {
+                            watchLaterList.contentX = 0
+                            Qt.callLater(function() {
+                                watchLaterList.contentX = 0
+                                Qt.callLater(function() { watchLaterList.contentX = 0 })
+                            })
+                        }
+
                         function restorePosition() {
-                            if (watchLaterView.visible && userPage.watchLaterContentX > 0) {
+                            if (watchLaterView.visible && userPage.restoreWatchLaterOnShow && userPage.watchLaterContentX > 0) {
                                 watchLaterList.contentX = userPage.watchLaterContentX
+                            } else {
+                                resetPosition()
+                            }
+                        }
+
+                        Connections {
+                            target: controller ? controller.watchLaterModel() : null
+                            function onLoadingChanged() {
+                                if (!target) return
+                                if (userPage.restoreWatchLaterOnShow) return
+                                userPage.watchLaterForceStart = true
+                                resetPosition()
+                            }
+                            function onCountChanged() {
+                                if (userPage.restoreWatchLaterOnShow) return
+                                if (userPage.watchLaterForceStart) resetPosition()
                             }
                         }
 
@@ -1184,6 +1216,12 @@ Rectangle {
                             orientation: ListView.Horizontal
                             spacing: Theme.spacingMedium
                             clip: true
+                            onContentWidthChanged: {
+                                if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) contentX = 0
+                            }
+                            onCountChanged: {
+                                if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) contentX = 0
+                            }
 
                             cacheBuffer: 640
                             displayMarginBeginning: 160
@@ -1210,6 +1248,8 @@ Rectangle {
                                 showCollection: model.partCount > 1
                                 onClicked: {
                                     userPage.watchLaterContentX = watchLaterList.contentX
+                                    userPage.restoreWatchLaterOnShow = true
+                                    userPage.watchLaterForceStart = false
                                     userPage.videoSelected(bvid)
                                 }
                             }

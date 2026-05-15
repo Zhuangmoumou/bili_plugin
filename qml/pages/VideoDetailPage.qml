@@ -25,6 +25,7 @@ Rectangle {
 
     function qualityLabel(qn) {
         switch (qn) {
+        case 0: return "仅音频";
         case 16: return "360P";
         case 32: return "480P";
         case 64: return "720P";
@@ -76,7 +77,7 @@ Rectangle {
         if (controller && controller.acceptQualities && controller.acceptQualities.length > 0) {
             availableQualities = controller.acceptQualities;
         } else {
-            availableQualities = [16, 32, 64];
+            availableQualities = [16, 32, 64, 0];
         }
         if (availableQualities.indexOf(selectedQuality) < 0) {
             selectedQuality = availableQualities[0];
@@ -1140,42 +1141,22 @@ Rectangle {
                             onPaint: {
                                 var ctx = getContext("2d")
                                 ctx.clearRect(0, 0, width, height)
-                                var bg = ctx.createLinearGradient(3, 2, 21, 22)
-                                bg.addColorStop(0, "#8b5cf6")
-                                bg.addColorStop(0.55, "#3b82f6")
-                                bg.addColorStop(1, "#06b6d4")
-                                ctx.beginPath()
-                                ctx.arc(12, 12, 11, 0, Math.PI * 2)
-                                ctx.fillStyle = bg
-                                ctx.fill()
 
-                                ctx.strokeStyle = "rgba(255,255,255,0.45)"
-                                ctx.lineWidth = 1.2
+                                ctx.strokeStyle = "rgba(96,165,250,0.58)"
+                                ctx.lineWidth = 1.5
                                 ctx.lineCap = "round"
+                                ctx.lineJoin = "round"
                                 ctx.beginPath()
-                                ctx.arc(12, 12, 7.2, -0.55, Math.PI * 1.25)
+                                ctx.arc(12, 12, 9, 0, Math.PI * 2)
                                 ctx.stroke()
 
+                                ctx.fillStyle = primaryLight
                                 ctx.beginPath()
-                                ctx.moveTo(10, 7.6)
-                                ctx.lineTo(17, 12)
-                                ctx.lineTo(10, 16.4)
+                                ctx.moveTo(10, 8)
+                                ctx.lineTo(16, 12)
+                                ctx.lineTo(10, 16)
                                 ctx.closePath()
-                                ctx.fillStyle = "rgba(255,255,255,0.94)"
                                 ctx.fill()
-
-                                ctx.strokeStyle = "rgba(255,255,255,0.82)"
-                                ctx.lineWidth = 1
-                                ctx.beginPath()
-                                ctx.moveTo(6.2, 5.1)
-                                ctx.lineTo(6.2, 8.3)
-                                ctx.moveTo(4.6, 6.7)
-                                ctx.lineTo(7.8, 6.7)
-                                ctx.moveTo(18.6, 16.2)
-                                ctx.lineTo(18.6, 18.8)
-                                ctx.moveTo(17.3, 17.5)
-                                ctx.lineTo(19.9, 17.5)
-                                ctx.stroke()
                             }
                         }
 

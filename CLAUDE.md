@@ -73,7 +73,7 @@ Key characteristics:
 Important implication: when changing navigation or page lifetime behavior, check `navigateTo()`, `goBack()`, `pageStack`, and each page loader’s `active` expression in `qml/main.qml`, because that is where state retention is implemented.
 
 ### Layer 2: Qt/C++ plugin runtime
-The plugin registration and runtime bootstrapping live in `src/BiliController_Plugin.cpp`.
+The plugin registration and runtime bootstrapping live in `src/BiliController.cpp`.
 
 That file is responsible for:
 - Registering `BiliController` and list models as QML types
@@ -81,10 +81,9 @@ That file is responsible for:
 - Adding QML import paths
 - Registering the `image://bili` image provider
 
-The core application logic centers on `BiliController` (`src/BiliController.h` plus its split implementation files):
-- `BiliController_Core.cpp`: controller state, initialization, shared glue
-- `BiliController_Api.cpp`: API-backed features such as home feed, ranking, search, detail, comments, login, favorites, watch later, UP pages, playback URL fetching
-- `BiliController_ImageViewer.cpp`: image-viewer and local image preparation flows
+The core application logic centers on `BiliController`:
+- `src/BiliController.cpp` / `src/BiliController.h`: QML-facing controller, plugin registration, runtime bootstrapping, shared state, and thin external API wrappers.
+- `src/modules/**`: feature implementations for feed, search, video detail, playback, comments, favorites, history, login, seasons, UP pages, and image-viewer preparation.
 
 `BiliController` is the boundary between QML and the rest of the system:
 - QML should call controller methods instead of making direct network requests.
@@ -100,7 +99,7 @@ The core application logic centers on `BiliController` (`src/BiliController.h` p
 
 A lot of cross-page behavior depends on model role names and shared parsing helpers. For example, multi-part video UI relies on `partCount`, which is populated in `VideoListModel::parseVideoItem()` and then consumed by QML card components.
 
-Important implication: if a badge or field appears correct in one page but not another, compare whether that page is reusing the shared parser/model path or manually constructing `VideoItem`s in `BiliController_Api.cpp`.
+Important implication: if a badge or field appears correct in one page but not another, compare whether that page is reusing the shared parser/model path or manually constructing `VideoItem`s in `src/modules/**`.
 
 ### Layer 4: Networking inside the plugin
 `src/BiliNetwork.*` is the shared network layer.
@@ -140,7 +139,7 @@ A typical data flow is:
 
 This means many bugs that look like “UI-only” issues are actually caused by one of three layers:
 - page bindings in QML
-- manual data mapping in `BiliController_Api.cpp`
+- manual data mapping in `src/modules/**`
 - upstream field passthrough in the local Go server
 
 ## Deployment assumptions
@@ -154,6 +153,6 @@ Important implication: if local development diverges from packaged behavior, ver
 
 ## Practical editing guidance
 - For UI changes, check whether the page uses shared components from `qml/components/` before editing page-local markup.
-- For data bugs across multiple pages, inspect shared model parsing in `BiliModels.cpp` and manual `VideoItem` construction in `BiliController_Api.cpp`.
-- For anything involving login, cookies, QR flow, or SMS flow, follow the full chain across QML -> `BiliController_Api.cpp` -> `go_server/main` or `go_server/sms`.
+- For data bugs across multiple pages, inspect shared model parsing in `BiliModels.cpp` and manual `VideoItem` construction in `src/modules/**`.
+- For anything involving login, cookies, QR flow, or SMS flow, follow the full chain across QML -> `BiliController`/`src/modules/login` -> `go_server/main` or `go_server/sms`.
 - For navigation/state-loss regressions, start from `qml/main.qml`, not the individual page first.

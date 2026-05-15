@@ -30,6 +30,14 @@ Rectangle {
         if (controller) controller.launchExternalPlayer(path);
     }
 
+    Connections {
+        target: controller
+        function onPlaybackReady(url) {
+            if (!url || url.length === 0 || !controller) return
+            controller.launchExternalPlayerCurrentSelection()
+        }
+    }
+
     // ══════════════════════════════════════════
     //  第1层：占位画面（最底层 z: 0）
     // ══════════════════════════════════════════
@@ -254,8 +262,7 @@ Rectangle {
                             return;
                         }
                         controller.toastMessage("正在启动播放器...");
-                        if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
-                            controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
+                        if (controller.playUrl && controller.playUrl.length > 0) {
                             controller.launchExternalPlayerCurrentSelection();
                         } else {
                             controller.fetchPlayUrl(playQuality);

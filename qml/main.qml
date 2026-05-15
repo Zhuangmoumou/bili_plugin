@@ -102,6 +102,24 @@ Rectangle {
         }
     }
 
+    function pruneReportedDetailSessions() {
+        var keep = ({})
+        if (currentPage === "detail" && detailSessionId > 0) keep[detailSessionId] = true
+        for (var i = 0; i < pageStack.length; ++i) {
+            var entry = pageStack[i]
+            if (entry && entry.page === "detail" && entry.props && entry.props.sessionId > 0) {
+                keep[entry.props.sessionId] = true
+            }
+        }
+
+        var nextReported = ({})
+        var reported = reportedDetailSessions || ({})
+        for (var id in reported) {
+            if (keep[id]) nextReported[id] = reported[id]
+        }
+        reportedDetailSessions = nextReported
+    }
+
     function navigateTo(page, props) {
         if (_animating) return;
         var newStack = pageStack.slice(0); // Create a copy
@@ -115,6 +133,7 @@ Rectangle {
         applyPageProps(page, props || {})
         _animating = true;
         currentPage = page;
+        pruneReportedDetailSessions()
         pageTransition.restart();
     }
 
@@ -140,6 +159,7 @@ Rectangle {
             // 在 currentPage 仍是旧页时被短暂销毁，导致子页面状态丢失。
             currentPage = prev;
             pageStack = newStack; // Assign the new array
+            pruneReportedDetailSessions()
 
             // 从详情页返回时恢复对应页面滚动位置
             if (fromPage === "detail") {
@@ -162,6 +182,7 @@ Rectangle {
                 var fromPage2 = currentPage;
                 currentPage = "home";
                 lastPage = fromPage2;
+                pruneReportedDetailSessions()
                 pageTransitionBack.restart();
                 return;
             }
@@ -229,6 +250,7 @@ Rectangle {
         // ── 页面加载器 ──
         Loader {
             id: homeLoader
+            asynchronous: true
             active: true
             visible: currentPage === "home"
             enabled: visible
@@ -485,7 +507,5 @@ Rectangle {
 
     Component.onCompleted: {
         console.log("=== BiliPlugin Loaded ===", width, "x", height);
-        // 仅首次进入插件时加载推荐（fresh_type=3）
-        if (controller) controller.fetchPopular();
     }
 }

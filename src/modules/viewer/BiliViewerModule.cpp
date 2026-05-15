@@ -1,3 +1,4 @@
+#include "modules/viewer/BiliViewerModule.h"
 #include "BiliController.h"
 #include "BiliNetwork.h"
 
@@ -5,10 +6,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QNetworkReply>
 #include <QPointer>
+#include <QStandardPaths>
 #include <QUrl>
 
-static QString biliViewerImageExtFromUrl(const QString &url) {
+namespace {
+
+QString biliViewerImageExtFromUrl(const QString &url) {
   QString path = QUrl(url).path().toLower();
   if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return ".jpg";
   if (path.endsWith(".png")) return ".png";
@@ -18,10 +23,15 @@ static QString biliViewerImageExtFromUrl(const QString &url) {
   return ".jpg";
 }
 
-void BiliController::prepareImageForViewer(const QString &url) {
+}  // namespace
+
+BiliViewerModule::BiliViewerModule(BiliController *controller)
+    : m_controller(controller) {}
+
+void BiliViewerModule::prepareImageForViewer(const QString &url) {
   QString u = url.trimmed();
   if (u.isEmpty()) {
-    emit toastMessage("图片地址为空");
+    emit m_controller->toastMessage("图片地址为空");
     return;
   }
 
@@ -32,23 +42,23 @@ void BiliController::prepareImageForViewer(const QString &url) {
 
   // 本地文件直接交给查看器
   if (u.startsWith("file://")) {
-    emit commentImageReadyForViewer(QUrl(u).toLocalFile());
+    emit m_controller->commentImageReadyForViewer(QUrl(u).toLocalFile());
     return;
   }
   if (QFileInfo(u).isAbsolute() && QFileInfo(u).exists()) {
-    emit commentImageReadyForViewer(u);
+    emit m_controller->commentImageReadyForViewer(u);
     return;
   }
 
   QUrl qurl(u);
   if (!qurl.isValid()) {
-    emit toastMessage("无效的图片地址");
+    emit m_controller->toastMessage("无效的图片地址");
     return;
   }
 
   QDir dir("/tmp/bili_plugin_images");
   if (!dir.exists() && !dir.mkpath(".")) {
-    emit toastMessage("无法创建图片缓存目录");
+    emit m_controller->toastMessage("无法创建图片缓存目录");
     return;
   }
 
@@ -56,14 +66,14 @@ void BiliController::prepareImageForViewer(const QString &url) {
   QString path = dir.absoluteFilePath(QString::fromLatin1(hash) + biliViewerImageExtFromUrl(u));
 
   if (QFileInfo(path).exists() && QFileInfo(path).size() > 0) {
-    emit commentImageReadyForViewer(path);
+    emit m_controller->commentImageReadyForViewer(path);
     return;
   }
 
-  emit toastMessage("正在打开图片...");
+  emit m_controller->toastMessage("正在打开图片...");
 
-  QPointer<BiliController> self(this);
-  m_network->downloadImage(
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->downloadImage(
       qurl,
       [self, path](const QByteArray &data) {
         if (!self) return;

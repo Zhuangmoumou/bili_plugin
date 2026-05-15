@@ -24,6 +24,28 @@ Rectangle {
     property bool isLoading: controller ? controller.isLoading : false
     property int recommendDebounceMs: 3500
     property double lastRecommendRefreshMs: 0
+    property bool initialPopularRequested: false
+    property bool popularModelAttached: false
+
+    function requestInitialPopular() {
+        if (!controller || initialPopularRequested) return
+        var model = controller.popularModel()
+        if (model && model.count > 0) {
+            initialPopularRequested = true
+            popularModelAttached = true
+            return
+        }
+        initialPopularRequested = true
+        controller.fetchPopular()
+        popularModelAttached = true
+    }
+
+    Timer {
+        id: initialPopularTimer
+        interval: 50
+        repeat: false
+        onTriggered: homePage.requestInitialPopular()
+    }
 
     function switchTab(index) {
         // index: 0=推荐, 1=排行, 2=搜索, 3=我的
@@ -51,6 +73,9 @@ Rectangle {
                 return
             }
             lastRecommendRefreshMs = nowMs
+            initialPopularTimer.stop()
+            initialPopularRequested = true
+            popularModelAttached = true
             controller.fetchPopular(1, 10)
             controller.toastMessage("已刷新推荐")
             return
@@ -84,7 +109,7 @@ Rectangle {
             id: popularList
             anchors.fill: parent
             anchors.margins: 4
-            model: controller ? controller.popularModel() : null
+            model: controller && homePage.popularModelAttached ? controller.popularModel() : null
             orientation: ListView.Horizontal
             spacing: 6
             clip: true
@@ -115,7 +140,7 @@ Rectangle {
 
                 // 空状态
                 Text {
-                    visible: popularList.count === 0 && !isLoading
+                    visible: initialPopularRequested && popularList.count === 0 && !isLoading
                     text: "暂无推荐视频"
                     color: Theme.textTertiary
                     font.family: homePage.fontFamily
@@ -489,11 +514,13 @@ Rectangle {
         }
         if (rootRef) rootRef.homeTabIndex = tabIndex
         tryRestoreHomePosition()
+        initialPopularTimer.restart()
     }
 
     onVisibleChanged: {
         if (visible) {
             tryRestoreHomePosition()
+            if (!initialPopularRequested) initialPopularTimer.restart()
         }
     }
 }
