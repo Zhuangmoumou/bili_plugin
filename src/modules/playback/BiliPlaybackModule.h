@@ -35,6 +35,8 @@ public:
 private:
   bool isExternalPlayerRunning() const;
   QString externalPlayerTitle() const;
+  int resumeStartSeconds() const;
+  void appendResumeStartArg(QStringList &args) const;
   bool startExternalPlayer(const QStringList &args);
   BiliController *m_controller;
 };

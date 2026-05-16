@@ -37,7 +37,6 @@ Rectangle {
 
     function resetListState() {
         Qt.callLater(function() {
-            filterFlick.contentX = 0
             upVideoList.contentX = 0
             clampScrollState()
         })

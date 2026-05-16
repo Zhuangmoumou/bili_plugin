@@ -62,6 +62,8 @@ class BiliController : public QObject {
       QString videoFavorites READ videoFavorites NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoDanmaku READ videoDanmaku NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoDuration READ videoDuration NOTIFY videoDetailChanged)
+  Q_PROPERTY(QString playbackProgressText READ playbackProgressText NOTIFY playbackProgressChanged)
+  Q_PROPERTY(int playbackProgressSeconds READ playbackProgressSeconds NOTIFY playbackProgressChanged)
   Q_PROPERTY(QString videoBvid READ videoBvid NOTIFY videoDetailChanged)
   Q_PROPERTY(qint64 videoCid READ videoCid NOTIFY videoDetailChanged)
   Q_PROPERTY(qint64 videoAid READ videoAid NOTIFY videoDetailChanged)
@@ -161,6 +163,8 @@ public:
   QString videoFavorites() const;
   QString videoDanmaku() const;
   QString videoDuration() const;
+  QString playbackProgressText() const;
+  int playbackProgressSeconds() const { return m_playbackProgressSeconds; }
   QString videoBvid() const;
   qint64 videoCid() const;
   qint64 videoAid() const;
@@ -351,6 +355,7 @@ public:
 signals:
   void currentPageChanged();
   void videoDetailChanged();
+  void playbackProgressChanged();
   void playUrlChanged();
   void acceptQualitiesChanged();
   void subtitleListChanged();
@@ -423,6 +428,8 @@ private:
   static constexpr int MAX_PAGE_STACK_SIZE = 50;
 
   VideoItem m_currentVideo;
+  qint64 m_playbackProgressCid = 0;
+  int m_playbackProgressSeconds = 0;
   qint64 m_videoSeasonId = 0;
   QString m_videoSeasonTitle;
   QString m_videoSeasonCover;

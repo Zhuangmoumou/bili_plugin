@@ -276,12 +276,13 @@ Rectangle {
 
             Text {
                 id: currentTimeText
-                text: "--:--"
+                text: controller ? controller.playbackProgressText : "00:00 / 00:00"
                 color: "#FFFFFF"
                 font.family: fontFamily
                 font.pixelSize: 12
                 anchors.verticalCenter: parent.verticalCenter
-                width: 32
+                width: 112
+                elide: Text.ElideRight
             }
 
         }

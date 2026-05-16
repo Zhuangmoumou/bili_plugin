@@ -68,7 +68,7 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
         if (!self)
           return;
 
-        int playedTime = 1;
+        int playedTime = 0;
         qint64 reportCid = currentCid;
         bool playedTimeOk = false;
         int lastPlayTime = BiliJson::intValue(data.value("last_play_time"), &playedTimeOk);
@@ -87,6 +87,9 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
         if (lastPlayCid > 0) {
           reportCid = lastPlayCid;
         }
+        self->m_playbackProgressCid = reportCid;
+        self->m_playbackProgressSeconds = qMax(0, playedTime);
+        emit self->playbackProgressChanged();
 
         QMap<QString, QString> params;
         params["aid"] = QString::number(aid);
@@ -132,6 +135,11 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
 
   // 仅在切换到新视频时重置收藏/投币/点赞/字幕状态，避免同视频刷新闪动
   if (!sameVideoRefresh) {
+    if (m_controller->m_playbackProgressCid != 0 || m_controller->m_playbackProgressSeconds != 0) {
+      m_controller->m_playbackProgressCid = 0;
+      m_controller->m_playbackProgressSeconds = 0;
+      emit m_controller->playbackProgressChanged();
+    }
     if (m_controller->m_isFavorited) {
       m_controller->m_isFavorited = false;
       emit m_controller->favoriteStatusChanged();
@@ -266,6 +274,7 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
         }
 
         emit self->videoDetailChanged();
+        emit self->playbackProgressChanged();
         self->setIsLoading(false);
       },
       [self](int code, const QString &msg) {

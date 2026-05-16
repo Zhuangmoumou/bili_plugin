@@ -156,6 +156,13 @@ QString BiliController::videoDanmaku() const {
 QString BiliController::videoDuration() const {
   return VideoListModel::formatDuration(m_currentVideo.duration);
 }
+QString BiliController::playbackProgressText() const {
+  int progress = 0;
+  if (m_playbackProgressCid > 0 && m_playbackProgressCid == m_currentVideo.cid && m_playbackProgressSeconds > 0) {
+    progress = m_playbackProgressSeconds;
+  }
+  return QString("%1 / %2").arg(VideoListModel::formatDuration(progress), VideoListModel::formatDuration(m_currentVideo.duration));
+}
 QString BiliController::videoBvid() const { return m_currentVideo.bvid; }
 qint64 BiliController::videoCid() const { return m_currentVideo.cid; }
 qint64 BiliController::videoAid() const { return m_currentVideo.aid; }

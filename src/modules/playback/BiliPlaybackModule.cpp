@@ -358,6 +358,27 @@ QString BiliPlaybackModule::externalPlayerTitle() const {
   return title;
 }
 
+int BiliPlaybackModule::resumeStartSeconds() const {
+  if (m_controller->m_playbackProgressCid <= 0 || m_controller->m_playbackProgressCid != m_controller->m_currentVideo.cid) {
+    return 0;
+  }
+  int seconds = m_controller->m_playbackProgressSeconds;
+  if (seconds <= 0) {
+    return 0;
+  }
+  if (m_controller->m_currentVideo.duration > 0 && seconds >= m_controller->m_currentVideo.duration) {
+    return 0;
+  }
+  return seconds;
+}
+
+void BiliPlaybackModule::appendResumeStartArg(QStringList &args) const {
+  int seconds = resumeStartSeconds();
+  if (seconds > 0) {
+    args << ("--start=" + QString::number(seconds));
+  }
+}
+
 bool BiliPlaybackModule::startExternalPlayer(const QStringList &args) {
   const QString player = "/userdisk/VideoPlayer";
   if (!QFile::exists(player)) {
@@ -427,7 +448,9 @@ void BiliPlaybackModule::launchExternalPlayer(const QString &path) {
   }
 
   QStringList args;
-  args << ("--force-media-title=" + externalPlayerTitle()) << filePath;
+  args << ("--force-media-title=" + externalPlayerTitle());
+  appendResumeStartArg(args);
+  args << filePath;
   if (filePath.startsWith("http")) {
     args << "--referrer=https://www.bilibili.com"
          << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -450,8 +473,9 @@ void BiliPlaybackModule::launchExternalPlayerWithAudio(const QString &videoPath,
   if (a.startsWith("file://")) a = a.mid(7);
 
   QStringList args;
-  args << ("--force-media-title=" + externalPlayerTitle())
-       << v << ("--audio-file=" + a);
+  args << ("--force-media-title=" + externalPlayerTitle());
+  appendResumeStartArg(args);
+  args << v << ("--audio-file=" + a);
   startExternalPlayer(args);
 }
 
@@ -462,8 +486,9 @@ void BiliPlaybackModule::launchExternalPlayerWithAudioUrl(const QString &videoUr
   }
 
   QStringList args;
-  args << ("--force-media-title=" + externalPlayerTitle())
-       << videoUrl << ("--audio-file=" + audioUrl)
+  args << ("--force-media-title=" + externalPlayerTitle());
+  appendResumeStartArg(args);
+  args << videoUrl << ("--audio-file=" + audioUrl)
        << "--referrer=https://www.bilibili.com"
        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
        << ("--script-opts=bili-aid=" + QString::number(m_controller->videoAid())
@@ -485,8 +510,9 @@ void BiliPlaybackModule::launchExternalPlayerWithAudioUrlAndSubtitle(const QStri
   }
 
   QStringList args;
-  args << ("--force-media-title=" + externalPlayerTitle())
-       << videoUrl << ("--audio-file=" + audioUrl);
+  args << ("--force-media-title=" + externalPlayerTitle());
+  appendResumeStartArg(args);
+  args << videoUrl << ("--audio-file=" + audioUrl);
   if (!sub.isEmpty()) {
     args << ("--sub-file=" + sub);
   }

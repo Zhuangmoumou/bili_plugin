@@ -2884,7 +2884,7 @@ func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	playedTime, err := intParam(r.URL.Query().Get("played_time"), -1, 1, true)
+	playedTime, err := intParam(r.URL.Query().Get("played_time"), -1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return

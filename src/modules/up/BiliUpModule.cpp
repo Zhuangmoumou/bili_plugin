@@ -464,6 +464,7 @@ void BiliUpModule::playVideoPart(int index) {
     if (newCid > 0 && m_controller->m_currentVideo.cid != newCid) {
         m_controller->m_currentVideo.cid = newCid;
         emit m_controller->videoDetailChanged(); // 更新cid
+        emit m_controller->playbackProgressChanged();
         emit m_controller->toastMessage(QString("切换到 P%1").arg(index + 1));
         // 这里可以根据需求决定是否立即播放
         // downloadAndPlay(m_controller->m_playQuality); 
