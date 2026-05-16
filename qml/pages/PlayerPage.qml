@@ -18,6 +18,7 @@ Rectangle {
     signal backClicked()
 
     property bool controlsVisible: true
+    property bool launchRequested: false
 
     readonly property int btnSize: 36
     readonly property int iconSize: 20
@@ -33,7 +34,7 @@ Rectangle {
     Connections {
         target: controller
         function onPlaybackReady(url) {
-            if (!url || url.length === 0 || !controller) return
+            if (!launchRequested || !url || url.length === 0 || !controller) return
             controller.launchExternalPlayerCurrentSelection()
         }
     }
@@ -63,7 +64,7 @@ Rectangle {
 
             function onDownloadStateChanged() {
                 // 下载完成且有临时文件路径时，启动外部播放器
-                if (controller && !controller.isDownloading) {
+                if (launchRequested && controller && !controller.isDownloading) {
                     if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                         controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
                         controller.launchExternalPlayerCurrentSelection();
@@ -261,6 +262,7 @@ Rectangle {
                             controller.toastMessage("播放器已在运行，请先关闭当前窗口");
                             return;
                         }
+                        launchRequested = true;
                         controller.toastMessage("正在启动播放器...");
                         if (controller.playUrl && controller.playUrl.length > 0) {
                             controller.launchExternalPlayerCurrentSelection();
@@ -363,7 +365,6 @@ Rectangle {
 
 
     Component.onCompleted: {
-        if (controller) controller.fetchPlayUrl(playQuality);
         hideControlsTimer.start();
     }
 

@@ -47,23 +47,66 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
   if (m_controller->m_currentVideo.aid <= 0 || m_controller->m_currentVideo.cid <= 0 || m_controller->m_currentVideo.bvid.isEmpty())
     return;
 
-  QString reportKey = m_controller->m_currentVideo.bvid + "#" + QString::number(m_controller->m_currentVideo.cid);
+  const qint64 aid = m_controller->m_currentVideo.aid;
+  const qint64 currentCid = m_controller->m_currentVideo.cid;
+  const QString bvid = m_controller->m_currentVideo.bvid;
+  QString reportKey = bvid + "#" + QString::number(currentCid);
   if (m_controller->m_lastRecentViewReportKey == reportKey)
     return;
   m_controller->m_lastRecentViewReportKey = reportKey;
 
-  QMap<QString, QString> params;
-  params["aid"] = QString::number(m_controller->m_currentVideo.aid);
-  params["cid"] = QString::number(m_controller->m_currentVideo.cid);
-  params["bvid"] = m_controller->m_currentVideo.bvid;
-  params["played_time"] = "1";
+  QMap<QString, QString> historyParams;
+  historyParams["ps"] = "30";
 
   QPointer<BiliController> self(m_controller);
   m_controller->m_network->get(
-      "/player/heartbeat", params,
-      [self](const QJsonObject &) {
+      "/history/recent", historyParams,
+      [self, reportKey, aid, currentCid, bvid](const QJsonObject &data) {
         if (!self)
           return;
+
+        int playedTime = 1;
+        qint64 reportCid = currentCid;
+        QJsonArray list = data.value("list").toArray();
+        for (const QJsonValue &value : list) {
+          QJsonObject item = value.toObject();
+          QJsonObject history = item.value("history").toObject();
+          if (history.value("bvid").toString() != bvid &&
+              history.value("oid").toVariant().toLongLong() != aid) {
+            continue;
+          }
+
+          bool progressOk = false;
+          int progress = BiliJson::intValue(item.value("progress"), &progressOk);
+          if (progressOk && progress >= -1) {
+            playedTime = progress;
+          }
+          qint64 historyCid = history.value("cid").toVariant().toLongLong();
+          if (historyCid > 0) {
+            reportCid = historyCid;
+          }
+          break;
+        }
+
+        QMap<QString, QString> params;
+        params["aid"] = QString::number(aid);
+        params["cid"] = QString::number(reportCid);
+        params["bvid"] = bvid;
+        params["played_time"] = QString::number(playedTime);
+
+        self->m_network->get(
+            "/player/heartbeat", params,
+            [self](const QJsonObject &) {
+              if (!self)
+                return;
+            },
+            [self, reportKey](int, const QString &) {
+              if (!self)
+                return;
+              if (self->m_lastRecentViewReportKey == reportKey) {
+                self->m_lastRecentViewReportKey.clear();
+              }
+            });
       },
       [self, reportKey](int, const QString &) {
         if (!self)

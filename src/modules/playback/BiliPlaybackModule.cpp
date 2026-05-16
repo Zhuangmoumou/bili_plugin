@@ -622,6 +622,15 @@ void BiliPlaybackModule::setSubtitleOutlineWidth(int value) {
   emit m_controller->subtitleStyleChanged();
 }
 
+void BiliPlaybackModule::setSubtitleBackgroundEnabled(bool enabled) {
+  if (m_controller->m_subtitleBackgroundEnabled == enabled) return;
+  m_controller->m_subtitleBackgroundEnabled = enabled;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("subtitleBackgroundEnabled", m_controller->m_subtitleBackgroundEnabled);
+  settings.sync();
+  emit m_controller->subtitleStyleChanged();
+}
+
 void BiliPlaybackModule::launchExternalPlayerCurrentSelection() {
   if (m_controller->m_dashVideoUrl.isEmpty() || m_controller->m_dashAudioUrl.isEmpty()) {
     if (!m_controller->m_playUrl.isEmpty()) {
@@ -650,6 +659,7 @@ void BiliPlaybackModule::launchExternalPlayerCurrentSelection() {
   subtitleQuery.addQueryItem("color_preset", m_controller->m_subtitleColorPreset);
   subtitleQuery.addQueryItem("outline_enabled", m_controller->m_subtitleOutlineEnabled ? "1" : "0");
   subtitleQuery.addQueryItem("outline_width", QString::number(m_controller->m_subtitleOutlineWidth));
+  subtitleQuery.addQueryItem("background_enabled", m_controller->m_subtitleBackgroundEnabled ? "1" : "0");
   subtitleUrl.setQuery(subtitleQuery);
 
   launchExternalPlayerWithAudioUrlAndSubtitle(

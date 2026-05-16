@@ -86,6 +86,7 @@ BiliController::BiliController(QObject *parent)
   m_subtitleColorPreset = settings.value("subtitleColorPreset", m_subtitleColorPreset).toString();
   m_subtitleOutlineEnabled = settings.value("subtitleOutlineEnabled", m_subtitleOutlineEnabled).toBool();
   m_subtitleOutlineWidth = settings.value("subtitleOutlineWidth", m_subtitleOutlineWidth).toInt();
+  m_subtitleBackgroundEnabled = settings.value("subtitleBackgroundEnabled", m_subtitleBackgroundEnabled).toBool();
 }
 
 BiliController::~BiliController() {
@@ -432,6 +433,7 @@ void BiliController::setSubtitleWeight(int value) { m_playbackModule->setSubtitl
 void BiliController::setSubtitleColorPreset(const QString &value) { m_playbackModule->setSubtitleColorPreset(value); }
 void BiliController::setSubtitleOutlineEnabled(bool enabled) { m_playbackModule->setSubtitleOutlineEnabled(enabled); }
 void BiliController::setSubtitleOutlineWidth(int value) { m_playbackModule->setSubtitleOutlineWidth(value); }
+void BiliController::setSubtitleBackgroundEnabled(bool enabled) { m_playbackModule->setSubtitleBackgroundEnabled(enabled); }
 void BiliController::launchExternalPlayerCurrentSelection() { m_playbackModule->launchExternalPlayerCurrentSelection(); }
 
 void BiliController::generateQrcode() { m_loginModule->generateQrcode(); }

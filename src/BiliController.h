@@ -95,6 +95,7 @@ class BiliController : public QObject {
   Q_PROPERTY(QString subtitleColorPreset READ subtitleColorPreset NOTIFY subtitleStyleChanged)
   Q_PROPERTY(bool subtitleOutlineEnabled READ subtitleOutlineEnabled NOTIFY subtitleStyleChanged)
   Q_PROPERTY(int subtitleOutlineWidth READ subtitleOutlineWidth NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(bool subtitleBackgroundEnabled READ subtitleBackgroundEnabled NOTIFY subtitleStyleChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -191,6 +192,7 @@ public:
   QString subtitleColorPreset() const { return m_subtitleColorPreset; }
   bool subtitleOutlineEnabled() const { return m_subtitleOutlineEnabled; }
   int subtitleOutlineWidth() const { return m_subtitleOutlineWidth; }
+  bool subtitleBackgroundEnabled() const { return m_subtitleBackgroundEnabled; }
 
   bool loggedIn() const;
   qint64 upUserMid() const { return m_upUserMid; }
@@ -277,6 +279,7 @@ public:
   Q_INVOKABLE void setSubtitleColorPreset(const QString &value);
   Q_INVOKABLE void setSubtitleOutlineEnabled(bool enabled);
   Q_INVOKABLE void setSubtitleOutlineWidth(int value);
+  Q_INVOKABLE void setSubtitleBackgroundEnabled(bool enabled);
   Q_INVOKABLE void fetchMoreComments();
   Q_INVOKABLE void generateQrcode();
   Q_INVOKABLE void pollQrcode();
@@ -448,6 +451,7 @@ private:
   QString m_subtitleColorPreset = "white";
   bool m_subtitleOutlineEnabled = false;
   int m_subtitleOutlineWidth = 1;
+  bool m_subtitleBackgroundEnabled = false;
   QPointer<QNetworkReply> m_downloadReply;
   QPointer<QProcess> m_externalPlayerProcess;
 

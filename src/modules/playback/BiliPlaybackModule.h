@@ -29,6 +29,7 @@ public:
   void setSubtitleColorPreset(const QString &value);
   void setSubtitleOutlineEnabled(bool enabled);
   void setSubtitleOutlineWidth(int value);
+  void setSubtitleBackgroundEnabled(bool enabled);
   void launchExternalPlayerCurrentSelection();
 
 private:

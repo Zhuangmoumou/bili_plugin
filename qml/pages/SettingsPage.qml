@@ -287,6 +287,47 @@ Item {
                         anchors.margins: 6
                         spacing: 8
 
+                        Text { text: "灰底背景"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
+
+                        Rectangle {
+                            width: 44; height: 24; radius: 6
+                            color: controller && controller.subtitleBackgroundEnabled ? Theme.withAlpha(Theme.primary, 0.25) : Theme.bgTertiary
+                            border.width: 1
+                            border.color: controller && controller.subtitleBackgroundEnabled ? Theme.primary : Theme.withAlpha(Theme.primary, 0.16)
+                            Text { anchors.centerIn: parent; text: "开"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleBackgroundEnabled(true) }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 44; height: 24; radius: 6
+                            color: controller && !controller.subtitleBackgroundEnabled ? Theme.withAlpha(Theme.primary, 0.25) : Theme.bgTertiary
+                            border.width: 1
+                            border.color: controller && !controller.subtitleBackgroundEnabled ? Theme.primary : Theme.withAlpha(Theme.primary, 0.16)
+                            Text { anchors.centerIn: parent; text: "关"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleBackgroundEnabled(false) }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 30
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
                         Text { text: "描边粗细"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
 
                         Rectangle {
