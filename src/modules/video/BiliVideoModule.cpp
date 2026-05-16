@@ -50,42 +50,42 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
   const qint64 aid = m_controller->m_currentVideo.aid;
   const qint64 currentCid = m_controller->m_currentVideo.cid;
   const QString bvid = m_controller->m_currentVideo.bvid;
+  const int duration = m_controller->m_currentVideo.duration;
   QString reportKey = bvid + "#" + QString::number(currentCid);
   if (m_controller->m_lastRecentViewReportKey == reportKey)
     return;
   m_controller->m_lastRecentViewReportKey = reportKey;
 
-  QMap<QString, QString> historyParams;
-  historyParams["ps"] = "30";
+  QMap<QString, QString> playerInfoParams;
+  playerInfoParams["aid"] = QString::number(aid);
+  playerInfoParams["cid"] = QString::number(currentCid);
+  playerInfoParams["bvid"] = bvid;
 
   QPointer<BiliController> self(m_controller);
   m_controller->m_network->get(
-      "/history/recent", historyParams,
-      [self, reportKey, aid, currentCid, bvid](const QJsonObject &data) {
+      "/video/player/info", playerInfoParams,
+      [self, reportKey, aid, currentCid, bvid, duration](const QJsonObject &data) {
         if (!self)
           return;
 
         int playedTime = 1;
         qint64 reportCid = currentCid;
-        QJsonArray list = data.value("list").toArray();
-        for (const QJsonValue &value : list) {
-          QJsonObject item = value.toObject();
-          QJsonObject history = item.value("history").toObject();
-          if (history.value("bvid").toString() != bvid &&
-              history.value("oid").toVariant().toLongLong() != aid) {
-            continue;
+        bool playedTimeOk = false;
+        int lastPlayTime = BiliJson::intValue(data.value("last_play_time"), &playedTimeOk);
+        if (playedTimeOk && lastPlayTime >= -1) {
+          if (lastPlayTime > 0 && duration > 0 && lastPlayTime > duration) {
+            int lastPlaySeconds = qRound(lastPlayTime / 1000.0);
+            if (lastPlaySeconds <= duration) {
+              lastPlayTime = lastPlaySeconds;
+            }
           }
-
-          bool progressOk = false;
-          int progress = BiliJson::intValue(item.value("progress"), &progressOk);
-          if (progressOk && progress >= -1) {
-            playedTime = progress;
+          if (lastPlayTime == -1 || duration <= 0 || lastPlayTime <= duration) {
+            playedTime = lastPlayTime;
           }
-          qint64 historyCid = history.value("cid").toVariant().toLongLong();
-          if (historyCid > 0) {
-            reportCid = historyCid;
-          }
-          break;
+        }
+        qint64 lastPlayCid = data.value("last_play_cid").toVariant().toLongLong();
+        if (lastPlayCid > 0) {
+          reportCid = lastPlayCid;
         }
 
         QMap<QString, QString> params;

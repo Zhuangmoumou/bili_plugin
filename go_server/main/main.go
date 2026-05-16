@@ -131,6 +131,7 @@ var rootEndpoints = []string{
 	"/video/info - 视频详情",
 	"/video/related - 视频相关推荐",
 	"/video/playurl - 播放地址",
+	"/video/player/info - 播放器信息",
 	"/video/danmaku - 弹幕",
 	"/video/comments - 评论",
 	"/video/comments/replies - 子评论",
@@ -169,6 +170,7 @@ var startupEndpoints = []string{
 	"GET  /video/info             - 视频详情",
 	"GET  /video/related          - 视频相关推荐",
 	"GET  /video/playurl          - 播放地址",
+	"GET  /video/player/info      - 播放器信息",
 	"GET  /video/danmaku          - 弹幕数据",
 	"GET  /video/comments         - 评论列表",
 	"GET  /video/comments/replies - 子评论",
@@ -3140,6 +3142,21 @@ func handleUserFollowToggle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, wrapResult(result))
 }
 
+func handleVideoPlayerInfo(w http.ResponseWriter, r *http.Request) {
+	aid, ok := requireIntQuery(w, r, "aid")
+	if !ok {
+		return
+	}
+	cid, ok := requireIntQuery(w, r, "cid")
+	if !ok {
+		return
+	}
+	bvid := r.URL.Query().Get("bvid")
+	handleAPI(w, "/video/player/info", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetPlayerV2(aid, cid, bvid)
+	})
+}
+
 func handleVideoSubtitleList(w http.ResponseWriter, r *http.Request) {
 	aid, ok := requireIntQuery(w, r, "aid")
 	if !ok {
@@ -3286,6 +3303,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/video/info", handleVideoInfo)
 	mux.HandleFunc("/video/related", handleVideoRelated)
 	mux.HandleFunc("/video/playurl", handleVideoPlayurl)
+	mux.HandleFunc("/video/player/info", handleVideoPlayerInfo)
 	mux.HandleFunc("/video/danmaku", handleVideoDanmaku)
 	mux.HandleFunc("/video/danmaku/config", handleVideoDanmakuConfig)
 	mux.HandleFunc("/video/comments", handleVideoComments)
