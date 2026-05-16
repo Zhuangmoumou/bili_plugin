@@ -587,7 +587,9 @@ private:
                          const QString &videoPath, const QString &audioPath,
                          int finalQuality, bool playAfter,
                          const QString &successToastPrefix = QString(),
-                         const QString &errorToastPrefix = QStringLiteral("下载失败："));
+                         const QString &errorToastPrefix = QStringLiteral("下载失败："),
+                         const QString &subtitleUrl = QString(),
+                         const QString &subtitlePath = QString());
 
   // 标记对象是否正在销毁
   bool m_destroying;

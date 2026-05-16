@@ -537,6 +537,27 @@ void BiliUpModule::downloadVideoToDisk(int quality) {
       title = m_controller->m_currentVideo.bvid; // 如果标题为空，使用bvid作为备用
   }
   QString targetPath = dir.filePath(title + (audioOnly ? ".m4a" : ".mp4"));
+  QString subtitleUrl;
+  QString subtitlePath;
+  if (m_controller->m_selectedSubtitleId > 0) {
+      QUrl url(m_controller->m_network->apiBase() + "/video/subtitle/ass/file");
+      QUrlQuery query;
+      query.addQueryItem("aid", QString::number(m_controller->m_currentVideo.aid));
+      query.addQueryItem("cid", QString::number(m_controller->m_currentVideo.cid));
+      query.addQueryItem("bvid", m_controller->m_currentVideo.bvid);
+      query.addQueryItem("sid", QString::number(m_controller->m_selectedSubtitleId));
+      query.addQueryItem("font_size", QString::number(m_controller->m_subtitleFontSize));
+      query.addQueryItem("margin_v", QString::number(m_controller->m_subtitleMarginV));
+      query.addQueryItem("spacing", QString::number(m_controller->m_subtitleSpacing, 'f', 2));
+      query.addQueryItem("weight", QString::number(m_controller->m_subtitleWeight));
+      query.addQueryItem("color_preset", m_controller->m_subtitleColorPreset);
+      query.addQueryItem("outline_enabled", m_controller->m_subtitleOutlineEnabled ? "1" : "0");
+      query.addQueryItem("outline_width", QString::number(m_controller->m_subtitleOutlineWidth));
+      query.addQueryItem("background_enabled", m_controller->m_subtitleBackgroundEnabled ? "1" : "0");
+      url.setQuery(query);
+      subtitleUrl = url.toString();
+      subtitlePath = dir.filePath(QFileInfo(targetPath).completeBaseName() + ".ass");
+  }
 
   // 3. 检查文件是否已存在
   if (QFile::exists(targetPath)) {
@@ -557,7 +578,7 @@ void BiliUpModule::downloadVideoToDisk(int quality) {
 
   m_controller->m_network->get(
       "/video/playurl", params,
-      [self, targetPath, quality, requestQuality, audioOnly](const QJsonObject &data) {
+      [self, targetPath, quality, requestQuality, audioOnly, subtitleUrl, subtitlePath](const QJsonObject &data) {
         if (!self) return;
 
         self->updateAcceptQualities(data);
@@ -582,7 +603,8 @@ void BiliUpModule::downloadVideoToDisk(int quality) {
         self->startDownloadTask(downloadUrl, QString(), targetPath, QString(),
                                 audioOnly ? 0 : quality, false,
                                 audioOnly ? QStringLiteral("音频下载完成: ") : QStringLiteral("下载完成: "),
-                                audioOnly ? QStringLiteral("音频下载失败: ") : QStringLiteral("下载失败: "));
+                                audioOnly ? QStringLiteral("音频下载失败: ") : QStringLiteral("下载失败: "),
+                                subtitleUrl, subtitlePath);
       },
       [self](int, const QString &msg) {
         if (!self) return;

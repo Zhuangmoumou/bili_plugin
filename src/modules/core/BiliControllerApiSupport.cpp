@@ -199,7 +199,9 @@ void BiliController::startDownloadTask(const QString &videoUrl,
                                        const QString &audioPath,
                                        int finalQuality, bool playAfter,
                                        const QString &successToastPrefix,
-                                       const QString &errorToastPrefix) {
+                                       const QString &errorToastPrefix,
+                                       const QString &subtitleUrl,
+                                       const QString &subtitlePath) {
   if (videoUrl.isEmpty() || videoPath.isEmpty()) {
     emit toastMessage("未获取到下载地址");
     setIsLoading(false);
@@ -212,10 +214,50 @@ void BiliController::startDownloadTask(const QString &videoUrl,
   emit downloadStateChanged();
 
   QPointer<BiliController> self(this);
+  auto finishSuccess = [self, finalQuality, playAfter, successToastPrefix, subtitleUrl, subtitlePath](const QString &path) {
+    if (!self)
+      return;
+
+    auto completeDownload = [self, finalQuality, playAfter, successToastPrefix, path]() {
+      if (!self)
+        return;
+
+      self->m_isDownloading = false;
+      self->m_downloadProgress = 1.0;
+      self->m_downloadStatus = "下载完成";
+      if (playAfter) {
+        self->m_playUrl = path;
+        self->m_playQuality = finalQuality;
+        emit self->playUrlChanged();
+      }
+      emit self->downloadStateChanged();
+      self->setIsLoading(false);
+      if (!successToastPrefix.isEmpty()) {
+        emit self->toastMessage(successToastPrefix + path);
+      }
+    };
+
+    if (!subtitleUrl.isEmpty() && !subtitlePath.isEmpty()) {
+      self->m_downloadStatus = "正在保存字幕...";
+      emit self->downloadStateChanged();
+      self->m_network->downloadVideo(
+          subtitleUrl, subtitlePath,
+          [completeDownload](const QString &) { completeDownload(); },
+          [self, completeDownload](int, const QString &msg) {
+            if (self) {
+              emit self->toastMessage(QString("字幕保存失败：%1").arg(msg));
+            }
+            completeDownload();
+          });
+      return;
+    }
+
+    completeDownload();
+  };
 
   m_network->downloadVideo(
       videoUrl, videoPath,
-      [self, audioUrl, audioPath, videoPath, finalQuality, playAfter, successToastPrefix](const QString &path) {
+      [self, audioUrl, audioPath, videoPath, finishSuccess](const QString &path) {
         if (!self)
           return;
 
@@ -225,24 +267,7 @@ void BiliController::startDownloadTask(const QString &videoUrl,
 
           self->m_network->downloadVideo(
               audioUrl, audioPath,
-              [self, videoPath, finalQuality, playAfter, successToastPrefix](const QString &) {
-                if (!self)
-                  return;
-
-                self->m_isDownloading = false;
-                self->m_downloadProgress = 1.0;
-                self->m_downloadStatus = "下载完成";
-                if (playAfter) {
-                  self->m_playUrl = videoPath;
-                  self->m_playQuality = finalQuality;
-                  emit self->playUrlChanged();
-                }
-                emit self->downloadStateChanged();
-                self->setIsLoading(false);
-                if (!successToastPrefix.isEmpty()) {
-                  emit self->toastMessage(successToastPrefix + videoPath);
-                }
-              },
+              [finishSuccess, videoPath](const QString &) { finishSuccess(videoPath); },
               [self](int, const QString &msg) {
                 if (!self)
                   return;
@@ -256,19 +281,7 @@ void BiliController::startDownloadTask(const QString &videoUrl,
           return;
         }
 
-        self->m_isDownloading = false;
-        self->m_downloadProgress = 1.0;
-        self->m_downloadStatus = "下载完成";
-        if (playAfter) {
-          self->m_playUrl = path;
-          self->m_playQuality = finalQuality;
-          emit self->playUrlChanged();
-        }
-        emit self->downloadStateChanged();
-        self->setIsLoading(false);
-        if (!successToastPrefix.isEmpty()) {
-          emit self->toastMessage(successToastPrefix + path);
-        }
+        finishSuccess(path);
       },
       [self, errorToastPrefix](int, const QString &msg) {
         if (!self)
