@@ -301,6 +301,7 @@ void BiliLoginModule::checkLoginStatus() {
           return;
         }
 
+        const bool interactiveLogin = !self->m_loggedIn && !self->m_qrcodeKey.isEmpty();
         self->m_loggedIn = true;
         self->m_userName = data.value("name").toString();
         if (self->m_userName.isEmpty()) {
@@ -322,8 +323,10 @@ void BiliLoginModule::checkLoginStatus() {
         self->m_userVipLabel = vipLabel.value("text").toString();
 
         emit self->loginStateChanged();
-        emit self->qrcodeLoginSuccess();
-        emit self->toastMessage("登录成功！");
+        if (interactiveLogin) {
+          emit self->qrcodeLoginSuccess();
+          emit self->toastMessage("登录成功！");
+        }
 
         self->fetchPopular(1, 10);
         self->fetchUserInfo(self->m_userId);

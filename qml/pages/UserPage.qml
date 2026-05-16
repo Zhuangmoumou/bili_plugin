@@ -22,6 +22,7 @@ Rectangle {
     property real watchLaterContentX: 0
     property bool restoreWatchLaterOnShow: false
     property bool watchLaterForceStart: false
+    property bool loginPanelVisible: false
     property int previousFavView: 0
     property int lastAnimatedFavView: 0
     property int favViewDirection: 1
@@ -60,7 +61,26 @@ Rectangle {
         if (controller) Qt.callLater(function() { controller.fetchFavoriteItems(fid, 1, 20) })
     }
 
+    function openLoginPanel() {
+        loginPanelVisible = true
+        if (controller && controller.qrcodeUrl === "") {
+            controller.generateQrcode()
+        }
+    }
+
     function backInternal() {
+        if (loginPanelVisible && (!controller || !controller.loggedIn)) {
+            loginPanelVisible = false
+            return
+        }
+        if (favView === 4 && (!controller || !controller.loggedIn)) {
+            favView = 0
+            return
+        }
+        if (favView === 5 && (!controller || !controller.loggedIn)) {
+            favView = 4
+            return
+        }
         if (favView === 2) {
             favView = 1
             return
@@ -96,10 +116,10 @@ Rectangle {
         if (visible && controller && controller.loggedIn) {
             controller.refreshUserInfo();
             Qt.callLater(function() {
-                if (recentLoader.item && recentLoader.item.restorePosition) {
+                if (favView === 3 && recentLoader.item && recentLoader.item.restorePosition) {
                     recentLoader.item.restorePosition()
                 }
-                if (watchLaterLoader.item && watchLaterLoader.item.restorePosition) {
+                if (favView === 6 && watchLaterLoader.item && watchLaterLoader.item.restorePosition) {
                     watchLaterLoader.item.restorePosition()
                 }
             })
@@ -133,10 +153,21 @@ Rectangle {
         onTriggered: previousFavView = lastAnimatedFavView
     }
 
+    Connections {
+        target: controller
+        function onLoginStateChanged() {
+            if (controller && controller.loggedIn) {
+                loginPanelVisible = false
+            } else {
+                favView = 0
+            }
+        }
+    }
+
     Components.TitleBar {
         id: titleBar
         title: {
-            if (!controller || !controller.loggedIn) return "扫码登录"
+            if (!controller || !controller.loggedIn) return loginPanelVisible ? "扫码登录" : "个人中心"
             if (favView === 1) return "我的收藏夹"
             if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
             if (favView === 3) return "最近观看"
@@ -150,10 +181,247 @@ Rectangle {
         onBackClicked: userPage.backInternal()
     }
 
+    // ====== 未登录：个人中心占位 ======
+    Item {
+        id: loggedOutProfileArea
+        visible: (!controller || !controller.loggedIn) && !loginPanelVisible
+        anchors.top: titleBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+
+        Flickable {
+            anchors.fill: parent
+            anchors.margins: Theme.spacingLarge
+            contentHeight: loggedOutColumn.height
+            clip: true
+
+            Column {
+                id: loggedOutColumn
+                width: parent.width - Theme.spacingLarge * 2
+                spacing: Theme.spacingLarge
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingLarge
+
+                    Rectangle {
+                        width: 60
+                        height: 60
+                        radius: Theme.radiusRound
+                        color: loginAvatarArea.pressed ? Theme.withAlpha(Theme.primary, 0.18) : Theme.bgTertiary
+                        border.color: Theme.withAlpha(Theme.primary, 0.45)
+                        border.width: 2
+
+                        Canvas {
+                            anchors.centerIn: parent
+                            width: 28
+                            height: 28
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.strokeStyle = Theme.primary
+                                ctx.fillStyle = Theme.withAlpha(Theme.primary, 0.18)
+                                ctx.lineWidth = 2
+                                ctx.lineCap = "round"
+                                ctx.lineJoin = "round"
+                                ctx.beginPath()
+                                ctx.moveTo(8, 12)
+                                ctx.lineTo(8, 9)
+                                ctx.bezierCurveTo(8, 4.5, 20, 4.5, 20, 9)
+                                ctx.lineTo(20, 12)
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.moveTo(9, 12)
+                                ctx.lineTo(19, 12)
+                                ctx.quadraticCurveTo(23, 12, 23, 16)
+                                ctx.lineTo(23, 20)
+                                ctx.quadraticCurveTo(23, 24, 19, 24)
+                                ctx.lineTo(9, 24)
+                                ctx.quadraticCurveTo(5, 24, 5, 20)
+                                ctx.lineTo(5, 16)
+                                ctx.quadraticCurveTo(5, 12, 9, 12)
+                                ctx.fill()
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.arc(14, 18, 1.6, 0, Math.PI * 2)
+                                ctx.fillStyle = Theme.primary
+                                ctx.fill()
+                            }
+                        }
+
+                        MouseArea {
+                            id: loginAvatarArea
+                            anchors.fill: parent
+                            onClicked: userPage.openLoginPanel()
+                        }
+                    }
+
+                    Item {
+                        width: 190
+                        height: loginInfoColumn.height
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Column {
+                            id: loginInfoColumn
+                            width: parent.width
+                            spacing: Theme.spacingSmall
+
+                            Text {
+                                text: "点击登录"
+                                color: loginNameArea.pressed ? Theme.primaryDark : Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMedium
+                                font.bold: true
+                            }
+
+                            Text {
+                                width: 180
+                                text: "登录后可查看收藏夹、稍后再看和观看历史"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        MouseArea {
+                            id: loginNameArea
+                            anchors.fill: parent
+                            onClicked: userPage.openLoginPanel()
+                        }
+                    }
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingSmall
+                    anchors.horizontalCenter: parent.horizontalCenter
+
+                    readonly property real colW: (width - Theme.spacingSmall * 2) / 3
+
+                    Column {
+                        width: parent.colW
+                        spacing: 4
+                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontMedium; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "粉丝"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; horizontalAlignment: Text.AlignHCenter }
+                    }
+                    Column {
+                        width: parent.colW
+                        spacing: 4
+                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontMedium; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "关注"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; horizontalAlignment: Text.AlignHCenter }
+                    }
+                    Column {
+                        width: parent.colW
+                        spacing: 4
+                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontMedium; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "硬币"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; horizontalAlignment: Text.AlignHCenter }
+                    }
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Theme.spacingLarge
+
+                    Repeater {
+                        model: [
+                            { label: "收藏夹", action: "login" },
+                            { label: "最近观看", action: "login" },
+                            { label: "稍后再看", action: "login" },
+                            { label: "设置", action: "settings" }
+                        ]
+                        Column {
+                            spacing: 6
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: lockedEntryArea.pressed ? Theme.withAlpha(Theme.primary, 0.18) : Theme.withAlpha(Theme.primary, modelData.action === "settings" ? 0.12 : 0.08)
+                                border.color: Theme.withAlpha(Theme.primary, modelData.action === "settings" ? 0.35 : 0.2)
+                                border.width: 1
+                                Canvas {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = modelData.action === "settings" ? Theme.primary : Theme.textTertiary
+                                        ctx.fillStyle = Theme.withAlpha(ctx.strokeStyle, modelData.action === "settings" ? 0.18 : 0.12)
+                                        ctx.lineWidth = 1.4
+                                        ctx.lineCap = "round"
+                                        ctx.lineJoin = "round"
+                                        if (modelData.action === "settings") {
+                                            ctx.beginPath()
+                                            ctx.arc(8, 8, 4.5, 0, Math.PI * 2)
+                                            ctx.stroke()
+                                            ctx.beginPath()
+                                            ctx.arc(8, 8, 1.6, 0, Math.PI * 2)
+                                            ctx.fill()
+                                            ctx.beginPath()
+                                            ctx.moveTo(8, 1.5)
+                                            ctx.lineTo(8, 3.2)
+                                            ctx.moveTo(8, 12.8)
+                                            ctx.lineTo(8, 14.5)
+                                            ctx.moveTo(1.5, 8)
+                                            ctx.lineTo(3.2, 8)
+                                            ctx.moveTo(12.8, 8)
+                                            ctx.lineTo(14.5, 8)
+                                            ctx.stroke()
+                                        } else {
+                                            ctx.beginPath()
+                                            ctx.moveTo(5, 7)
+                                            ctx.lineTo(5, 5.5)
+                                            ctx.bezierCurveTo(5, 2.5, 11, 2.5, 11, 5.5)
+                                            ctx.lineTo(11, 7)
+                                            ctx.stroke()
+                                            ctx.beginPath()
+                                            ctx.moveTo(5.5, 7)
+                                            ctx.lineTo(10.5, 7)
+                                            ctx.quadraticCurveTo(12.5, 7, 12.5, 9)
+                                            ctx.lineTo(12.5, 11.5)
+                                            ctx.quadraticCurveTo(12.5, 13.5, 10.5, 13.5)
+                                            ctx.lineTo(5.5, 13.5)
+                                            ctx.quadraticCurveTo(3.5, 13.5, 3.5, 11.5)
+                                            ctx.lineTo(3.5, 9)
+                                            ctx.quadraticCurveTo(3.5, 7, 5.5, 7)
+                                            ctx.fill()
+                                            ctx.stroke()
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    id: lockedEntryArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        if (modelData.action === "settings") {
+                                            favView = 4
+                                        } else {
+                                            userPage.openLoginPanel()
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: modelData.label
+                                color: modelData.action === "settings" ? Theme.textPrimary : Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ====== 未登录：二维码登录 ======
     Item {
         id: loginArea
-        visible: !controller || !controller.loggedIn
+        visible: (!controller || !controller.loggedIn) && loginPanelVisible
         anchors.top: titleBar.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
@@ -219,10 +487,24 @@ Rectangle {
                         spacing: Theme.spacingSmall
                         visible: !qrcodeImg.visible
 
-                        Text {
-                            text: "📱"
-                            font.pixelSize: 22
+                        Canvas {
+                            width: 22
+                            height: 22
                             anchors.horizontalCenter: parent.horizontalCenter
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.strokeStyle = "#555555"
+                                ctx.lineWidth = 1.8
+                                ctx.lineJoin = "round"
+                                ctx.beginPath()
+                                ctx.rect(6, 2, 10, 18)
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.arc(11, 17, 0.8, 0, Math.PI * 2)
+                                ctx.fillStyle = "#555555"
+                                ctx.fill()
+                            }
                         }
                         Text {
                             text: "点击获取\n二维码"
@@ -408,7 +690,7 @@ Rectangle {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "🔄 刷新二维码"
+                        text: "刷新二维码"
                         color: Theme.textOnPrimary
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSmall
@@ -432,16 +714,16 @@ Rectangle {
             interval: 3000
             repeat: true
             running: controller
-            ? (controller.qrcodeUrl !== "" && !controller.loggedIn) : false
+            ? (loginArea.visible && controller.qrcodeUrl !== "" && !controller.loggedIn) : false
             onTriggered: {
                 if (controller) controller.pollQrcode();
             }
         }
     }
 
-    // ====== 已登录：用户信息 / 收藏夹 ======
+    // ====== 个人资料和子页面 ======
     Item {
-        visible: controller ? controller.loggedIn : false
+        visible: (controller && controller.loggedIn) || favView === 4 || favView === 5
         anchors.top: titleBar.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
@@ -451,10 +733,10 @@ Rectangle {
         Item {
             id: profileView
             anchors.fill: parent
-            visible: userPage.shouldShowManagedView(0)
-            enabled: userPage.isManagedViewCurrent(0)
-            opacity: userPage.isManagedViewCurrent(0) ? 1 : 0
-            z: userPage.isManagedViewCurrent(0) ? 1 : 0
+            visible: controller && controller.loggedIn && userPage.shouldShowManagedView(0)
+            enabled: controller && controller.loggedIn && userPage.isManagedViewCurrent(0)
+            opacity: controller && controller.loggedIn && userPage.isManagedViewCurrent(0) ? 1 : 0
+            z: controller && controller.loggedIn && userPage.isManagedViewCurrent(0) ? 1 : 0
             transform: Translate {
                 x: userPage.managedViewOffset(0)
                 Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
