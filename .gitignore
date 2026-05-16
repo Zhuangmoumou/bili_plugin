@@ -7,3 +7,4 @@ go_server/cookies.json
 go_server/rust
 *.bak
 pak.sh
+screen_watchdog
