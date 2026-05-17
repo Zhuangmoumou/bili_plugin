@@ -1942,26 +1942,26 @@ func normalizeSubtitleColorPreset(value string) string {
 	}
 }
 
-func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fontSize int, marginV int, spacing float64, weight int, colorPreset string, outlineEnabled bool, outlineWidth int, backgroundEnabled bool, ok bool) {
+func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fontSize int, marginV int, spacing float64, weight int, colorPreset string, outlineEnabled bool, outlineWidth int, backgroundEnabled bool, backgroundOpacity float64, ok bool) {
 	fontSize, err := intParam(r.URL.Query().Get("font_size"), 6, 10, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	marginV, err = intParam(r.URL.Query().Get("margin_v"), 0, 2, false)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	spacing, err = floatParam(r.URL.Query().Get("spacing"), 2.0)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	weight, err = intParam(r.URL.Query().Get("weight"), 100, 700, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	if weight > 900 {
 		weight = 900
@@ -1970,13 +1970,13 @@ func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fon
 	outlineFlag, err := intParam(r.URL.Query().Get("outline_enabled"), 0, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	outlineEnabled = outlineFlag != 0
 	outlineWidth, err = intParam(r.URL.Query().Get("outline_width"), 1, 1, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	if outlineWidth > 6 {
 		outlineWidth = 6
@@ -1984,10 +1984,21 @@ func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fon
 	backgroundFlag, err := intParam(r.URL.Query().Get("background_enabled"), 0, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
-		return 0, 0, 0, 0, "", false, 0, false, false
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	backgroundEnabled = backgroundFlag != 0
-	return fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, true
+	backgroundOpacity, err = floatParam(r.URL.Query().Get("background_opacity"), 0.5)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return 0, 0, 0, 0, "", false, 0, false, 0, false
+	}
+	if backgroundOpacity < 0 {
+		backgroundOpacity = 0
+	}
+	if backgroundOpacity > 1 {
+		backgroundOpacity = 1
+	}
+	return fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, true
 }
 
 func writeJSONBytes(w http.ResponseWriter, statusCode int, data []byte) {
@@ -2460,6 +2471,17 @@ func sanitizeASSText(text string) string {
 	return text
 }
 
+func subtitleASSColorWithOpacity(rgb string, opacity float64) string {
+	if opacity < 0 {
+		opacity = 0
+	}
+	if opacity > 1 {
+		opacity = 1
+	}
+	alpha := 255 - int(opacity*255+0.5)
+	return fmt.Sprintf("&H%02X%s", alpha, rgb)
+}
+
 func subtitleASSColors(colorPreset string) (primary string, outline string, back string) {
 	switch normalizeSubtitleColorPreset(colorPreset) {
 	case "yellow":
@@ -2473,7 +2495,7 @@ func subtitleASSColors(colorPreset string) (primary string, outline string, back
 	}
 }
 
-func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spacing float64, weight int, colorPreset string, outlineEnabled bool, outlineWidth int, backgroundEnabled bool) string {
+func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spacing float64, weight int, colorPreset string, outlineEnabled bool, outlineWidth int, backgroundEnabled bool, backgroundOpacity float64) string {
 	var sb strings.Builder
 	sb.WriteString("[Script Info]\n")
 	sb.WriteString("ScriptType: v4.00+\n")
@@ -2492,7 +2514,8 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spa
 	}
 	if backgroundEnabled {
 		borderStyle = 3
-		outlineColor = "&H88404040"
+		outlineColor = subtitleASSColorWithOpacity("404040", backgroundOpacity)
+		backColor = outlineColor
 		outline = 2
 	}
 	styleLine := fmt.Sprintf("Style: Default,Arial,%d,%s,%s,%s,%s,0,0,0,0,100,100,%s,0,%d,%d,0,2,8,8,%d,1\n\n", fontSize, primaryColor, primaryColor, outlineColor, backColor, spacingStr, borderStyle, outline, marginV)
@@ -3197,7 +3220,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 	}
 	bvid := r.URL.Query().Get("bvid")
 
-	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, ok := subtitleStyleParamsFromRequest(w, r)
+	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, ok := subtitleStyleParamsFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -3226,7 +3249,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assContent := buildASSFromSubtitleBody(body, fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled)
+	assContent := buildASSFromSubtitleBody(body, fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity)
 	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("bili_cc_%d_%d_%d.ass", aid, cid, sid))
 	if err := os.WriteFile(tmpPath, []byte(assContent), 0644); err != nil {
 		writeError(w, 500, "字幕文件写入失败")
@@ -3257,7 +3280,7 @@ func handleVideoSubtitleASSFile(w http.ResponseWriter, r *http.Request) {
 	}
 	bvid := r.URL.Query().Get("bvid")
 
-	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, ok := subtitleStyleParamsFromRequest(w, r)
+	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, ok := subtitleStyleParamsFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -3286,7 +3309,7 @@ func handleVideoSubtitleASSFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assContent := buildASSFromSubtitleBody(body, fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled)
+	assContent := buildASSFromSubtitleBody(body, fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity)
 	w.Header().Set("Content-Type", "application/x-ass; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"bili_cc_%d_%d_%d.ass\"", aid, cid, sid))
 	w.WriteHeader(http.StatusOK)

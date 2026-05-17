@@ -30,6 +30,7 @@ public:
   void setSubtitleOutlineEnabled(bool enabled);
   void setSubtitleOutlineWidth(int value);
   void setSubtitleBackgroundEnabled(bool enabled);
+  void setSubtitleBackgroundOpacity(double value);
   void launchExternalPlayerCurrentSelection();
 
 private:

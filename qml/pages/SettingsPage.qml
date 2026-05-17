@@ -3,9 +3,10 @@ import BiliPlugin 1.0
 import "../components" as Components
 import ".."
 
-Item {
+Rectangle {
     id: settingsPage
     anchors.fill: parent
+    color: Theme.bgPrimary
 
     property var controller: null
     // 4=设置列表, 5=字幕设置
@@ -310,6 +311,47 @@ Item {
                             MouseArea {
                                 anchors.fill: parent
                                 onClicked: { if (controller) controller.setSubtitleBackgroundEnabled(false) }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 30
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
+                        Text { text: "背景不透明"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 64 }
+
+                        Rectangle {
+                            width: 24; height: 24; radius: 6
+                            color: bgOpacityMinusArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.bgTertiary
+                            Text { anchors.centerIn: parent; text: "-"; color: Theme.textPrimary; font.pixelSize: 14 }
+                            MouseArea {
+                                id: bgOpacityMinusArea
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleBackgroundOpacity((Math.round(controller.subtitleBackgroundOpacity * 10) - 1) / 10) }
+                            }
+                        }
+
+                        Text { text: controller ? Math.round(controller.subtitleBackgroundOpacity * 100) + "%" : "50%"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 11; width: 40; horizontalAlignment: Text.AlignHCenter }
+
+                        Rectangle {
+                            width: 24; height: 24; radius: 6
+                            color: bgOpacityPlusArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : Theme.bgTertiary
+                            Text { anchors.centerIn: parent; text: "+"; color: Theme.textPrimary; font.pixelSize: 14 }
+                            MouseArea {
+                                id: bgOpacityPlusArea
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.setSubtitleBackgroundOpacity((Math.round(controller.subtitleBackgroundOpacity * 10) + 1) / 10) }
                             }
                         }
                     }
