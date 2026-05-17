@@ -367,6 +367,7 @@ Rectangle {
 
     Component.onCompleted: {
         hideControlsTimer.start();
+        if (controller) controller.reportCurrentVideoAsRecentViewIfNeeded();
     }
 
     Component.onDestruction: {

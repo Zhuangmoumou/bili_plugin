@@ -9,6 +9,7 @@ class BiliVideoModule {
 public:
   explicit BiliVideoModule(BiliController *controller);
   void reportCurrentVideoAsRecentViewIfNeeded();
+  void refreshCurrentPlaybackProgress();
   void fetchVideoDetail(const QString &bvid);
 
 private:

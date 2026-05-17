@@ -41,6 +41,55 @@ BiliVideoModule::BiliVideoModule(BiliController *controller)
 
 // ====== API: 视频详情 ======
 
+void BiliVideoModule::refreshCurrentPlaybackProgress() {
+  if (!m_controller->m_loggedIn)
+    return;
+  if (m_controller->m_currentVideo.aid <= 0 || m_controller->m_currentVideo.cid <= 0 || m_controller->m_currentVideo.bvid.isEmpty())
+    return;
+
+  const qint64 aid = m_controller->m_currentVideo.aid;
+  const qint64 currentCid = m_controller->m_currentVideo.cid;
+  const QString bvid = m_controller->m_currentVideo.bvid;
+  const int duration = m_controller->m_currentVideo.duration;
+
+  QMap<QString, QString> params;
+  params["aid"] = QString::number(aid);
+  params["cid"] = QString::number(currentCid);
+  params["bvid"] = bvid;
+
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->get(
+      "/video/player/info", params,
+      [self, currentCid, duration](const QJsonObject &data) {
+        if (!self || self->m_currentVideo.cid != currentCid)
+          return;
+
+        int playedTime = 0;
+        qint64 reportCid = currentCid;
+        bool playedTimeOk = false;
+        int lastPlayTime = BiliJson::intValue(data.value("last_play_time"), &playedTimeOk);
+        if (playedTimeOk && lastPlayTime >= -1) {
+          if (lastPlayTime > 0 && duration > 0 && lastPlayTime > duration) {
+            int lastPlaySeconds = qRound(lastPlayTime / 1000.0);
+            if (lastPlaySeconds <= duration) {
+              lastPlayTime = lastPlaySeconds;
+            }
+          }
+          if (lastPlayTime == -1 || duration <= 0 || lastPlayTime <= duration) {
+            playedTime = lastPlayTime;
+          }
+        }
+        qint64 lastPlayCid = data.value("last_play_cid").toVariant().toLongLong();
+        if (lastPlayCid > 0) {
+          reportCid = lastPlayCid;
+        }
+        self->m_playbackProgressCid = reportCid;
+        self->m_playbackProgressSeconds = qMax(0, playedTime);
+        emit self->playbackProgressChanged();
+      },
+      [](int, const QString &) {});
+}
+
 void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
   if (!m_controller->m_loggedIn)
     return;
@@ -52,8 +101,10 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
   const QString bvid = m_controller->m_currentVideo.bvid;
   const int duration = m_controller->m_currentVideo.duration;
   QString reportKey = bvid + "#" + QString::number(currentCid);
-  if (m_controller->m_lastRecentViewReportKey == reportKey)
+  if (m_controller->m_lastRecentViewReportKey == reportKey) {
+    refreshCurrentPlaybackProgress();
     return;
+  }
   m_controller->m_lastRecentViewReportKey = reportKey;
 
   QMap<QString, QString> playerInfoParams;
