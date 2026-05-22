@@ -664,13 +664,18 @@ Rectangle {
         anchors.bottomMargin: 4
         visible: viewMode === 1
 
-        Flickable {
+        ListView {
             id: replyDetailFlick
             anchors.fill: parent
-            contentHeight: replyDetailColumn.height + 4
             clip: true
             boundsBehavior: Flickable.DragOverBounds
+            cacheBuffer: 60
+            spacing: 5
+            model: controller ? controller.commentReplyModel() : null
+
+            onMovementStarted: commentsPage.deferCommentImages()
             onMovementEnded: {
+                commentsPage.resumeCommentImagesSoon()
                 if (contentY + height >= contentHeight - 18) {
                     commentsPage.requestMoreRepliesIfNeeded()
                 }
@@ -681,9 +686,8 @@ Rectangle {
                 }
             }
 
-            Column {
-                id: replyDetailColumn
-                width: parent.width
+            header: Column {
+                width: replyDetailFlick.width
                 spacing: 5
 
                 Rectangle {
@@ -885,164 +889,187 @@ Rectangle {
                         }
                     }
                 }
+            }
 
-                Repeater {
-                    model: controller ? controller.commentReplyModel() : null
+            delegate: Rectangle {
+                width: replyDetailFlick.width
+                height: replyContent.height + 12
+                radius: 12
+                color: Theme.withAlpha(_cardFill, 0.98)
+                border.color: Theme.withAlpha(_panelBorder, 0.9)
+                border.width: 1
+                property string replyAvatarSource: ""
+                property string replyPictureSource: ""
+
+                function loadReplyImages() {
+                    if (commentsPage.commentImagesDeferred) return
+                    if (!replyAvatarSource && model.avatar) {
+                        replyAvatarSource = "image://bili/" + encodeURIComponent(model.avatar)
+                    }
+                    if (!replyPictureSource) {
+                        var pic = commentsPage.firstPicture(model.pictures)
+                        if (pic) replyPictureSource = commentsPage.commentImageSource(pic)
+                    }
+                }
+
+                Component.onCompleted: Qt.callLater(loadReplyImages)
+
+                Connections {
+                    target: commentsPage
+                    function onCommentImagesDeferredChanged() {
+                        if (!commentsPage.commentImagesDeferred) Qt.callLater(loadReplyImages)
+                    }
+                }
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    spacing: 6
 
                     Rectangle {
-                        width: replyDetailColumn.width
-                        height: replyContent.height + 12
-                        radius: 12
-                        color: Theme.withAlpha(_cardFill, 0.98)
-                        border.color: Theme.withAlpha(_panelBorder, 0.9)
-                        border.width: 1
+                        width: 20
+                        height: 20
+                        radius: 10
+                        color: Theme.bgTertiary
+
+                        Image {
+                            id: replyAvatarImage
+                            anchors.fill: parent
+                            source: replyAvatarSource
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            smooth: true
+                            mipmap: true
+                            visible: false
+                        }
+
+                        OpacityMask {
+                            anchors.fill: replyAvatarImage
+                            source: replyAvatarImage
+                            maskSource: Rectangle {
+                                width: replyAvatarImage.width
+                                height: replyAvatarImage.height
+                                radius: Math.min(width, height) / 2
+                                visible: false
+                            }
+                        }
+                    }
+
+                    Column {
+                        id: replyContent
+                        width: parent.width - 26
+                        spacing: 4
 
                         Row {
-                            anchors.fill: parent
-                            anchors.margins: 6
-                            spacing: 6
+                            width: parent.width
+                            spacing: 4
+
+                            Text {
+                                width: Math.min(84, implicitWidth)
+                                text: model.userName || ""
+                                color: model.isVip ? Theme.accent : Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                font.bold: true
+                                elide: Text.ElideRight
+                                renderType: commentsPage._textRenderType
+                                font.hintingPreference: commentsPage._hinting
+                                antialiasing: commentsPage._textAA
+                            }
 
                             Rectangle {
-                                width: 20
-                                height: 20
-                                radius: 10
-                                color: Theme.bgTertiary
+                                visible: commentsPage.isOwner(model.mid)
+                                width: replyUpTagText.implicitWidth + 8
+                                height: 12
+                                radius: 6
+                                color: Theme.withAlpha(Theme.accent, 0.18)
+                                border.color: Theme.withAlpha(Theme.accent, 0.28)
+                                border.width: 1
 
-                                Image {
-                                    id: replyAvatarImage
-                                    anchors.fill: parent
-                                    source: model.avatar ? "image://bili/" + encodeURIComponent(model.avatar) : ""
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                    smooth: true
-                                    mipmap: true
-                                    visible: false
-                                }
-
-                                OpacityMask {
-                                    anchors.fill: replyAvatarImage
-                                    source: replyAvatarImage
-                                    maskSource: Rectangle {
-                                        width: replyAvatarImage.width
-                                        height: replyAvatarImage.height
-                                        radius: Math.min(width, height) / 2
-                                        visible: false
-                                    }
+                                Text {
+                                    id: replyUpTagText
+                                    anchors.centerIn: parent
+                                    text: "UP"
+                                    color: Theme.accent
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 7
+                                    font.bold: true
                                 }
                             }
 
-                            Column {
-                                id: replyContent
-                                width: parent.width - 26
-                                spacing: 4
+                            Item {
+                                width: Math.max(0, parent.width - 130)
+                                height: 1
+                            }
 
-                                Row {
-                                    width: parent.width
-                                    spacing: 4
+                            Text {
+                                width: 50
+                                horizontalAlignment: Text.AlignRight
+                                text: model.ctimeText || ""
+                                color: _mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTiny
+                                renderType: commentsPage._textRenderType
+                                font.hintingPreference: commentsPage._hinting
+                                antialiasing: commentsPage._textAA
+                            }
+                        }
 
-                                    Text {
-                                        width: Math.min(84, implicitWidth)
-                                        text: model.userName || ""
-                                        color: model.isVip ? Theme.accent : Theme.textPrimary
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSmall
-                                        font.bold: true
-                                        elide: Text.ElideRight
-                                        renderType: commentsPage._textRenderType
-                                        font.hintingPreference: commentsPage._hinting
-                                        antialiasing: commentsPage._textAA
-                                    }
+                        Text {
+                            width: parent.width
+                            text: model.content || ""
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: commentsPage._commentBodyFontSize
+                            wrapMode: Text.Wrap
+                            lineHeight: 1.22
+                            renderType: commentsPage._textRenderType
+                            font.hintingPreference: commentsPage._hinting
+                            antialiasing: commentsPage._textAA
+                        }
 
-                                    Rectangle {
-                                        visible: commentsPage.isOwner(model.mid)
-                                        width: replyUpTagText.implicitWidth + 8
-                                        height: 12
-                                        radius: 6
-                                        color: Theme.withAlpha(Theme.accent, 0.18)
-                                        border.color: Theme.withAlpha(Theme.accent, 0.28)
-                                        border.width: 1
+                        Row {
+                            width: parent.width
+                            spacing: 6
 
-                                        Text {
-                                            id: replyUpTagText
-                                            anchors.centerIn: parent
-                                            text: "UP"
-                                            color: Theme.accent
-                                            font.family: Theme.fontFamily
-                                            font.pixelSize: 7
-                                            font.bold: true
-                                        }
-                                    }
+                            Rectangle {
+                                visible: !!commentsPage.firstPicture(model.pictures)
+                                width: 56
+                                height: 34
+                                radius: 8
+                                color: Theme.bgTertiary
+                                border.color: Theme.withAlpha(_panelBorder, 0.95)
+                                border.width: 1
+                                clip: true
 
-                                    Item {
-                                        width: Math.max(0, parent.width - 130)
-                                        height: 1
-                                    }
-
-                                    Text {
-                                        width: 50
-                                        horizontalAlignment: Text.AlignRight
-                                        text: model.ctimeText || ""
-                                        color: _mutedText
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontTiny
-                                        renderType: commentsPage._textRenderType
-                                        font.hintingPreference: commentsPage._hinting
-                                        antialiasing: commentsPage._textAA
-                                    }
+                                Image {
+                                    anchors.fill: parent
+                                    source: replyPictureSource
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    mipmap: true
                                 }
 
-                                Text {
-                                    width: parent.width
-                                    text: model.content || ""
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: commentsPage._commentBodyFontSize
-                                    wrapMode: Text.Wrap
-                                    lineHeight: 1.22
-                                    renderType: commentsPage._textRenderType
-                                    font.hintingPreference: commentsPage._hinting
-                                    antialiasing: commentsPage._textAA
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
                                 }
+                            }
 
-                                Row {
-                                    width: parent.width
-                                    spacing: 6
-
-                                    Rectangle {
-                                        visible: !!commentsPage.firstPicture(model.pictures)
-                                        width: 56
-                                        height: 34
-                                        radius: 8
-                                        color: Theme.bgTertiary
-                                        border.color: Theme.withAlpha(_panelBorder, 0.95)
-                                        border.width: 1
-                                        clip: true
-
-                                        Image {
-                                            anchors.fill: parent
-                                            source: commentsPage.commentImageSource(commentsPage.firstPicture(model.pictures))
-                                            fillMode: Image.PreserveAspectCrop
-                                            asynchronous: true
-                                            mipmap: true
-                                        }
-
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
-                                        }
-                                    }
-
-                                    Components.IconButton {
-                                        icon: "👍"
-                                        value: commentsPage.compactCount(model.likes || 0)
-                                        width: 34
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
+                            Components.IconButton {
+                                icon: "👍"
+                                value: commentsPage.compactCount(model.likes || 0)
+                                width: 34
+                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
                     }
                 }
+            }
+
+            footer: Column {
+                width: replyDetailFlick.width
+                spacing: 5
 
                 Rectangle {
                     visible: controller && controller.replyHasMore
