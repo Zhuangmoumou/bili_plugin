@@ -52,10 +52,10 @@ class BiliController : public QObject {
       QString videoOwnerFace READ videoOwnerFace NOTIFY videoDetailChanged)
   Q_PROPERTY(qint64 videoOwnerMid READ videoOwnerMid NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoViews READ videoViews NOTIFY videoDetailChanged)
-  Q_PROPERTY(QString videoLikes READ videoLikes NOTIFY videoDetailChanged)
-  Q_PROPERTY(QString videoCoins READ videoCoins NOTIFY videoDetailChanged)
+  Q_PROPERTY(QString videoLikes READ videoLikes NOTIFY videoStatsChanged)
+  Q_PROPERTY(QString videoCoins READ videoCoins NOTIFY videoStatsChanged)
   Q_PROPERTY(
-      QString videoFavorites READ videoFavorites NOTIFY videoDetailChanged)
+      QString videoFavorites READ videoFavorites NOTIFY videoStatsChanged)
   Q_PROPERTY(QString videoDanmaku READ videoDanmaku NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoDuration READ videoDuration NOTIFY videoDetailChanged)
   Q_PROPERTY(QString playbackProgressText READ playbackProgressText NOTIFY playbackProgressChanged)
@@ -348,6 +348,7 @@ public:
 
 signals:
   void videoDetailChanged();
+  void videoStatsChanged();
   void playbackProgressChanged();
   void playUrlChanged();
   void acceptQualitiesChanged();

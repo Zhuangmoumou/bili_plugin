@@ -2120,10 +2120,8 @@ Rectangle {
         }
         updateQualities()
 
-        if (controller && bvid.length > 0 && controller.videoBvid !== bvid) {
+        if (controller && bvid.length > 0) {
             refreshDetail(true)
-        } else if (controller && bvid.length > 0 && controller.videoCid > 0) {
-            reportRecentViewForCurrentSession()
         }
 
         enterAnimation.start()

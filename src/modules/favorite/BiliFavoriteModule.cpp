@@ -303,15 +303,15 @@ void BiliFavoriteModule::addCoin(int multiply, bool selectLike) {
         if (!self)
           return;
         self->m_isCoined = true;
-        if (selectLike) {
+        self->m_currentVideo.coins += multiply;
+        if (selectLike && !self->m_isLiked) {
           self->m_isLiked = true;
+          self->m_currentVideo.likes += 1;
           emit self->likeStatusChanged();
         }
         emit self->coinStatusChanged();
+        emit self->videoStatsChanged();
         emit self->toastMessage(QString("投币成功（%1个）").arg(multiply));
-        self->fetchVideoDetail(self->m_currentVideo.bvid);
-        self->fetchCoinStatus();
-        self->fetchLikeStatus();
       },
       [self](int, const QString &msg) {
         if (!self)
@@ -437,13 +437,14 @@ void BiliFavoriteModule::toggleLike() {
         bool newLiked = (likeAction == 1);
         self->m_isLiked = newLiked;
         if (newLiked) {
+          self->m_currentVideo.likes += 1;
           emit self->toastMessage("点赞爆棚，感谢推荐！");
         } else {
+          self->m_currentVideo.likes = qMax<qint64>(0, self->m_currentVideo.likes - 1);
           emit self->toastMessage("已取消点赞");
         }
         emit self->likeStatusChanged();
-        self->fetchVideoDetail(self->m_currentVideo.bvid);
-        self->fetchLikeStatus();
+        emit self->videoStatsChanged();
       },
       [self](int, const QString &msg) {
         if (!self)
@@ -474,7 +475,9 @@ void BiliFavoriteModule::toggleFavorite() {
           if (!self)
             return;
           self->m_isFavorited = false;
+          self->m_currentVideo.favorites = qMax<qint64>(0, self->m_currentVideo.favorites - 1);
           emit self->favoriteStatusChanged();
+          emit self->videoStatsChanged();
           emit self->toastMessage("已取消收藏");
         },
         [self](int, const QString &msg) {
@@ -517,7 +520,9 @@ void BiliFavoriteModule::toggleFavoriteTo(qint64 mediaId) {
           return;
 
         self->m_isFavorited = true;
+        self->m_currentVideo.favorites += 1;
         emit self->favoriteStatusChanged();
+        emit self->videoStatsChanged();
         emit self->toastMessage("已收藏到收藏夹");
       },
       [self](int, const QString &msg) {
@@ -556,7 +561,6 @@ void BiliFavoriteModule::toggleWatchLater() {
         self->m_isWatchLater = !self->m_isWatchLater;
         emit self->watchLaterStatusChanged();
         emit self->toastMessage(okMsg);
-        self->fetchWatchLater(1, 20);
       },
       [self](int, const QString &msg) {
         if (!self)

@@ -325,6 +325,7 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
         }
 
         emit self->videoDetailChanged();
+        emit self->videoStatsChanged();
         emit self->playbackProgressChanged();
         self->setIsLoading(false);
       },
