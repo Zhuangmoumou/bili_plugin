@@ -37,7 +37,7 @@ BiliController::BiliController(QObject *parent)
       m_loginModule(std::make_unique<BiliLoginModule>(this)),
       m_historyModule(std::make_unique<BiliHistoryModule>(this)),
       m_seasonModule(std::make_unique<BiliSeasonModule>(this)),
-      m_currentPage("home"), m_playQuality(64), m_isDownloading(false),
+      m_playQuality(64), m_isDownloading(false),
       m_downloadProgress(0), m_loggedIn(false), m_isFavorited(false), m_isCoined(false), m_isLiked(false), m_isWatchLater(false),
       m_userName(""), m_userFace(""), m_qrcodeUrl(""), m_qrcodeKey(""),
       m_userId(0), m_userLevel(0), m_userExp(0), m_userExpMin(0), m_userExpNext(0), m_userCoins(0), m_userFans(0),
@@ -119,15 +119,6 @@ void BiliController::setIsLoading(bool loading) {
 }
 
 // ====== Properties ======
-
-QString BiliController::currentPage() const { return m_currentPage; }
-
-void BiliController::setCurrentPage(const QString &page) {
-  if (m_currentPage != page) {
-    m_currentPage = page;
-    emit currentPageChanged();
-  }
-}
 
 QString BiliController::videoTitle() const { return m_currentVideo.title; }
 QString BiliController::videoDesc() const { return m_currentVideo.desc; }
@@ -247,25 +238,6 @@ QObject *BiliController::upVideoModel() { return m_upVideoModel; }
 QObject *BiliController::seasonVideoModel() { return m_seasonVideoModel; }
 QObject *BiliController::relatedVideoModel() { return m_relatedVideoModel; }
 QObject *BiliController::upSeasonModel() { return m_upSeasonModel; }
-
-// ====== Navigation ======
-
-void BiliController::navigateTo(const QString &page) {
-  // 限制页面栈深度
-  if (m_pageStack.size() >= MAX_PAGE_STACK_SIZE) {
-    m_pageStack.removeFirst();
-  }
-  m_pageStack.append(m_currentPage);
-  setCurrentPage(page);
-}
-
-void BiliController::goBack() {
-  if (m_pageStack.isEmpty()) {
-    return;
-  }
-  QString prev = m_pageStack.takeLast();
-  setCurrentPage(prev);
-}
 
 void BiliController::clearError() { setGlobalError(""); }
 

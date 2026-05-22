@@ -43,10 +43,6 @@ class BiliSeasonModule;
 class BiliController : public QObject {
   Q_OBJECT
 
-  // 当前页面状态
-  Q_PROPERTY(QString currentPage READ currentPage WRITE setCurrentPage NOTIFY
-                 currentPageChanged)
-
   // 视频详情
   Q_PROPERTY(QString videoTitle READ videoTitle NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoDesc READ videoDesc NOTIFY videoDetailChanged)
@@ -149,9 +145,6 @@ public:
   ~BiliController();
 
   // Property getters
-  QString currentPage() const;
-  void setCurrentPage(const QString &page);
-
   QString videoTitle() const;
   QString videoDesc() const;
   QString videoPic() const;
@@ -298,8 +291,6 @@ public:
   Q_INVOKABLE QString smsLoginLastError() const { return m_smsLastError; }
   Q_INVOKABLE void checkLoginStatus();
   Q_INVOKABLE void logout();
-  Q_INVOKABLE void navigateTo(const QString &page);
-  Q_INVOKABLE void goBack();
   Q_INVOKABLE void clearError();
   Q_INVOKABLE void clearSearchHistory();
   Q_INVOKABLE void removeSearchHistory(const QString &keyword);
@@ -356,7 +347,6 @@ public:
   Q_INVOKABLE void fetchMoreSeasonVideos();
 
 signals:
-  void currentPageChanged();
   void videoDetailChanged();
   void playbackProgressChanged();
   void playUrlChanged();
@@ -425,10 +415,6 @@ private:
   std::unique_ptr<BiliLoginModule> m_loginModule;
   std::unique_ptr<BiliHistoryModule> m_historyModule;
   std::unique_ptr<BiliSeasonModule> m_seasonModule;
-
-  QString m_currentPage;
-  QStringList m_pageStack;
-  static constexpr int MAX_PAGE_STACK_SIZE = 50;
 
   VideoItem m_currentVideo;
   qint64 m_playbackProgressCid = 0;

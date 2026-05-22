@@ -3376,10 +3376,10 @@ func printBanner(debug bool) {
 	fmt.Println()
 }
 
-func printEndpoints(port string) {
+func printEndpoints(host, port string) {
 	fmt.Println()
 	fmt.Println(strings.Repeat("=", 60))
-	logSuccess("✅ 服务器运行于 http://0.0.0.0:%s", port)
+	logSuccess("✅ 服务器运行于 http://%s:%s", host, port)
 	logInfo("可用接口列表:")
 	for _, e := range startupEndpoints {
 		fmt.Println("  " + e)
@@ -3396,6 +3396,10 @@ func main() {
 		port = "8000"
 	}
 	debug := os.Getenv("DEBUG") == "true"
+	host := "127.0.0.1"
+	if debug {
+		host = "0.0.0.0"
+	}
 
 	printBanner(debug)
 
@@ -3418,7 +3422,7 @@ func main() {
 
 	// 关键：给 HTTP 服务器配置超时，避免慢客户端 / 半开连接耗尽 goroutine 与 fd
 	srv := &http.Server{
-		Addr:              "0.0.0.0:" + port,
+		Addr:              host + ":" + port,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -3447,7 +3451,7 @@ func main() {
 		}
 	}()
 
-	printEndpoints(port)
+	printEndpoints(host, port)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logError("❌ 启动失败: %s", err.Error())

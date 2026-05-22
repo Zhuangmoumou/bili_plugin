@@ -9,6 +9,7 @@ import (
     "net/http"
     "net/http/cookiejar"
     "net/url"
+    "os"
     "strconv"
     "strings"
     "time"
@@ -58,6 +59,12 @@ type SMSResp struct {
 }
 
 func main() {
+    debug := os.Getenv("DEBUG") == "true"
+    host := "127.0.0.1"
+    if debug {
+        host = "0.0.0.0"
+    }
+
     jar, _ := cookiejar.New(nil)
     client = &http.Client{
         Jar:     jar,
@@ -73,8 +80,9 @@ func main() {
     http.HandleFunc("/api/login/sms", handleSMSLogin)
     http.HandleFunc("/pull", handlePull)
 
-    log.Println("服务启动，监听于：http://0.0.0.0:8666/verify.html")
-    log.Fatal(http.ListenAndServe("0.0.0.0:8666", nil))
+    addr := host + ":8666"
+    log.Printf("服务启动，监听于：http://%s/verify.html", addr)
+    log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func handleCaptcha(w http.ResponseWriter, r *http.Request) {
