@@ -27,7 +27,12 @@ BiliImageResponse::BiliImageResponse(const QString &id,
                                      QCache<QString, QImage> *cache,
                                      QReadWriteLock *cacheLock)
     : m_id(id), m_requestedSize(requestedSize), m_cache(cache),
-      m_cacheLock(cacheLock), m_cancelled(0) {
+      m_cacheLock(cacheLock), m_cancelled(0), m_cacheKey(id) {
+  if (m_requestedSize.width() > 0 && m_requestedSize.height() > 0) {
+    m_cacheKey += QStringLiteral("@%1x%2")
+                      .arg(m_requestedSize.width())
+                      .arg(m_requestedSize.height());
+  }
   setAutoDelete(false);
 }
 
@@ -71,6 +76,19 @@ bool BiliImageResponse::isValidImageData(const QByteArray &data) {
   }
 
   return false;
+}
+
+QImage BiliImageResponse::scaledForRequestedSize(const QImage &image) const {
+  if (image.isNull() || m_requestedSize.width() <= 0 || m_requestedSize.height() <= 0)
+    return image;
+
+  if (image.width() <= m_requestedSize.width() &&
+      image.height() <= m_requestedSize.height()) {
+    return image;
+  }
+
+  return image.scaled(m_requestedSize, Qt::KeepAspectRatioByExpanding,
+                      Qt::SmoothTransformation);
 }
 
 QImage BiliImageResponse::downloadImage(const QString &url) {
@@ -149,7 +167,7 @@ void BiliImageResponse::run() {
   // 1. 查缓存
   {
     QReadLocker locker(m_cacheLock);
-    QImage *cached = m_cache->object(m_id);
+    QImage *cached = m_cache->object(m_cacheKey);
     if (cached && !cached->isNull()) {
       m_image = *cached;
       emit finished();
@@ -174,6 +192,7 @@ void BiliImageResponse::run() {
       QByteArray imageData = QByteArray::fromBase64(base64Data.toUtf8());
       if (!imageData.isEmpty() && isValidImageData(imageData)) {
         m_image.loadFromData(imageData);
+        m_image = scaledForRequestedSize(m_image);
       }
     }
     // 无论是否成功，都直接返回（不查缓存/不下载）
@@ -203,7 +222,7 @@ void BiliImageResponse::run() {
   }
 
   // 3. 同步下载（在线程池线程中，不阻塞渲染）
-  m_image = downloadImage(imageUrl);
+  m_image = scaledForRequestedSize(downloadImage(imageUrl));
 
   const QImage placeholder =
       createPlaceholder(m_requestedSize.width(), m_requestedSize.height());
@@ -215,7 +234,7 @@ void BiliImageResponse::run() {
     int cost = qMax((int)qMin(bytes, (qint64)INT_MAX), 1024);
     // 仅缓存合理大小的图片
     if (cost < 10 * 1024 * 1024) {
-      m_cache->insert(m_id, new QImage(m_image), cost);
+      m_cache->insert(m_cacheKey, new QImage(m_image), cost);
     }
   }
 

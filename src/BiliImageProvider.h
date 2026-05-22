@@ -34,8 +34,10 @@ private:
   QCache<QString, QImage> *m_cache;
   QReadWriteLock *m_cacheLock;
   QAtomicInt m_cancelled;
+  QString m_cacheKey;
 
   QImage downloadImage(const QString &url);
+  QImage scaledForRequestedSize(const QImage &image) const;
   static QImage createPlaceholder(int w = 160, int h = 100);
   static bool isValidImageData(const QByteArray &data);
 };

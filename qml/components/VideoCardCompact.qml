@@ -25,8 +25,28 @@ Item {
     property real infoSpacing: 2
     // 注意：该组件的文本在 Column 中布局，直接改子项 y 通常不会生效
     property real subYOffset: 0
+    property string coverImageSource: ""
 
     signal clicked()
+
+    function normalizedCoverSource(url) {
+        if (!url) return ""
+        var s = String(url)
+        if (s.indexOf("data:image/") === 0 || s.indexOf("image://") === 0) return s
+        return "image://bili/" + encodeURIComponent(s)
+    }
+
+    function scheduleCoverLoad() {
+        var requested = coverUrl
+        coverImageSource = ""
+        if (!requested) return
+        Qt.callLater(function() {
+            if (coverUrl === requested) coverImageSource = normalizedCoverSource(requested)
+        })
+    }
+
+    Component.onCompleted: scheduleCoverLoad()
+    onCoverUrlChanged: scheduleCoverLoad()
 
     Rectangle {
         id: cardBg
@@ -53,7 +73,7 @@ Item {
             Image {
                 id: coverImage
                 anchors.fill: parent
-                source: coverUrl
+                source: coverImageSource
                 sourceSize: Qt.size(210, 140)
                 cache: true
                 asynchronous: true
