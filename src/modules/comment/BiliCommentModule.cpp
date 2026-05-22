@@ -79,24 +79,40 @@ void BiliCommentModule::fetchComments(int page) {
 
         QVector<CommentItem> items;
 
-        // 置顶评论（可能存在 upper/admin/vote 等）
+        auto hasComment = [&items](qint64 rpid) {
+          for (const CommentItem &item : items) {
+            if (item.rpid > 0 && item.rpid == rpid) return true;
+          }
+          return false;
+        };
+        auto appendTopComment = [&items, &hasComment](const QJsonObject &obj) {
+          if (obj.isEmpty()) return;
+          CommentItem topComment = CommentListModel::parseCommentItem(obj);
+          if (topComment.rpid <= 0 || hasComment(topComment.rpid)) return;
+          topComment.isTop = true;
+          items.append(topComment);
+        };
+
         if (m_controller->m_commentPage == 1) {
+          appendTopComment(data.value("upper").toObject().value("top").toObject());
+
           QJsonObject topObj = data.value("top").toObject();
           QStringList topKeys = {"upper", "admin", "vote"};
           for (const QString &key : topKeys) {
-            QJsonObject topItem = topObj.value(key).toObject();
-            if (!topItem.isEmpty()) {
-              CommentItem topComment = CommentListModel::parseCommentItem(topItem);
-              topComment.isTop = true;
-              items.append(topComment);
-            }
+            appendTopComment(topObj.value(key).toObject());
+          }
+
+          QJsonArray topReplies = data.value("top_replies").toArray();
+          for (const QJsonValue &v : topReplies) {
+            if (v.isObject()) appendTopComment(v.toObject());
           }
         }
 
         items.reserve(items.size() + replies.size());
         for (const QJsonValue &v : replies) {
           if (v.isObject()) {
-            items.append(CommentListModel::parseCommentItem(v.toObject()));
+            CommentItem comment = CommentListModel::parseCommentItem(v.toObject());
+            if (!hasComment(comment.rpid)) items.append(comment);
           }
         }
 
