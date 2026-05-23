@@ -18,6 +18,7 @@ Rectangle {
     signal searchRequested()
     signal loginRequested()
     signal rankingRequested()
+    signal backButtonClicked()
 
     // ── 内容区状态 ──
     property int tabIndex: 0
@@ -26,6 +27,9 @@ Rectangle {
     property double lastRecommendRefreshMs: 0
     property bool initialPopularRequested: false
     property bool popularModelAttached: false
+    readonly property bool popularImagesActive: visible && tabIndex === 0
+    readonly property bool rankingImagesActive: visible && tabIndex === 1
+    readonly property bool profileImagesActive: visible && tabIndex === 3
 
     function requestInitialPopular() {
         if (!controller || initialPopularRequested) return
@@ -123,6 +127,7 @@ Rectangle {
                     height: popularList.height
                     videoTitle: model.title || ""
                     coverUrl: model.pic || ""
+                    imageActive: homePage.popularImagesActive
                     upName: model.ownerName || ""
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
@@ -174,6 +179,7 @@ Rectangle {
                     height: rankingList.height
                     videoTitle: model.title || ""
                     coverUrl: model.pic || ""
+                    imageActive: homePage.rankingImagesActive
                     upName: model.ownerName || ""
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
@@ -227,7 +233,7 @@ Rectangle {
                             anchors.fill: parent
                             anchors.margins: 2
                             visible: controller && controller.loggedIn && source != ""
-                            source: controller && controller.userFace
+                            source: controller && controller.userFace && homePage.profileImagesActive
                             ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
                             sourceSize: Qt.size(112, 112)
                             cache: true
@@ -325,8 +331,61 @@ Rectangle {
         }
 
         Row {
+            width: parent.width - 16
             anchors.centerIn: parent
-            spacing: 6
+            spacing: 4
+
+            readonly property real exitButtonWidth: 24
+            readonly property real tabButtonWidth: (width - exitButtonWidth - spacing * 4) / 4
+
+            Rectangle {
+                width: parent.exitButtonWidth
+                height: 20
+                radius: 10
+                color: exitMouseArea.pressed ? Theme.withAlpha(Theme.primary, 0.2) : "transparent"
+                border.color: Theme.withAlpha(Theme.primary, 0.25)
+                border.width: 1
+
+                scale: exitMouseArea.pressed ? 0.92 : 1.0
+                Behavior on scale { NumberAnimation { duration: 80 } }
+                Behavior on color { ColorAnimation { duration: 100 } }
+
+                Canvas {
+                    anchors.centerIn: parent
+                    width: 12
+                    height: 12
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.strokeStyle = Theme.textSecondary
+                        ctx.lineWidth = 1.4
+                        ctx.lineCap = "round"
+                        ctx.lineJoin = "round"
+
+                        ctx.beginPath()
+                        ctx.moveTo(7.5, 2)
+                        ctx.lineTo(10, 2)
+                        ctx.lineTo(10, 10)
+                        ctx.lineTo(7.5, 10)
+                        ctx.stroke()
+
+                        ctx.beginPath()
+                        ctx.moveTo(7, 6)
+                        ctx.lineTo(2.5, 6)
+                        ctx.moveTo(4.5, 4)
+                        ctx.lineTo(2.5, 6)
+                        ctx.lineTo(4.5, 8)
+                        ctx.stroke()
+                    }
+                }
+
+                MouseArea {
+                    id: exitMouseArea
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    onClicked: homePage.backButtonClicked()
+                }
+            }
 
             Repeater {
                 model: [
@@ -337,7 +396,7 @@ Rectangle {
                 ]
 
                 Rectangle {
-                    width: 56
+                    width: parent.tabButtonWidth
                     height: 20
                     radius: 10
                     color: {

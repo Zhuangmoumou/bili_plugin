@@ -19,6 +19,7 @@ Rectangle {
     property string currentFavTitle: ""
     property int currentFavId: 0
     property real recentHistoryContentX: 0
+    property bool recentHistoryForceStart: false
     property real watchLaterContentX: 0
     property bool restoreWatchLaterOnShow: false
     property bool watchLaterForceStart: false
@@ -26,6 +27,12 @@ Rectangle {
     property int previousFavView: 0
     property int lastAnimatedFavView: 0
     property int favViewDirection: 1
+    readonly property bool profileImagesActive: visible && isManagedViewCurrent(0)
+    readonly property bool favoriteFolderImagesActive: visible && isManagedViewCurrent(1)
+    readonly property bool favoriteItemImagesActive: visible && isManagedViewCurrent(2)
+    readonly property bool recentHistoryImagesActive: visible && isManagedViewCurrent(3)
+    readonly property bool watchLaterImagesActive: visible && isManagedViewCurrent(6)
+    readonly property bool loginImagesActive: visible && loginArea.visible
 
     function normalizedFavView(view) {
         return view === 5 ? 4 : view
@@ -452,7 +459,7 @@ Rectangle {
                         anchors.fill: parent
                         // base64 data URL 直接使用，普通 URL 通过 image://bili/ 协议
                         source: {
-                            if (!controller || !controller.qrcodeUrl) return ""
+                            if (!userPage.loginImagesActive || !controller || !controller.qrcodeUrl) return ""
                             var url = controller.qrcodeUrl
                             // 如果是 base64 data URL，直接使用（添加时间戳防止缓存）
                             if (url.startsWith("data:image/")) {
@@ -773,7 +780,7 @@ Rectangle {
                                 id: userAvatarImage
                                 anchors.fill: parent
                                 anchors.margins: 2
-                                source: controller && controller.userFace
+                                source: controller && controller.userFace && userPage.profileImagesActive
                                 ? "image://bili/" + encodeURIComponent(controller.userFace) : ""
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
@@ -1087,6 +1094,11 @@ Rectangle {
                                     id: historyEntryArea
                                     anchors.fill: parent
                                     onClicked: {
+                                        recentHistoryContentX = 0
+                                        recentHistoryForceStart = true
+                                        if (recentLoader.item && recentLoader.item.resetPosition) {
+                                            recentLoader.item.resetPosition()
+                                        }
                                         favView = 3
                                         if (controller) Qt.callLater(function() { controller.history.fetchRecentHistory() })
                                     }
@@ -1299,7 +1311,7 @@ Rectangle {
 
                             Image {
                                 anchors.fill: parent
-                                source: model.cover ? "image://bili/" + encodeURIComponent(model.cover) : ""
+                                source: model.cover && userPage.favoriteFolderImagesActive ? "image://bili/" + encodeURIComponent(model.cover) : ""
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
                             }
@@ -1375,9 +1387,23 @@ Rectangle {
                     Item {
                         anchors.fill: parent
 
+                        function resetPosition() {
+                            recentList.contentX = 0
+                            Qt.callLater(function() {
+                                recentList.contentX = 0
+                                Qt.callLater(function() { recentList.contentX = 0 })
+                            })
+                        }
+
                         function restorePosition() {
+                            if (userPage.recentHistoryForceStart) {
+                                resetPosition()
+                                return
+                            }
                             if (recentHistoryView.visible && userPage.recentHistoryContentX > 0) {
                                 recentList.contentX = userPage.recentHistoryContentX
+                            } else {
+                                resetPosition()
                             }
                         }
 
@@ -1389,6 +1415,19 @@ Rectangle {
                             orientation: ListView.Horizontal
                             spacing: Theme.spacingMedium
                             clip: true
+                            onContentWidthChanged: {
+                                if (userPage.recentHistoryForceStart) contentX = 0
+                            }
+                            onCountChanged: {
+                                if (!userPage.recentHistoryForceStart) return
+                                contentX = 0
+                                if (count > 0) {
+                                    Qt.callLater(function() {
+                                        contentX = 0
+                                        userPage.recentHistoryForceStart = false
+                                    })
+                                }
+                            }
 
                             // 性能参数对齐 HomePage
                             cacheBuffer: 640
@@ -1410,6 +1449,7 @@ Rectangle {
                                 videoTitle: model.title || ""
                                 // 与 HomePage 保持一致：直接使用 model.pic，避免重复 encode 带来额外开销/错误
                                 coverUrl: model.pic || ""
+                                imageActive: userPage.recentHistoryImagesActive
                                 upName: model.ownerName || ""
                                 viewCount: ""
                                 durationText: model.durationText || ""
@@ -1417,6 +1457,7 @@ Rectangle {
                                 showCollection: model.partCount > 1
                                 onClicked: {
                                     userPage.recentHistoryContentX = recentList.contentX
+                                    userPage.recentHistoryForceStart = false
                                     userPage.videoSelected(bvid)
                                 }
                             }
@@ -1469,6 +1510,10 @@ Rectangle {
                         }
 
                         function restorePosition() {
+                            if (userPage.watchLaterForceStart) {
+                                resetPosition()
+                                return
+                            }
                             if (watchLaterView.visible && userPage.restoreWatchLaterOnShow && userPage.watchLaterContentX > 0) {
                                 watchLaterList.contentX = userPage.watchLaterContentX
                             } else {
@@ -1502,7 +1547,15 @@ Rectangle {
                                 if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) contentX = 0
                             }
                             onCountChanged: {
-                                if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) contentX = 0
+                                if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) {
+                                    contentX = 0
+                                    if (count > 0) {
+                                        Qt.callLater(function() {
+                                            contentX = 0
+                                            userPage.watchLaterForceStart = false
+                                        })
+                                    }
+                                }
                             }
 
                             cacheBuffer: 640
@@ -1523,6 +1576,7 @@ Rectangle {
                                 height: watchLaterList.height
                                 videoTitle: model.title || ""
                                 coverUrl: model.pic || ""
+                                imageActive: userPage.watchLaterImagesActive
                                 upName: model.ownerName || ""
                                 viewCount: ""
                                 durationText: model.durationText || ""
@@ -1618,6 +1672,7 @@ Rectangle {
                                 height: favItems.height
                                 videoTitle: model.title || ""
                                 coverUrl: model.pic || ""
+                                imageActive: userPage.favoriteItemImagesActive
                                 upName: model.ownerName || ""
                                 viewCount: model.views || ""
                                 durationText: model.durationText || ""

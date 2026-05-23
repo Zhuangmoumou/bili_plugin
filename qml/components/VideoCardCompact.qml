@@ -21,6 +21,7 @@ Item {
     property real titleScale: 1.0
     property real subScale: 1.0
     property bool titleBold: true
+    property bool imageActive: true
     // 标题与UP信息之间的垂直间距（默认 2）
     property real infoSpacing: 2
     // 注意：该组件的文本在 Column 中布局，直接改子项 y 通常不会生效
@@ -38,15 +39,17 @@ Item {
 
     function scheduleCoverLoad() {
         var requested = coverUrl
+        var shouldLoad = imageActive
         coverImageSource = ""
-        if (!requested) return
+        if (!requested || !shouldLoad) return
         Qt.callLater(function() {
-            if (coverUrl === requested) coverImageSource = normalizedCoverSource(requested)
+            if (imageActive && coverUrl === requested) coverImageSource = normalizedCoverSource(requested)
         })
     }
 
     Component.onCompleted: scheduleCoverLoad()
     onCoverUrlChanged: scheduleCoverLoad()
+    onImageActiveChanged: scheduleCoverLoad()
 
     Rectangle {
         id: cardBg

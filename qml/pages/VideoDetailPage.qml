@@ -135,6 +135,8 @@ Rectangle {
     property bool subtitlePickerVisible: false
     property bool coinPickerVisible: false
     property bool coinSelectLike: false
+    readonly property bool heroImagesActive: visible
+    readonly property bool relatedImagesActive: visible && relatedExpanded
 
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
@@ -267,7 +269,7 @@ Rectangle {
                     Image {
                         id: coverImage
                         anchors.fill: parent
-                        source: controller && controller.videoPic
+                        source: controller && controller.videoPic && detailPage.heroImagesActive
                         ? "image://bili/" + encodeURIComponent(controller.videoPic) : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
@@ -446,7 +448,7 @@ Rectangle {
                                     anchors.fill: parent
                                     smooth: true
                                     mipmap: true
-                                    source: controller && controller.videoOwnerFace
+                                    source: controller && controller.videoOwnerFace && detailPage.heroImagesActive
                                     ? "image://bili/" + encodeURIComponent(controller.videoOwnerFace) : ""
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
@@ -600,6 +602,7 @@ Rectangle {
                             if (controller.isCoined) {
                                 controller.toastMessage("已经投过币了")
                             } else {
+                                detailPage.coinSelectLike = true
                                 detailPage.coinPickerVisible = true
                             }
                         }
@@ -1246,6 +1249,7 @@ Rectangle {
                             height: relatedList.height
                             videoTitle: model.title || ""
                             coverUrl: model.pic || ""
+                            imageActive: detailPage.relatedImagesActive
                             upName: model.ownerName || ""
                             viewCount: model.views || ""
                             durationText: model.durationText || ""

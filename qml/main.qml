@@ -275,6 +275,7 @@ Rectangle {
                     onSearchRequested: root.navigateTo("search")
                     onLoginRequested: root.navigateTo("user")
                     onRankingRequested: root.navigateTo("ranking")
+                    onBackButtonClicked: root.backButtonClicked()
                 }
             }
         }
@@ -294,7 +295,10 @@ Rectangle {
                     onBackClicked: {
                         // 退出搜索页：清空结果，并清掉缓存的滚动位置
                         root.searchSavedResultX = 0
-                        root.rootController.searchModel().clear();
+                        if (root.rootController && root.rootController.search) {
+                            var model = root.rootController.search.searchModel()
+                            if (model && model.clear) model.clear()
+                        }
                         root.goBack();
                     }
                     onVideoSelected: {
