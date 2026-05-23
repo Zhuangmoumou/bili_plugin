@@ -380,7 +380,7 @@ void BiliPlaybackModule::appendResumeStartArg(QStringList &args) const {
 }
 
 bool BiliPlaybackModule::startExternalPlayer(const QStringList &args) {
-  const QString player = "/userdisk/VideoPlayer";
+  const QString player = "/userdisk/mpv/mpv";
   if (!QFile::exists(player)) {
     emit m_controller->toastMessage("外部播放器不存在");
     return false;

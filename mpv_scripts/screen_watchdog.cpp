@@ -105,8 +105,8 @@ private:
         int current_gen = ++generation;
 
         std::thread([this, current_gen]() {
-            // 等效 Timer(2.1, call_ubus)
-            std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+            // 等效 Timer(2.2, call_ubus)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2200));
 
             // 如果中途被新的事件取消或状态文件已不存在，则不执行
             if (generation == current_gen && access(SCREEN_STATUS_PATH.c_str(), F_OK) == 0) {
