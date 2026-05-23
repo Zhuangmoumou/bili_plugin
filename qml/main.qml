@@ -464,9 +464,9 @@ Rectangle {
         errorMessage: controller.globalError
         onRetryClicked: {
             controller.clearError();
-            if (currentPage === "home") controller.fetchPopular();
-            else if (currentPage === "detail") controller.fetchVideoDetail(root.detailBvid);
-            else if (currentPage === "season") controller.fetchSeasonVideos(root.seasonMid, root.seasonId, 1, 30);
+            if (currentPage === "home") controller.feed.fetchPopular();
+            else if (currentPage === "detail") controller.video.fetchVideoDetail(root.detailBvid);
+            else if (currentPage === "season") controller.season.fetchSeasonVideos(root.seasonMid, root.seasonId, 1, 30);
         }
         onDismissed: controller.clearError()
     }

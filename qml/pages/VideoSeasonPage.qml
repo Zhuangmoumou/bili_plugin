@@ -35,7 +35,7 @@ Rectangle {
         var key = midVal + "#" + sidVal
         if (loadedKey === key) return
         loadedKey = key
-        controller.fetchSeasonVideos(midVal, sidVal, 1, 30)
+        controller.season.fetchSeasonVideos(midVal, sidVal, 1, 30)
     }
 
     onSeasonMidChanged: {
@@ -82,7 +82,7 @@ Rectangle {
         clip: true
         leftMargin: 8
         rightMargin: 8
-        model: controller ? controller.seasonVideoModel() : null
+        model: controller ? controller.season.seasonVideoModel() : null
 
         onAtXEndChanged: {
             if (!controller) return
@@ -90,7 +90,7 @@ Rectangle {
             if (seasonVideoList.contentWidth <= seasonVideoList.width + 2) return
             if (seasonVideoList.model && seasonVideoList.model.loading) return
             if (seasonVideoList.model && seasonVideoList.model.hasMore === false) return
-            controller.fetchMoreSeasonVideos()
+            controller.season.fetchMoreSeasonVideos()
         }
 
         delegate: Item {

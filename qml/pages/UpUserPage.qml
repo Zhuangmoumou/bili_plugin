@@ -45,7 +45,7 @@ Rectangle {
     function refresh() {
         var midVal = Number(upMid)
         if (!controller || !midVal || midVal <= 0) return
-        controller.fetchUpInfo(midVal)
+        controller.up.fetchUpInfo(midVal)
     }
 
     function formatFanCount(value) {
@@ -63,7 +63,7 @@ Rectangle {
         upSeasonsRequested = false
         var midVal = Number(upMid)
         if (controller && controller.upUserMid === midVal && controller.upSelectedSeasonId !== 0) {
-            controller.selectUpSeason(0, "", false, 0)
+            controller.up.selectUpSeason(0, "", false, 0)
             upVideosRequested = true
         }
         resetScrollState()
@@ -84,7 +84,7 @@ Rectangle {
                 Qt.callLater(function() {
                     if (!controller || controller.upUserMid !== midVal) return
                     if (controller.upSelectedSeasonId === 0) {
-                        controller.fetchUpVideos(midVal, 1, 20)
+                        controller.up.fetchUpVideos(midVal, 1, 20)
                     }
                 })
             }
@@ -92,7 +92,7 @@ Rectangle {
                 upSeasonsRequested = true
                 Qt.callLater(function() {
                     if (!controller || controller.upUserMid !== midVal) return
-                    controller.fetchUpSeasons(midVal)
+                    controller.up.fetchUpSeasons(midVal)
                 })
             }
         }
@@ -255,7 +255,7 @@ Rectangle {
                                 id: followArea
                                 anchors.fill: parent
                                 onClicked: {
-                                    if (controller) controller.toggleUpFollow()
+                                    if (controller) controller.up.toggleUpFollow()
                                 }
                             }
                         }
@@ -444,7 +444,7 @@ Rectangle {
                                     onClicked: {
                                         if (!controller) return
                                         if (controller.upSelectedSeasonId !== 0) {
-                                            controller.selectUpSeason(0, "", false, 0)
+                                            controller.up.selectUpSeason(0, "", false, 0)
                                             upPage.resetListState()
                                         }
                                     }
@@ -452,7 +452,7 @@ Rectangle {
                             }
 
                             Repeater {
-                                model: controller ? controller.upSeasonModel() : null
+                                model: controller ? controller.up.upSeasonModel() : null
 
                                 delegate: Rectangle {
                                     id: seasonChip
@@ -514,7 +514,7 @@ Rectangle {
                                         onClicked: {
                                             if (!controller) return
                                             if (!seasonChip.selected) {
-                                                controller.selectUpSeason(model.seasonId,
+                                                controller.up.selectUpSeason(model.seasonId,
                                                                           model.name || "",
                                                                           model.isSeries === true,
                                                                           model.total || 0)
@@ -530,7 +530,7 @@ Rectangle {
                 }
 
                 Connections {
-                    target: controller ? controller.upSeasonModel() : null
+                    target: controller ? controller.up.upSeasonModel() : null
                     function onLoadingChanged() {
                         if (!target || target.loading) return
                         upPage.clampScrollState()
@@ -544,7 +544,7 @@ Rectangle {
                     orientation: ListView.Horizontal
                     spacing: 6
                     clip: true
-                    model: controller ? controller.upVideoModel() : null
+                    model: controller ? controller.up.upVideoModel() : null
                     leftMargin: 4
                     rightMargin: 4
 
@@ -557,7 +557,7 @@ Rectangle {
                         if (upVideoList.contentWidth <= upVideoList.width + 2) return
                         if (upVideoList.model && upVideoList.model.loading) return
                         if (upVideoList.model && upVideoList.model.hasMore === false) return
-                        controller.fetchMoreUpVideos()
+                        controller.up.fetchMoreUpVideos()
                     }
 
                     delegate: Components.VideoCardCompact {

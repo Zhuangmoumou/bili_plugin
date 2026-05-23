@@ -81,7 +81,10 @@ QString videoRequestKey(const VideoItem &video) {
 }  // namespace
 
 BiliSeasonModule::BiliSeasonModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliSeasonModule::seasonVideoModel() { return m_controller->m_seasonVideoModel; }
+QObject *BiliSeasonModule::relatedVideoModel() { return m_controller->m_relatedVideoModel; }
 
 void BiliSeasonModule::fetchRelatedVideos() {
   BiliController *controller = m_controller;

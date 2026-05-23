@@ -37,7 +37,17 @@ extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
 BiliFavoriteModule::BiliFavoriteModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliFavoriteModule::favoriteFolderModel() { return m_controller->m_favoriteFolderModel; }
+QObject *BiliFavoriteModule::favoriteItemModel() { return m_controller->m_favoriteItemModel; }
+
+void BiliFavoriteModule::resetLoadingState() {
+  m_favoriteStatusLoadingAid = 0;
+  m_coinStatusLoadingAid = 0;
+  m_likeStatusLoadingAid = 0;
+  m_watchLaterStatusLoadingAid = 0;
+}
 
 // ====== API: 收藏夹 ======
 
@@ -120,8 +130,8 @@ void BiliFavoriteModule::fetchFavoriteItems(qint64 mediaId, int page, int pageSi
   page = qBound(1, page, 2000);
   pageSize = qBound(1, pageSize, 20);
 
-  m_controller->m_currentFavoriteId = mediaId;
-  m_controller->m_favoritePage = page;
+  m_currentFavoriteId = mediaId;
+  m_favoritePage = page;
 
   if (page == 1) {
     m_controller->m_favoriteItemModel->clear();
@@ -174,7 +184,7 @@ void BiliFavoriteModule::fetchFavoriteItems(qint64 mediaId, int page, int pageSi
         m_controller->m_favoriteItemModel->setHasMore(hasMore ? true : !items.isEmpty());
         m_controller->m_favoriteItemModel->setLoading(false);
 
-        if (items.isEmpty() && m_controller->m_favoritePage == 1) {
+        if (items.isEmpty() && m_favoritePage == 1) {
           m_controller->m_favoriteItemModel->setErrorMessage("收藏夹为空");
         }
       },
@@ -191,8 +201,8 @@ void BiliFavoriteModule::fetchMoreFavoriteItems() {
     return;
   if (m_controller->m_favoriteItemModel->count() <= 0)
     return;
-  m_controller->m_favoritePage++;
-  fetchFavoriteItems(m_controller->m_currentFavoriteId, m_controller->m_favoritePage);
+  m_favoritePage++;
+  fetchFavoriteItems(m_currentFavoriteId, m_favoritePage);
 }
 
 // ====== API: 收藏状态 ======
@@ -205,10 +215,10 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
     return;
   }
   const qint64 aid = m_controller->m_currentVideo.aid;
-  if (m_controller->m_favoriteStatusLoadingAid == aid) {
+  if (m_favoriteStatusLoadingAid == aid) {
     return;
   }
-  m_controller->m_favoriteStatusLoadingAid = aid;
+  m_favoriteStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
@@ -216,7 +226,7 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
   m_controller->apiGet(
       "/fav/status", params,
       [this](const QJsonObject &data) {
-        m_controller->m_favoriteStatusLoadingAid = 0;
+        m_favoriteStatusLoadingAid = 0;
 
         bool fav = false;
         if (data.value("favoured").isBool()) {
@@ -230,7 +240,7 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
         }
       },
       [this](int, const QString &msg) {
-        m_controller->m_favoriteStatusLoadingAid = 0;
+        m_favoriteStatusLoadingAid = 0;
         emit m_controller->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
       });
 }
@@ -243,10 +253,10 @@ void BiliFavoriteModule::fetchCoinStatus() {
     return;
   }
   const qint64 aid = m_controller->m_currentVideo.aid;
-  if (m_controller->m_coinStatusLoadingAid == aid) {
+  if (m_coinStatusLoadingAid == aid) {
     return;
   }
-  m_controller->m_coinStatusLoadingAid = aid;
+  m_coinStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
@@ -254,7 +264,7 @@ void BiliFavoriteModule::fetchCoinStatus() {
   m_controller->apiGet(
       "/coin/status", params,
       [this](const QJsonObject &data) {
-        m_controller->m_coinStatusLoadingAid = 0;
+        m_coinStatusLoadingAid = 0;
 
         bool coined = false;
         int multiply = data.value("multiply").toInt(0);
@@ -269,7 +279,7 @@ void BiliFavoriteModule::fetchCoinStatus() {
         }
       },
       [this](int, const QString &msg) {
-        m_controller->m_coinStatusLoadingAid = 0;
+        m_coinStatusLoadingAid = 0;
         emit m_controller->toastMessage(QString("获取投币状态失败：%1").arg(msg));
       });
 }
@@ -328,10 +338,10 @@ void BiliFavoriteModule::fetchLikeStatus() {
     return;
   }
   const qint64 aid = m_controller->m_currentVideo.aid;
-  if (m_controller->m_likeStatusLoadingAid == aid) {
+  if (m_likeStatusLoadingAid == aid) {
     return;
   }
-  m_controller->m_likeStatusLoadingAid = aid;
+  m_likeStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
@@ -339,7 +349,7 @@ void BiliFavoriteModule::fetchLikeStatus() {
   m_controller->apiGet(
       "/like/status", params,
       [this](const QJsonObject &data) {
-        m_controller->m_likeStatusLoadingAid = 0;
+        m_likeStatusLoadingAid = 0;
 
         int liked = 0;
         if (data.value("liked").isBool()) {
@@ -356,7 +366,7 @@ void BiliFavoriteModule::fetchLikeStatus() {
         }
       },
       [this](int, const QString &msg) {
-        m_controller->m_likeStatusLoadingAid = 0;
+        m_likeStatusLoadingAid = 0;
         emit m_controller->toastMessage(QString("获取点赞状态失败：%1").arg(msg));
       });
 }
@@ -369,10 +379,10 @@ void BiliFavoriteModule::fetchWatchLaterStatus() {
     return;
   }
   const qint64 aid = m_controller->m_currentVideo.aid;
-  if (m_controller->m_watchLaterStatusLoadingAid == aid) {
+  if (m_watchLaterStatusLoadingAid == aid) {
     return;
   }
-  m_controller->m_watchLaterStatusLoadingAid = aid;
+  m_watchLaterStatusLoadingAid = aid;
 
   QMap<QString, QString> params;
   params["pn"] = "1";
@@ -381,7 +391,7 @@ void BiliFavoriteModule::fetchWatchLaterStatus() {
   m_controller->apiGet(
       "/toview/list", params,
       [this](const QJsonObject &data) {
-        m_controller->m_watchLaterStatusLoadingAid = 0;
+        m_watchLaterStatusLoadingAid = 0;
         QJsonArray list = data.value("list").toArray();
         if (list.isEmpty()) {
           list = data.value("data").toArray();
@@ -406,7 +416,7 @@ void BiliFavoriteModule::fetchWatchLaterStatus() {
         }
       },
       [this](int, const QString &msg) {
-        m_controller->m_watchLaterStatusLoadingAid = 0;
+        m_watchLaterStatusLoadingAid = 0;
         emit m_controller->toastMessage(QString("获取稍后再看状态失败：%1").arg(msg));
       });
 }

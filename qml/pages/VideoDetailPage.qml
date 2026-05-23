@@ -100,7 +100,7 @@ Rectangle {
         var reported = rootRef.reportedDetailSessions
         reported[detailSessionId] = true
         rootRef.reportedDetailSessions = reported
-        controller.reportCurrentVideoAsRecentViewIfNeeded()
+        controller.video.reportCurrentVideoAsRecentViewIfNeeded()
     }
 
     // 分P列表横向滚动位置
@@ -314,12 +314,12 @@ Rectangle {
                         color: Qt.rgba(0, 0, 0, 0.58)
                         border.width: 1
                         border.color: Qt.rgba(1, 1, 1, 0.18)
-                        visible: controller && controller.videoPartModel() && controller.videoPartModel().count > 1
+                        visible: controller && controller.video.videoPartModel() && controller.video.videoPartModel().count > 1
 
                         Text {
                             id: collectionText
                             anchors.centerIn: parent
-                            text: "选集 " + (controller && controller.videoPartModel() ? controller.videoPartModel().count : 0) + "P"
+                            text: "选集 " + (controller && controller.video.videoPartModel() ? controller.video.videoPartModel().count : 0) + "P"
                             color: "#F8FAFC"
                             font.pixelSize: 8
                             font.family: fontFamily
@@ -585,7 +585,7 @@ Rectangle {
                         active: controller && controller.isLiked
                         activeColor: "#f472b6"
                         onTriggered: {
-                            if (controller) controller.toggleLike()
+                            if (controller) controller.favorite.toggleLike()
                         }
                     }
 
@@ -614,9 +614,9 @@ Rectangle {
                         onTriggered: {
                             if (!controller) return
                             if (controller.isFavorited) {
-                                controller.toggleFavorite()
+                                controller.favorite.toggleFavorite()
                             } else {
-                                controller.fetchFavoriteFolders()
+                                controller.favorite.fetchFavoriteFolders()
                                 detailPage.favoritePickerVisible = true
                             }
                         }
@@ -629,7 +629,7 @@ Rectangle {
                         active: controller && controller.isWatchLater
                         activeColor: primaryLight
                         onTriggered: {
-                            if (controller) controller.toggleWatchLater()
+                            if (controller) controller.favorite.toggleWatchLater()
                         }
                     }
                 }
@@ -660,7 +660,7 @@ Rectangle {
                         iconType: "download"
                         label: "下载"
                         onTriggered: {
-                            if (controller) controller.downloadVideoToDisk(detailPage.selectedQuality)
+                            if (controller) controller.up.downloadVideoToDisk(detailPage.selectedQuality)
                         }
                     }
 
@@ -674,7 +674,7 @@ Rectangle {
                             return "字幕"
                         }
                         onTriggered: {
-                            if (controller) controller.fetchSubtitleList()
+                            if (controller) controller.playback.fetchSubtitleList()
                             detailPage.subtitlePickerVisible = true
                         }
                     }
@@ -728,7 +728,7 @@ Rectangle {
                         id: refreshArea
                         anchors.fill: parent
                         onClicked: {
-                            if (controller) controller.fetchAcceptQualities(detailPage.selectedQuality)
+                            if (controller) controller.playback.fetchAcceptQualities(detailPage.selectedQuality)
                         }
                     }
                 }
@@ -808,7 +808,7 @@ Rectangle {
                 width: parent.width
                 height: visible ? 84 : 0
                 visible: controller && !controller.isLoading
-                         && controller.videoPartModel() && controller.videoPartModel().count > 1
+                         && controller.video.videoPartModel() && controller.video.videoPartModel().count > 1
 
                 Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
@@ -849,8 +849,8 @@ Rectangle {
                     }
 
                     Text {
-                        text: controller && controller.videoPartModel()
-                              ? controller.videoPartModel().count + "P"
+                        text: controller && controller.video.videoPartModel()
+                              ? controller.video.videoPartModel().count + "P"
                               : ""
                         color: "#64748b"
                         font.family: fontFamily
@@ -872,7 +872,7 @@ Rectangle {
                     leftMargin: 8
                     rightMargin: 8
 
-                    model: controller ? controller.videoPartModel() : null
+                    model: controller ? controller.video.videoPartModel() : null
                     visible: model && model.count > 0
 
                     delegate: Components.VideoPartCard {
@@ -889,7 +889,7 @@ Rectangle {
                                 detailPage.fullPartTitleText = model.part || ""
                                 detailPage.fullPartTitleVisible = true
                             } else {
-                                controller.playVideoPart(index)
+                                controller.up.playVideoPart(index)
                                 detailPage.restorePartListPosition()
                             }
                         }
@@ -1114,7 +1114,7 @@ Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 6
                 visible: controller && controller.videoBvid === detailPage.bvid
-                readonly property var relatedModel: controller ? controller.relatedVideoModel() : null
+                readonly property var relatedModel: controller ? controller.season.relatedVideoModel() : null
 
                 Rectangle {
                     id: relatedEntryCard
@@ -1217,7 +1217,7 @@ Rectangle {
                         onClicked: {
                             if (!controller || controller.videoBvid !== detailPage.bvid) return
                             detailPage.relatedExpanded = true
-                            controller.fetchRelatedVideos()
+                            controller.season.fetchRelatedVideos()
                         }
                     }
                 }
@@ -1654,7 +1654,7 @@ Rectangle {
                                 id: noSubArea
                                 anchors.fill: parent
                                 onClicked: {
-                                    if (controller) controller.clearSelectedSubtitle();
+                                    if (controller) controller.playback.clearSelectedSubtitle();
                                     detailPage.subtitlePickerVisible = false;
                                 }
                             }
@@ -1694,7 +1694,7 @@ Rectangle {
                             onClicked: {
                                 if (controller) {
                                     var label = modelData.lan_doc || modelData.lan || ("字幕" + (index + 1));
-                                    controller.selectSubtitle(modelData.id || 0, label);
+                                    controller.playback.selectSubtitle(modelData.id || 0, label);
                                 }
                                 detailPage.subtitlePickerVisible = false;
                             }
@@ -1830,7 +1830,7 @@ Rectangle {
                                 id: coinChooseArea
                                 anchors.fill: parent
                                 onClicked: {
-                                    if (controller) controller.addCoin(modelData, detailPage.coinSelectLike)
+                                    if (controller) controller.favorite.addCoin(modelData, detailPage.coinSelectLike)
                                     detailPage.coinPickerVisible = false
                                 }
                             }
@@ -1894,7 +1894,7 @@ Rectangle {
                     id: favoriteFolderListDialog
                     width: parent.width
                     height: parent.height - 30
-                    model: controller ? controller.favoriteFolderModel() : null
+                    model: controller ? controller.favorite.favoriteFolderModel() : null
                     clip: true
                     spacing: 4
                     z: 3
@@ -1924,7 +1924,7 @@ Rectangle {
                             id: favChooseArea
                             anchors.fill: parent
                             onClicked: {
-                                if (controller) controller.toggleFavoriteTo(model.id)
+                                if (controller) controller.favorite.toggleFavoriteTo(model.id)
                                 detailPage.favoritePickerVisible = false
                             }
                         }
@@ -1992,7 +1992,7 @@ Rectangle {
         MouseArea {
             anchors.fill: parent
             onClicked: {
-                if (controller) controller.cancelDownload();
+                if (controller) controller.playback.cancelDownload();
             }
         }
     }
@@ -2109,7 +2109,7 @@ Rectangle {
         var nowMs = Date.now();
         if (!force && (nowMs - _lastRefreshMs) < 400) return;
         _lastRefreshMs = nowMs;
-        controller.fetchVideoDetail(bvid);
+        controller.video.fetchVideoDetail(bvid);
     }
 
     Component.onCompleted: {
@@ -2149,25 +2149,25 @@ Rectangle {
         function onAcceptQualitiesChanged() { detailPage.updateQualities(); }
         function onVideoDetailChanged() {
             if (controller && controller.videoCid > 0 && controller.videoBvid === detailPage.bvid) {
-                controller.fetchAcceptQualities(detailPage.selectedQuality)
-                controller.fetchFavoriteStatus()
-                controller.fetchCoinStatus()
-                controller.fetchLikeStatus()
-                controller.fetchWatchLaterStatus()
+                controller.playback.fetchAcceptQualities(detailPage.selectedQuality)
+                controller.favorite.fetchFavoriteStatus()
+                controller.favorite.fetchCoinStatus()
+                controller.favorite.fetchLikeStatus()
+                controller.favorite.fetchWatchLaterStatus()
                 detailPage.reportRecentViewForCurrentSession()
             }
 
             if (detailPage._needRestorePartAfterRefresh && !detailPage._restoringPartNow) {
                 detailPage._needRestorePartAfterRefresh = false
 
-                var partModel = controller ? controller.videoPartModel() : null
+                var partModel = controller ? controller.video.videoPartModel() : null
                 var canRestore = partModel && partModel.count > detailPage.savedPartIndex
 
                 if (canRestore && detailPage.savedPartIndex > 0
                         && (controller.videoCid || 0) !== (detailPage.savedPartCid || 0)) {
                     detailPage._restoringPartNow = true
                     Qt.callLater(function() {
-                        controller.playVideoPart(detailPage.savedPartIndex)
+                        controller.up.playVideoPart(detailPage.savedPartIndex)
                         Qt.callLater(function() {
                             detailPage._restoringPartNow = false
                             detailPage.restorePartListPosition()
@@ -2180,10 +2180,10 @@ Rectangle {
         }
         function onLoginStateChanged() {
             if (controller && controller.loggedIn && controller.videoCid > 0) {
-                controller.fetchFavoriteStatus()
-                controller.fetchCoinStatus()
-                controller.fetchLikeStatus()
-                controller.fetchWatchLaterStatus()
+                controller.favorite.fetchFavoriteStatus()
+                controller.favorite.fetchCoinStatus()
+                controller.favorite.fetchLikeStatus()
+                controller.favorite.fetchWatchLaterStatus()
             }
         }
     }

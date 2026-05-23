@@ -43,6 +43,18 @@ class BiliSeasonModule;
 class BiliController : public QObject {
   Q_OBJECT
 
+  Q_PROPERTY(QObject *feed READ feed CONSTANT)
+  Q_PROPERTY(QObject *comments READ comments CONSTANT)
+  Q_PROPERTY(QObject *history READ history CONSTANT)
+  Q_PROPERTY(QObject *search READ search CONSTANT)
+  Q_PROPERTY(QObject *favorite READ favorite CONSTANT)
+  Q_PROPERTY(QObject *auth READ auth CONSTANT)
+  Q_PROPERTY(QObject *video READ video CONSTANT)
+  Q_PROPERTY(QObject *playback READ playback CONSTANT)
+  Q_PROPERTY(QObject *up READ up CONSTANT)
+  Q_PROPERTY(QObject *season READ season CONSTANT)
+  Q_PROPERTY(QObject *viewer READ viewer CONSTANT)
+
   // 视频详情
   Q_PROPERTY(QString videoTitle READ videoTitle NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoDesc READ videoDesc NOTIFY videoDetailChanged)
@@ -138,7 +150,6 @@ class BiliController : public QObject {
   // 全局错误
   Q_PROPERTY(QString globalError READ globalError NOTIFY globalErrorChanged)
   Q_PROPERTY(bool isLoading READ isLoading NOTIFY isLoadingChanged)
-  Q_PROPERTY(bool replyHasMore READ replyHasMore NOTIFY replyHasMoreChanged)
 
 public:
   explicit BiliController(QObject *parent = nullptr);
@@ -228,123 +239,43 @@ public:
   int seasonVideoTotal() const { return m_seasonVideoTotal; }
   QString globalError() const;
   bool isLoading() const;
-  bool replyHasMore() const { return m_commentReplyHasMore; }
+  QObject *feed() const;
+  QObject *comments() const;
+  QObject *history() const;
+  QObject *search() const;
+  QObject *favorite() const;
+  BiliFavoriteModule *favoriteModule() const { return m_favoriteModule.get(); }
+  QObject *auth() const;
+  QObject *video() const;
+  QObject *playback() const;
+  QObject *up() const;
+  QObject *season() const;
+  QObject *viewer() const;
+  BiliNetwork *network() const { return m_network; }
+  VideoListModel *popularListModel() const { return m_popularModel; }
+  VideoListModel *rankingListModel() const { return m_rankingModel; }
+  HotSearchModel *hotSearchListModel() const { return m_hotSearchModel; }
+  SearchResultModel *searchListModel() const { return m_searchModel; }
+  QStringListModel *searchHistoryListModel() const { return m_searchHistoryModel; }
+  CommentListModel *commentListModel() const { return m_commentModel; }
+  CommentReplyListModel *commentReplyListModel() const { return m_commentReplyModel; }
+  VideoListModel *recentHistoryListModel() const { return m_recentHistoryModel; }
+  VideoListModel *watchLaterListModel() const { return m_watchLaterModel; }
+  void clearLocalLoginState();
+  void setIsLoading(bool loading);
+  void apiGet(const QString &path, const QMap<QString, QString> &params,
+              std::function<void(const QJsonObject &)> onSuccess,
+              std::function<void(int, const QString &)> onError = nullptr,
+              bool withLoading = false);
 
   // ====== Q_INVOKABLE API 方法 ======
 
-  Q_INVOKABLE void fetchPopular(int page = 1, int pageSize = 10);
-  Q_INVOKABLE void fetchMorePopular();
-  Q_INVOKABLE void fetchRanking(int rid = 0);
-  Q_INVOKABLE void fetchHotSearch();
-  Q_INVOKABLE void search(const QString &keyword, int page = 1);
-  Q_INVOKABLE void searchMore();
-  Q_INVOKABLE void fetchVideoDetail(const QString &bvid);
-  Q_INVOKABLE void fetchRelatedVideos();
-  Q_INVOKABLE void reportCurrentVideoAsRecentViewIfNeeded();
-  Q_INVOKABLE void fetchPlayUrl(int quality = 64);
-  // 仅获取可用清晰度列表（不触发播放）
-  Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
-  Q_INVOKABLE void fetchComments(int page = 1);
-  Q_INVOKABLE void fetchCommentReplies(qint64 rootRpid);
-  Q_INVOKABLE void fetchMoreCommentReplies();
-  // 收藏夹
-  Q_INVOKABLE void fetchFavoriteFolders();
-  Q_INVOKABLE void fetchFavoriteItems(qint64 mediaId, int page = 1, int pageSize = 20);
-  Q_INVOKABLE void fetchMoreFavoriteItems();
-  // 收藏/投币/点赞状态
-  Q_INVOKABLE void fetchFavoriteStatus();
-  Q_INVOKABLE void fetchCoinStatus();
-  Q_INVOKABLE void fetchLikeStatus();
-  Q_INVOKABLE void fetchWatchLaterStatus();
-  Q_INVOKABLE void addCoin(int multiply = 1, bool selectLike = false);
-  Q_INVOKABLE void toggleLike();
-  Q_INVOKABLE void toggleFavorite();
-  Q_INVOKABLE void toggleFavoriteTo(qint64 mediaId);
-  Q_INVOKABLE void toggleWatchLater();
-  // 外部播放器
-  Q_INVOKABLE bool externalPlayerRunning() const;
-  Q_INVOKABLE void launchExternalPlayer(const QString &path);
-  Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
-  Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
-  Q_INVOKABLE void launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath);
-  Q_INVOKABLE void fetchSubtitleList();
-  Q_INVOKABLE void selectSubtitle(qint64 subtitleId, const QString &label);
-  Q_INVOKABLE void clearSelectedSubtitle();
-  Q_INVOKABLE void launchExternalPlayerCurrentSelection();
-  Q_INVOKABLE void setSubtitleFontSize(int value);
-  Q_INVOKABLE void setSubtitleMarginV(int value);
-  Q_INVOKABLE void setSubtitleSpacing(double value);
-  Q_INVOKABLE void setSubtitleWeight(int value);
-  Q_INVOKABLE void setSubtitleColorPreset(const QString &value);
-  Q_INVOKABLE void setSubtitleOutlineEnabled(bool enabled);
-  Q_INVOKABLE void setSubtitleOutlineWidth(int value);
-  Q_INVOKABLE void setSubtitleBackgroundEnabled(bool enabled);
-  Q_INVOKABLE void setSubtitleBackgroundOpacity(double value);
-  Q_INVOKABLE void fetchMoreComments();
-  Q_INVOKABLE void generateQrcode();
-  Q_INVOKABLE void pollQrcode();
-  // 短信登录：启动本地 bili-login（8666端口）并轮询 /pull
-  Q_INVOKABLE void startSmsLogin();
-  Q_INVOKABLE void stopSmsLogin();
-  Q_INVOKABLE void pollSmsLogin();
-  Q_INVOKABLE bool smsLoginRunning() const { return m_smsPolling; }
-  Q_INVOKABLE QString smsLoginLastError() const { return m_smsLastError; }
-  Q_INVOKABLE void checkLoginStatus();
-  Q_INVOKABLE void logout();
+  // 短信登录与二维码登录通过 controller.auth.* 暴露
+
   Q_INVOKABLE void clearError();
-  Q_INVOKABLE void clearSearchHistory();
-  Q_INVOKABLE void removeSearchHistory(const QString &keyword);
-  // 评论/动态远程图片转本地临时文件，供系统 FileManagerImageViewer 打开
-  Q_INVOKABLE void prepareImageForViewer(const QString &url);
 
   // 取消所有网络请求
   Q_INVOKABLE void cancelAll();
-
-  // 下载并播放
-  Q_INVOKABLE void downloadAndPlay(int quality = 64);
-  Q_INVOKABLE void cancelDownload();
-  Q_INVOKABLE void cleanupTempVideo();
-  Q_INVOKABLE void downloadVideoToDisk(int quality);
-  Q_INVOKABLE void playVideoPart(int index);
-  Q_INVOKABLE void restartGoServer();
-
-  // 获取模型（供 QML 使用）
-  Q_INVOKABLE QObject *popularModel();
-  Q_INVOKABLE QObject *rankingModel();
-  Q_INVOKABLE QObject *searchModel();
-  Q_INVOKABLE QObject *commentModel();
-  Q_INVOKABLE QObject *commentReplyModel();
-  Q_INVOKABLE QObject *hotSearchModel();
-  Q_INVOKABLE QObject *videoPartModel();
-  Q_INVOKABLE QObject *searchHistoryModel();
-  Q_INVOKABLE QObject *favoriteFolderModel();
-  Q_INVOKABLE QObject *favoriteItemModel();
-  Q_INVOKABLE QObject *recentHistoryModel();
-  Q_INVOKABLE QObject *watchLaterModel();
-  Q_INVOKABLE QObject *upVideoModel();
-  Q_INVOKABLE QObject *seasonVideoModel();
-  Q_INVOKABLE QObject *relatedVideoModel();
-  Q_INVOKABLE void fetchRecentHistory();
-  Q_INVOKABLE void fetchMoreRecentHistory();
-  Q_INVOKABLE void fetchWatchLater(int page = 1, int pageSize = 20);
-  Q_INVOKABLE void fetchMoreWatchLater();
-  Q_INVOKABLE void addToWatchLater();
-  Q_INVOKABLE void refreshUserInfo();
-
-  // UP 主主页
-  Q_INVOKABLE void fetchUpInfo(qint64 mid);
-  Q_INVOKABLE void fetchUpVideos(qint64 mid, int page = 1, int pageSize = 20);
-  Q_INVOKABLE void fetchMoreUpVideos();
-  Q_INVOKABLE void toggleUpFollow();
-  // UP 主合集（含系列）
-  Q_INVOKABLE QObject *upSeasonModel();
-  Q_INVOKABLE void fetchUpSeasons(qint64 mid);
-  // 选择合集：seasonId=0 表示恢复为“视频”（所有投稿）；name 仅用于显示
-  Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false, int total = 0);
-  Q_INVOKABLE void fetchUpSeasonVideos(int page = 1, int pageSize = 30);
-  Q_INVOKABLE void fetchMoreUpSeasonVideos();
-  Q_INVOKABLE void fetchSeasonVideos(qint64 mid, qint64 seasonId, int page = 1, int pageSize = 30);
-  Q_INVOKABLE void fetchMoreSeasonVideos();
 
 signals:
   void videoDetailChanged();
@@ -359,7 +290,6 @@ signals:
   void qrcodeChanged();
   void globalErrorChanged();
   void isLoadingChanged();
-  void replyHasMoreChanged();
   void upUserChanged();
   void upFollowChanged();
   void upVideoTotalChanged();
@@ -378,28 +308,19 @@ signals:
   void commentImageReadyForViewer(const QString &localPath);
 
 private:
-  friend class BiliCommentModule;
   friend class BiliFavoriteModule;
-  friend class BiliFeedModule;
   friend class BiliPlaybackModule;
-  friend class BiliSearchModule;
   friend class BiliUpModule;
   friend class BiliVideoModule;
-  friend class BiliViewerModule;
   friend class BiliLoginModule;
-  friend class BiliHistoryModule;
   friend class BiliSeasonModule;
 
   void fetchUserInfo(qint64 mid);
-  void clearLocalLoginState();
   void setGlobalError(const QString &error);
-  void setIsLoading(bool loading);
   void setUpVideoTotal(int total);
   void setSeasonVideoTotal(int total);
   void loadLoginStatus();
   void saveLoginStatus();
-  void loadSearchHistory();
-  void saveSearchHistory();
 
   // 安全辅助：检查 this 是否仍然有效的回调包装
   template <typename Func> auto safeCallback(Func &&func);
@@ -484,14 +405,6 @@ private:
   QString m_userVipLabel;
   bool m_userIsVip;
 
-  int m_popularPage;
-  int m_searchPage;
-  int m_commentPage;
-  int m_commentReplyPage = 1;
-  bool m_commentReplyHasMore = false;
-  qint64 m_currentCommentRootRpid = 0;
-  QString m_searchKeyword;
-
   QString m_globalError;
   bool m_isLoading;
 
@@ -506,7 +419,6 @@ private:
   HotSearchModel *m_hotSearchModel;
   VideoPartListModel *m_videoPartModel;
   QStringListModel *m_searchHistoryModel;
-  QStringList m_searchHistory;
 
   FavoriteFolderModel *m_favoriteFolderModel;
   VideoListModel *m_favoriteItemModel;
@@ -516,12 +428,6 @@ private:
   VideoListModel *m_seasonVideoModel;
   VideoListModel *m_relatedVideoModel;
   UpSeasonListModel *m_upSeasonModel = nullptr;
-  int m_favoritePage;
-  qint64 m_currentFavoriteId;
-  int m_recentHistoryMax = 0;
-  int m_recentHistoryViewAt = 0;
-  int m_watchLaterPage = 1;
-  bool m_watchLaterHasMore = true;
 
   // UP 主主页数据
   qint64 m_upUserMid = 0;
@@ -555,10 +461,6 @@ private:
   QString m_relatedVideoLoadingBvid;
   QString m_playUrlLoadingKey;
   QString m_acceptQualitiesLoadingKey;
-  qint64 m_favoriteStatusLoadingAid = 0;
-  qint64 m_coinStatusLoadingAid = 0;
-  qint64 m_likeStatusLoadingAid = 0;
-  qint64 m_watchLaterStatusLoadingAid = 0;
 
   struct DashResult {
     QString videoUrl;
@@ -570,10 +472,6 @@ private:
   DashResult pickDashUrls(const QJsonObject &data, int requestedQuality) const;
   QString pickMp4Url(const QJsonObject &data) const;
 
-  void apiGet(const QString &path, const QMap<QString, QString> &params,
-              std::function<void(const QJsonObject &)> onSuccess,
-              std::function<void(int, const QString &)> onError = nullptr,
-              bool withLoading = false);
   void startDownloadTask(const QString &videoUrl, const QString &audioUrl,
                          const QString &videoPath, const QString &audioPath,
                          int finalQuality, bool playAfter,

@@ -50,7 +50,7 @@ Rectangle {
     function openFavorites() {
         favView = 1
         // 延后到下一帧触发，避免切换视图瞬间阻塞 UI
-        if (controller) Qt.callLater(function() { controller.fetchFavoriteFolders() })
+        if (controller) Qt.callLater(function() { controller.favorite.fetchFavoriteFolders() })
     }
 
     function openFavoriteDetail(fid, title) {
@@ -58,13 +58,13 @@ Rectangle {
         currentFavTitle = title
         favView = 2
         // 延后到下一帧触发，避免进入详情时 UI 卡顿
-        if (controller) Qt.callLater(function() { controller.fetchFavoriteItems(fid, 1, 20) })
+        if (controller) Qt.callLater(function() { controller.favorite.fetchFavoriteItems(fid, 1, 20) })
     }
 
     function openLoginPanel() {
         loginPanelVisible = true
         if (controller && controller.qrcodeUrl === "") {
-            controller.generateQrcode()
+            controller.auth.generateQrcode()
         }
     }
 
@@ -114,7 +114,7 @@ Rectangle {
 
     onVisibleChanged: {
         if (visible && controller && controller.loggedIn) {
-            controller.refreshUserInfo();
+            controller.auth.refreshUserInfo();
             Qt.callLater(function() {
                 if (favView === 3 && recentLoader.item && recentLoader.item.restorePosition) {
                     recentLoader.item.restorePosition()
@@ -519,7 +519,7 @@ Rectangle {
                         anchors.fill: parent
                         onClicked: {
                             if (controller && !controller.qrcodeUrl) {
-                                controller.generateQrcode();
+                                controller.auth.generateQrcode();
                             }
                         }
                     }
@@ -701,7 +701,7 @@ Rectangle {
                         id: refreshArea
                         anchors.fill: parent
                         onClicked: {
-                            if (controller) controller.generateQrcode();
+                            if (controller) controller.auth.generateQrcode();
                         }
                     }
                 }
@@ -716,7 +716,7 @@ Rectangle {
             running: controller
             ? (loginArea.visible && controller.qrcodeUrl !== "" && !controller.loggedIn) : false
             onTriggered: {
-                if (controller) controller.pollQrcode();
+                if (controller) controller.auth.pollQrcode();
             }
         }
     }
@@ -1088,7 +1088,7 @@ Rectangle {
                                     anchors.fill: parent
                                     onClicked: {
                                         favView = 3
-                                        if (controller) Qt.callLater(function() { controller.fetchRecentHistory() })
+                                        if (controller) Qt.callLater(function() { controller.history.fetchRecentHistory() })
                                     }
                                 }
                             }
@@ -1153,7 +1153,7 @@ Rectangle {
                                             watchLaterLoader.item.resetPosition()
                                         }
                                         favView = 6
-                                        if (controller) Qt.callLater(function() { controller.fetchWatchLater(1, 20) })
+                                        if (controller) Qt.callLater(function() { controller.history.fetchWatchLater(1, 20) })
                                     }
                                 }
                             }
@@ -1245,7 +1245,7 @@ Rectangle {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: {
-                                if (controller) controller.logout();
+                                if (controller) controller.auth.logout();
                             }
                             onPressed: parent.color = Theme.withAlpha(Theme.error, 0.1)
                             onReleased: parent.color = "transparent"
@@ -1273,7 +1273,7 @@ Rectangle {
                 id: favList
                 anchors.fill: parent
                 anchors.margins: Theme.spacingSmall
-                model: controller ? controller.favoriteFolderModel() : null
+                model: controller ? controller.favorite.favoriteFolderModel() : null
                 spacing: Theme.spacingSmall
                 clip: true
 
@@ -1385,7 +1385,7 @@ Rectangle {
                             id: recentList
                             anchors.fill: parent
                             anchors.margins: Theme.spacingSmall
-                            model: controller ? controller.recentHistoryModel() : null
+                            model: controller ? controller.history.recentHistoryModel() : null
                             orientation: ListView.Horizontal
                             spacing: Theme.spacingMedium
                             clip: true
@@ -1400,7 +1400,7 @@ Rectangle {
                                 if (!atXEnd || !controller || _loadingMore) return
                                 _loadingMore = true
                                 Qt.callLater(function() {
-                                    controller.fetchMoreRecentHistory()
+                                    controller.history.fetchMoreRecentHistory()
                                     _loadingMore = false
                                 })
                             }
@@ -1477,7 +1477,7 @@ Rectangle {
                         }
 
                         Connections {
-                            target: controller ? controller.watchLaterModel() : null
+                            target: controller ? controller.history.watchLaterModel() : null
                             function onLoadingChanged() {
                                 if (!target) return
                                 if (userPage.restoreWatchLaterOnShow) return
@@ -1494,7 +1494,7 @@ Rectangle {
                             id: watchLaterList
                             anchors.fill: parent
                             anchors.margins: Theme.spacingSmall
-                            model: controller ? controller.watchLaterModel() : null
+                            model: controller ? controller.history.watchLaterModel() : null
                             orientation: ListView.Horizontal
                             spacing: Theme.spacingMedium
                             clip: true
@@ -1514,7 +1514,7 @@ Rectangle {
                                 if (!atXEnd || !controller || _loadingMore) return
                                 _loadingMore = true
                                 Qt.callLater(function() {
-                                    controller.fetchMoreWatchLater()
+                                    controller.history.fetchMoreWatchLater()
                                     _loadingMore = false
                                 })
                             }
@@ -1605,7 +1605,7 @@ Rectangle {
                             id: favItems
                             anchors.fill: parent
                             anchors.margins: Theme.spacingSmall
-                            model: controller ? controller.favoriteItemModel() : null
+                            model: controller ? controller.favorite.favoriteItemModel() : null
                             orientation: ListView.Horizontal
                             spacing: Theme.spacingMedium
                             clip: true
@@ -1631,7 +1631,7 @@ Rectangle {
                                 if (!atXEnd || !controller || _loadingMore) return
                                 _loadingMore = true
                                 Qt.callLater(function() {
-                                    controller.fetchMoreFavoriteItems()
+                                    controller.favorite.fetchMoreFavoriteItems()
                                     _loadingMore = false
                                 })
                             }

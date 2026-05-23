@@ -37,26 +37,30 @@ extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
 BiliFeedModule::BiliFeedModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliFeedModule::popularModel() { return m_controller->popularListModel(); }
+QObject *BiliFeedModule::rankingModel() { return m_controller->rankingListModel(); }
+QObject *BiliFeedModule::hotSearchModel() { return m_controller->hotSearchListModel(); }
 
 // ====== API: 热门视频 ======
 
 void BiliFeedModule::fetchPopular(int page, int pageSize) {
   std::cout << "[BiliCtrl] fetchPopular: page=" << page << std::endl;
 
-  if (m_controller->m_popularModel->loading())
+  if (m_controller->popularListModel()->loading())
     return;
 
   // 参数校验
   page = qBound(1, page, 1000);
   pageSize = qBound(1, pageSize, 30);
 
-  m_controller->m_popularPage = page;
+  m_popularPage = page;
   if (page == 1) {
-    m_controller->m_popularModel->clear();
+    m_controller->popularListModel()->clear();
   }
-  m_controller->m_popularModel->setLoading(true);
-  m_controller->m_popularModel->setErrorMessage("");
+  m_controller->popularListModel()->setLoading(true);
+  m_controller->popularListModel()->setErrorMessage("");
   m_controller->setIsLoading(true);
 
   QString apiPath = "/recommend";
@@ -67,9 +71,10 @@ void BiliFeedModule::fetchPopular(int page, int pageSize) {
   paramsRecommend["fresh_type"] = (page <= 1) ? "3" : "4";
 
   QPointer<BiliController> self(m_controller);
+  VideoListModel *popularModel = m_controller->popularListModel();
 
-  auto onSuccess = [self](const QJsonObject &data) {
-    if (!self)
+  auto onSuccess = [self, popularModel, page](const QJsonObject &data) {
+    if (!self || !popularModel)
       return;
 
     QJsonArray list = data.value("list").toArray();
@@ -90,53 +95,53 @@ void BiliFeedModule::fetchPopular(int page, int pageSize) {
       }
     }
 
-    self->m_popularModel->appendItems(items);
+    popularModel->appendItems(items);
     // 推荐流可能没有 no_more 字段，按是否有数据判断
-    self->m_popularModel->setHasMore(noMore ? false : !items.isEmpty());
-    self->m_popularModel->setLoading(false);
+    popularModel->setHasMore(noMore ? false : !items.isEmpty());
+    popularModel->setLoading(false);
     self->setIsLoading(false);
 
-    if (items.isEmpty() && self->m_popularPage == 1) {
-      self->m_popularModel->setErrorMessage("暂无推荐视频");
+    if (items.isEmpty() && page == 1) {
+      popularModel->setErrorMessage("暂无推荐视频");
     }
   };
 
-  auto onErrorFinal = [self](int code, const QString &msg) {
-    if (!self)
+  auto onErrorFinal = [self, popularModel](int code, const QString &msg) {
+    if (!self || !popularModel)
       return;
 
     if (code == -101 || code == -401 || code == 401) {
       self->clearLocalLoginState();
     }
 
-    self->m_popularModel->setLoading(false);
-    self->m_popularModel->setErrorMessage(msg);
+    popularModel->setLoading(false);
+    popularModel->setErrorMessage(msg);
     self->setIsLoading(false);
     emit self->toastMessage(QString("加载失败：%1").arg(msg));
   };
 
-  m_controller->m_network->get(apiPath, paramsRecommend, onSuccess, onErrorFinal);
+  m_controller->network()->get(apiPath, paramsRecommend, onSuccess, onErrorFinal);
 }
 
 void BiliFeedModule::fetchMorePopular() {
-  if (!m_controller->m_popularModel->hasMore() || m_controller->m_popularModel->loading())
+  if (!m_controller->popularListModel()->hasMore() || m_controller->popularListModel()->loading())
     return;
-  if (m_controller->m_popularModel->count() <= 0)
+  if (m_controller->popularListModel()->count() <= 0)
     return;
-  m_controller->m_popularPage++;
-  fetchPopular(m_controller->m_popularPage, 10);
+  m_popularPage++;
+  fetchPopular(m_popularPage, 10);
 }
 
 // ====== API: 排行榜 ======
 
 void BiliFeedModule::fetchRanking(int rid) {
-  if (m_controller->m_rankingModel->loading())
+  if (m_controller->rankingListModel()->loading())
     return;
 
   rid = qBound(0, rid, 9999);
 
-  m_controller->m_rankingModel->clear();
-  m_controller->m_rankingModel->setLoading(true);
+  m_controller->rankingListModel()->clear();
+  m_controller->rankingListModel()->setLoading(true);
   m_controller->setIsLoading(true);
 
   QMap<QString, QString> params;
@@ -144,11 +149,12 @@ void BiliFeedModule::fetchRanking(int rid) {
   params["type"] = "all";
 
   QPointer<BiliController> self(m_controller);
+  VideoListModel *rankingModel = m_controller->rankingListModel();
 
-  m_controller->m_network->get(
+  m_controller->network()->get(
       "/ranking", params,
-      [self](const QJsonObject &data) {
-        if (!self)
+      [self, rankingModel](const QJsonObject &data) {
+        if (!self || !rankingModel)
           return;
 
         QJsonArray list = data.value("list").toArray();
@@ -160,18 +166,18 @@ void BiliFeedModule::fetchRanking(int rid) {
           }
         }
 
-        self->m_rankingModel->appendItems(items);
-        self->m_rankingModel->setHasMore(false);
-        self->m_rankingModel->setLoading(false);
+        rankingModel->appendItems(items);
+        rankingModel->setHasMore(false);
+        rankingModel->setLoading(false);
         self->setIsLoading(false);
       },
-      [self](int code, const QString &msg) {
+      [self, rankingModel](int code, const QString &msg) {
         Q_UNUSED(code)
-        if (!self)
+        if (!self || !rankingModel)
           return;
 
-        self->m_rankingModel->setLoading(false);
-        self->m_rankingModel->setErrorMessage(msg);
+        rankingModel->setLoading(false);
+        rankingModel->setErrorMessage(msg);
         self->setIsLoading(false);
         emit self->toastMessage(QString("排行榜加载失败：%1").arg(msg));
       });
@@ -180,20 +186,21 @@ void BiliFeedModule::fetchRanking(int rid) {
 // ====== API: 热搜 ======
 
 void BiliFeedModule::fetchHotSearch() {
-  if (m_controller->m_hotSearchModel->loading())
+  if (m_controller->hotSearchListModel()->loading())
     return;
 
-  m_controller->m_hotSearchModel->setLoading(true);
+  m_controller->hotSearchListModel()->setLoading(true);
 
   QMap<QString, QString> params;
   params["limit"] = "10";
 
   QPointer<BiliController> self(m_controller);
+  HotSearchModel *hotSearchModel = m_controller->hotSearchListModel();
 
-  m_controller->m_network->get(
+  m_controller->network()->get(
       "/hot/search", params,
-      [self](const QJsonObject &data) {
-        if (!self)
+      [self, hotSearchModel](const QJsonObject &data) {
+        if (!self || !hotSearchModel)
           return;
 
         QJsonObject trending = data.value("trending").toObject();
@@ -213,15 +220,15 @@ void BiliFeedModule::fetchHotSearch() {
           items.append(item);
         }
 
-        self->m_hotSearchModel->setItems(items);
-        self->m_hotSearchModel->setLoading(false);
+        hotSearchModel->setItems(items);
+        hotSearchModel->setLoading(false);
       },
-      [self](int code, const QString &msg) {
+      [self, hotSearchModel](int code, const QString &msg) {
         Q_UNUSED(code)
-        if (!self)
+        if (!self || !hotSearchModel)
           return;
 
-        self->m_hotSearchModel->setLoading(false);
+        hotSearchModel->setLoading(false);
         emit self->toastMessage(QString("热搜加载失败：%1").arg(msg));
       });
 }

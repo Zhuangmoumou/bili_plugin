@@ -59,7 +59,7 @@ Rectangle {
     function requestInitialComments() {
         if (!controller || initialCommentsRequested) return
         initialCommentsRequested = true
-        controller.fetchComments()
+        controller.comments.fetchComments()
         commentsModelAttached = true
     }
 
@@ -74,7 +74,7 @@ Rectangle {
         selectedComment = commentObj
         mainCommentContentY = commentList.contentY
         viewMode = 1
-        if (controller) controller.fetchCommentReplies(commentObj.rpid)
+        if (controller) controller.comments.fetchCommentReplies(commentObj.rpid)
     }
 
     function commentImageSource(url) {
@@ -116,7 +116,7 @@ Rectangle {
         if (!url) return
         // 系统 FileManagerImageViewer 只能打开本地文件；让 C++ 先下载到 /tmp 后发回本地路径。
         if (controller && typeof imageViewer !== "undefined" && imageViewer) {
-            controller.prepareImageForViewer(url)
+            controller.viewer.prepareImageForViewer(url)
             return
         }
         // 兜底：宿主未注入 imageViewer 时使用旧预览。
@@ -153,26 +153,26 @@ Rectangle {
 
     function requestMoreCommentsIfNeeded() {
         if (!controller || viewMode !== 0) return
-        var cm = controller.commentModel()
+        var cm = controller.comments.commentModel()
         if (!cm || cm.loading || autoLoadingComments || commentList.count <= 0) return
         if (commentList.contentHeight <= commentList.height) return
         autoLoadingComments = true
-        controller.fetchMoreComments()
+        controller.comments.fetchMoreComments()
     }
 
     function requestMoreRepliesIfNeeded() {
-        if (!controller || viewMode !== 1 || !controller.replyHasMore) return
-        var rm = controller.commentReplyModel()
+        if (!controller || viewMode !== 1 || !controller.comments.replyHasMore) return
+        var rm = controller.comments.commentReplyModel()
         if (!rm || rm.loading || autoLoadingReplies || rm.count <= 0) return
         if (replyDetailFlick.contentHeight <= replyDetailFlick.height) return
         autoLoadingReplies = true
-        controller.fetchMoreCommentReplies()
+        controller.comments.fetchMoreCommentReplies()
     }
 
     function isAnyCommentLoading() {
         if (!controller) return false
-        var cm = controller.commentModel()
-        var rm = controller.commentReplyModel()
+        var cm = controller.comments.commentModel()
+        var rm = controller.comments.commentReplyModel()
         return (cm && cm.loading) || (rm && rm.loading)
     }
 
@@ -278,10 +278,10 @@ Rectangle {
                 anchors.centerIn: parent
                 text: {
                     if (viewMode === 1) {
-                        var rm = controller ? controller.commentReplyModel() : null
+                        var rm = controller ? controller.comments.commentReplyModel() : null
                         return (rm ? rm.count : 0) + " 条回复"
                     }
-                    var cm = controller ? controller.commentModel() : null
+                    var cm = controller ? controller.comments.commentModel() : null
                     var total = cm ? cm.totalCount : 0
                     return (total > 0 ? total : 0) + " 条评论"
                 }
@@ -319,7 +319,7 @@ Rectangle {
         anchors.leftMargin: 6
         anchors.rightMargin: 6
         anchors.bottomMargin: 4
-        model: controller && commentsPage.commentsModelAttached ? controller.commentModel() : null
+        model: controller && commentsPage.commentsModelAttached ? controller.comments.commentModel() : null
         spacing: 5
         clip: true
         visible: viewMode === 0
@@ -622,11 +622,11 @@ Rectangle {
                 label: commentLoadBtnBusy ? "加载中..." : "更多评论"
                 active: commentLoadBtnBusy
                 property bool commentLoadBtnBusy: {
-                    var cm = controller ? controller.commentModel() : null
+                    var cm = controller ? controller.comments.commentModel() : null
                     return cm && cm.loading
                 }
                 onClicked: {
-                    if (!commentLoadBtnBusy && controller) controller.fetchMoreComments()
+                    if (!commentLoadBtnBusy && controller) controller.comments.fetchMoreComments()
                 }
             }
         }
@@ -671,7 +671,7 @@ Rectangle {
             boundsBehavior: Flickable.DragOverBounds
             cacheBuffer: 60
             spacing: 5
-            model: controller ? controller.commentReplyModel() : null
+            model: controller ? controller.comments.commentReplyModel() : null
 
             onMovementStarted: commentsPage.deferCommentImages()
             onMovementEnded: {
@@ -882,7 +882,7 @@ Rectangle {
                         }
 
                         Text {
-                            text: controller && controller.commentReplyModel() ? controller.commentReplyModel().count + " 条" : "0 条"
+                            text: controller && controller.comments.commentReplyModel() ? controller.comments.commentReplyModel().count + " 条" : "0 条"
                             color: _mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontTiny
@@ -1072,7 +1072,7 @@ Rectangle {
                 spacing: 5
 
                 Rectangle {
-                    visible: controller && controller.replyHasMore
+                    visible: controller && controller.comments.replyHasMore
                     width: parent.width
                     height: 30
                     radius: 10
@@ -1086,15 +1086,15 @@ Rectangle {
                         icon: replyLoadBtnBusy ? "⏳" : "↓"
                         label: replyLoadBtnBusy ? "加载中..." : "更多回复"
                         active: replyLoadBtnBusy
-                        property bool replyLoadBtnBusy: controller && controller.commentReplyModel() && controller.commentReplyModel().loading
+                        property bool replyLoadBtnBusy: controller && controller.comments.commentReplyModel() && controller.comments.commentReplyModel().loading
                         onClicked: {
-                            if (!replyLoadBtnBusy && controller) controller.fetchMoreCommentReplies()
+                            if (!replyLoadBtnBusy && controller) controller.comments.fetchMoreCommentReplies()
                         }
                     }
                 }
 
                 Text {
-                    visible: controller && controller.commentReplyModel() && controller.commentReplyModel().count === 0 && !commentsPage.isAnyCommentLoading()
+                    visible: controller && controller.comments.commentReplyModel() && controller.comments.commentReplyModel().count === 0 && !commentsPage.isAnyCommentLoading()
                     text: "这条评论还没有回复"
                     color: Theme.textTertiary
                     font.family: Theme.fontFamily
@@ -1190,7 +1190,7 @@ Rectangle {
 
     // ── 加载中（同 HomePage：可取消） ──
     Rectangle {
-        visible: commentsPage.isAnyCommentLoading() && ((viewMode === 0 && commentList.count === 0) || (viewMode === 1 && controller && controller.commentReplyModel() && controller.commentReplyModel().count === 0))
+        visible: commentsPage.isAnyCommentLoading() && ((viewMode === 0 && commentList.count === 0) || (viewMode === 1 && controller && controller.comments.commentReplyModel() && controller.comments.commentReplyModel().count === 0))
         anchors.centerIn: parent
         width: loadingRow.width + 16
         height: 22
@@ -1274,14 +1274,14 @@ Rectangle {
     }
 
     Connections {
-        target: controller ? controller.commentModel() : null
+        target: controller ? controller.comments.commentModel() : null
         function onLoadingChanged() {
             if (!target || !target.loading) commentsPage.autoLoadingComments = false
         }
     }
 
     Connections {
-        target: controller ? controller.commentReplyModel() : null
+        target: controller ? controller.comments.commentReplyModel() : null
         function onLoadingChanged() {
             if (!target || !target.loading) commentsPage.autoLoadingReplies = false
         }

@@ -37,7 +37,7 @@ extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
 BiliPlaybackModule::BiliPlaybackModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
 
 // ====== API: 播放地址 ======
 

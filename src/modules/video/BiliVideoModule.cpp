@@ -37,7 +37,9 @@ extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
 BiliVideoModule::BiliVideoModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliVideoModule::videoPartModel() { return m_controller->m_videoPartModel; }
 
 // ====== API: 视频详情 ======
 

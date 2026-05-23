@@ -26,7 +26,7 @@ QString biliViewerImageExtFromUrl(const QString &url) {
 }  // namespace
 
 BiliViewerModule::BiliViewerModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
 
 void BiliViewerModule::prepareImageForViewer(const QString &url) {
   QString u = url.trimmed();
@@ -73,7 +73,7 @@ void BiliViewerModule::prepareImageForViewer(const QString &url) {
   emit m_controller->toastMessage("正在打开图片...");
 
   QPointer<BiliController> self(m_controller);
-  m_controller->m_network->downloadImage(
+  m_controller->network()->downloadImage(
       qurl,
       [self, path](const QByteArray &data) {
         if (!self) return;

@@ -2,6 +2,7 @@
 
 #include "BiliController.h"
 #include "BiliNetwork.h"
+#include "modules/feed/BiliFeedModule.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -25,13 +26,28 @@ static const int SMS_LOGIN_PORT = 8666;
 static const char *SMS_PULL_PATH = "/pull";
 
 BiliLoginModule::BiliLoginModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+bool BiliLoginModule::smsLoginRunning() const {
+  return m_controller && m_controller->m_smsPolling;
+}
+
+QString BiliLoginModule::smsLoginLastError() const {
+  return m_controller ? m_controller->m_smsLastError : QString();
+}
+
+void BiliLoginModule::refreshUserInfo() {
+  BiliController *controller = m_controller;
+  if (!controller || !controller->m_loggedIn || controller->m_userId <= 0) return;
+  refreshLoginInfo();
+  fetchUserInfo(controller->m_userId);
+}
 
 void BiliLoginModule::generateQrcode() {
   BiliController *controller = m_controller;
   if (!controller) return;
 
-  controller->startSmsLogin();
+  startSmsLogin();
   controller->setIsLoading(true);
 
   QPointer<BiliController> self(controller);
@@ -92,7 +108,7 @@ void BiliLoginModule::pollQrcode() {
         switch (code) {
         case 0: {
           qDebug() << "[BiliController] QR login confirmed";
-          self->checkLoginStatus();
+          self->m_loginModule->checkLoginStatus();
           break;
         }
         case 86038:
@@ -160,7 +176,7 @@ void BiliLoginModule::startSmsLogin() {
     controller->m_smsPollTimer = new QTimer(controller);
     controller->m_smsPollTimer->setInterval(2000);
     controller->m_smsPollTimer->setSingleShot(false);
-    QObject::connect(controller->m_smsPollTimer, &QTimer::timeout, controller, &BiliController::pollSmsLogin);
+    QObject::connect(controller->m_smsPollTimer, &QTimer::timeout, this, &BiliLoginModule::pollSmsLogin);
   }
 
   controller->m_smsPolling = true;
@@ -260,7 +276,7 @@ void BiliLoginModule::pollSmsLogin() {
         return;
       }
 
-      self->stopSmsLogin();
+      if (self->m_loginModule) self->m_loginModule->stopSmsLogin();
 
       {
         QProcess pgrep;
@@ -274,7 +290,7 @@ void BiliLoginModule::pollSmsLogin() {
         }
       }
 
-      self->checkLoginStatus();
+      if (self->m_loginModule) self->m_loginModule->checkLoginStatus();
     });
   });
 }
@@ -328,7 +344,7 @@ void BiliLoginModule::checkLoginStatus() {
           emit self->toastMessage("登录成功！");
         }
 
-        self->fetchPopular(1, 10);
+        if (self->m_feedModule) self->m_feedModule->fetchPopular(1, 10);
         self->fetchUserInfo(self->m_userId);
       },
       [self](int code, const QString &msg) {
@@ -461,7 +477,7 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
           return;
         if (code == -101 || code == -401 || code == 401) {
           self->clearLocalLoginState();
-          self->fetchPopular(1, 10);
+          if (self->m_feedModule) self->m_feedModule->fetchPopular(1, 10);
           emit self->toastMessage("登录已过期，请重新登录");
           return;
         }
@@ -475,7 +491,7 @@ void BiliLoginModule::logout() {
 
   std::cout << "[BiliCtrl] Logout" << std::endl;
 
-  controller->stopSmsLogin();
+  stopSmsLogin();
 
   if (controller->m_network) {
     controller->m_network->cancelAllRequests();

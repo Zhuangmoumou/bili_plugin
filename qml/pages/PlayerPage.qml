@@ -28,14 +28,14 @@ Rectangle {
 
     function launchExternalPlayer(path) {
         if (!path || path.length === 0) return;
-        if (controller) controller.launchExternalPlayer(path);
+        if (controller) controller.playback.launchExternalPlayer(path);
     }
 
     Connections {
         target: controller
         function onPlaybackReady(url) {
             if (!launchRequested || !url || url.length === 0 || !controller) return
-            controller.launchExternalPlayerCurrentSelection()
+            controller.playback.launchExternalPlayerCurrentSelection()
         }
     }
 
@@ -67,7 +67,7 @@ Rectangle {
                 if (launchRequested && controller && !controller.isDownloading) {
                     if (controller.dashVideoUrl && controller.dashVideoUrl.length > 0 &&
                         controller.dashAudioUrl && controller.dashAudioUrl.length > 0) {
-                        controller.launchExternalPlayerCurrentSelection();
+                        controller.playback.launchExternalPlayerCurrentSelection();
                     }
                 }
             }
@@ -258,16 +258,16 @@ Rectangle {
                     anchors.fill: parent
                     onClicked: {
                         if (!controller) return;
-                        if (controller.externalPlayerRunning()) {
+                        if (controller.playback.externalPlayerRunning()) {
                             controller.toastMessage("播放器已在运行，请先关闭当前窗口");
                             return;
                         }
                         launchRequested = true;
                         controller.toastMessage("正在启动播放器...");
                         if (controller.playUrl && controller.playUrl.length > 0) {
-                            controller.launchExternalPlayerCurrentSelection();
+                            controller.playback.launchExternalPlayerCurrentSelection();
                         } else {
-                            controller.fetchPlayUrl(playQuality);
+                            controller.playback.fetchPlayUrl(playQuality);
                         }
                         hideControlsTimer.restart();
                     }
@@ -336,7 +336,7 @@ Rectangle {
             anchors.fill: parent
             onClicked: {
                 if (controller) {
-                    controller.cancelDownload();
+                    controller.playback.cancelDownload();
                 }
             }
         }
@@ -367,10 +367,10 @@ Rectangle {
 
     Component.onCompleted: {
         hideControlsTimer.start();
-        if (controller) controller.reportCurrentVideoAsRecentViewIfNeeded();
+        if (controller) controller.video.reportCurrentVideoAsRecentViewIfNeeded();
     }
 
     Component.onDestruction: {
-        if (controller) controller.cleanupTempVideo();
+        if (controller) controller.playback.cleanupTempVideo();
     }
 }

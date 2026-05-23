@@ -1,37 +1,39 @@
 #pragma once
 
+#include <QObject>
 #include <QtGlobal>
 #include <QString>
 #include <QStringList>
 
 class BiliController;
 
-class BiliPlaybackModule {
+class BiliPlaybackModule : public QObject {
+  Q_OBJECT
 public:
   explicit BiliPlaybackModule(BiliController *controller);
-  void fetchPlayUrl(int quality = 64);
-  void fetchAcceptQualities(int quality = 64);
-  void downloadAndPlay(int quality = 64);
-  void cancelDownload();
-  void cleanupTempVideo();
-  bool externalPlayerRunning() const;
-  void launchExternalPlayer(const QString &path);
-  void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
-  void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
-  void launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath);
-  void fetchSubtitleList();
-  void selectSubtitle(qint64 subtitleId, const QString &label);
-  void clearSelectedSubtitle();
-  void setSubtitleFontSize(int value);
-  void setSubtitleMarginV(int value);
-  void setSubtitleSpacing(double value);
-  void setSubtitleWeight(int value);
-  void setSubtitleColorPreset(const QString &value);
-  void setSubtitleOutlineEnabled(bool enabled);
-  void setSubtitleOutlineWidth(int value);
-  void setSubtitleBackgroundEnabled(bool enabled);
-  void setSubtitleBackgroundOpacity(double value);
-  void launchExternalPlayerCurrentSelection();
+  Q_INVOKABLE void fetchPlayUrl(int quality = 64);
+  Q_INVOKABLE void fetchAcceptQualities(int quality = 64);
+  Q_INVOKABLE void downloadAndPlay(int quality = 64);
+  Q_INVOKABLE void cancelDownload();
+  Q_INVOKABLE void cleanupTempVideo();
+  Q_INVOKABLE bool externalPlayerRunning() const;
+  Q_INVOKABLE void launchExternalPlayer(const QString &path);
+  Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
+  Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
+  Q_INVOKABLE void launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath);
+  Q_INVOKABLE void fetchSubtitleList();
+  Q_INVOKABLE void selectSubtitle(qint64 subtitleId, const QString &label);
+  Q_INVOKABLE void clearSelectedSubtitle();
+  Q_INVOKABLE void setSubtitleFontSize(int value);
+  Q_INVOKABLE void setSubtitleMarginV(int value);
+  Q_INVOKABLE void setSubtitleSpacing(double value);
+  Q_INVOKABLE void setSubtitleWeight(int value);
+  Q_INVOKABLE void setSubtitleColorPreset(const QString &value);
+  Q_INVOKABLE void setSubtitleOutlineEnabled(bool enabled);
+  Q_INVOKABLE void setSubtitleOutlineWidth(int value);
+  Q_INVOKABLE void setSubtitleBackgroundEnabled(bool enabled);
+  Q_INVOKABLE void setSubtitleBackgroundOpacity(double value);
+  Q_INVOKABLE void launchExternalPlayerCurrentSelection();
 
 private:
   bool isExternalPlayerRunning() const;

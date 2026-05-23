@@ -37,31 +37,40 @@ extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
 BiliCommentModule::BiliCommentModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliCommentModule::commentModel() { return m_controller->commentListModel(); }
+QObject *BiliCommentModule::commentReplyModel() { return m_controller->commentReplyListModel(); }
+
+void BiliCommentModule::resetReplyState() {
+  if (!m_commentReplyHasMore) return;
+  m_commentReplyHasMore = false;
+  emit replyHasMoreChanged();
+}
 
 // ====== API: 评论 ======
 
 void BiliCommentModule::fetchComments(int page) {
-  if (m_controller->m_currentVideo.bvid.isEmpty()) {
+  if (m_controller->videoBvid().isEmpty()) {
     emit m_controller->toastMessage("请先打开一个视频");
     return;
   }
-  if (m_controller->m_commentModel->loading())
+  if (m_controller->commentListModel()->loading())
     return;
-  if (m_controller->m_currentVideo.aid <= 0) {
+  if (m_controller->videoAid() <= 0) {
     emit m_controller->toastMessage("视频信息不完整");
     return;
   }
 
   page = qBound(1, page, 1000);
-  m_controller->m_commentPage = page;
+  m_commentPage = page;
   if (page == 1) {
-    m_controller->m_commentModel->clear();
+    m_controller->commentListModel()->clear();
   }
-  m_controller->m_commentModel->setLoading(true);
+  m_controller->commentListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(m_controller->m_currentVideo.aid);
+  params["oid"] = QString::number(m_controller->videoAid());
   params["type"] = "1";
   params["sort"] = "2";
   params["pn"] = QString::number(page);
@@ -73,7 +82,7 @@ void BiliCommentModule::fetchComments(int page) {
 
         QJsonObject pageObj = data.value("page").toObject();
         int total = pageObj.value("count").toInt();
-        m_controller->m_commentModel->setTotalCount(total);
+        m_controller->commentListModel()->setTotalCount(total);
 
         QJsonArray replies = data.value("replies").toArray();
 
@@ -93,7 +102,7 @@ void BiliCommentModule::fetchComments(int page) {
           items.append(topComment);
         };
 
-        if (m_controller->m_commentPage == 1) {
+        if (m_commentPage == 1) {
           appendTopComment(data.value("upper").toObject().value("top").toObject());
 
           QJsonObject topObj = data.value("top").toObject();
@@ -116,46 +125,46 @@ void BiliCommentModule::fetchComments(int page) {
           }
         }
 
-        m_controller->m_commentModel->appendItems(items);
-        m_controller->m_commentModel->setLoading(false);
+        m_controller->commentListModel()->appendItems(items);
+        m_controller->commentListModel()->setLoading(false);
 
-        if (items.isEmpty() && m_controller->m_commentPage == 1) {
-          m_controller->m_commentModel->setErrorMessage("暂无评论");
+        if (items.isEmpty() && m_commentPage == 1) {
+          m_controller->commentListModel()->setErrorMessage("暂无评论");
         }
       },
       [this](int code, const QString &msg) {
-        m_controller->m_commentModel->setLoading(false);
+        m_controller->commentListModel()->setLoading(false);
         if (code == -404 || msg == "啥都木有") {
-          m_controller->m_commentModel->setErrorMessage("暂无评论");
+          m_controller->commentListModel()->setErrorMessage("暂无评论");
         } else {
-          m_controller->m_commentModel->setErrorMessage(msg);
+          m_controller->commentListModel()->setErrorMessage(msg);
           emit m_controller->toastMessage(QString("评论加载失败：%1").arg(msg));
         }
       });
 }
 
 void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
-  if (m_controller->m_currentVideo.aid <= 0 || rootRpid <= 0) {
+  if (m_controller->videoAid() <= 0 || rootRpid <= 0) {
     emit m_controller->toastMessage("评论信息不完整");
     return;
   }
-  if (m_controller->m_commentReplyModel->loading())
+  if (m_controller->commentReplyListModel()->loading())
     return;
 
-  m_controller->m_currentCommentRootRpid = rootRpid;
-  m_controller->m_commentReplyPage = 1;
-  m_controller->m_commentReplyHasMore = false;
-  emit m_controller->replyHasMoreChanged();
+  m_currentCommentRootRpid = rootRpid;
+  m_commentReplyPage = 1;
+  m_commentReplyHasMore = false;
+  emit replyHasMoreChanged();
 
-  m_controller->m_commentReplyModel->clear();
-  m_controller->m_commentReplyModel->setLoading(true);
+  m_controller->commentReplyListModel()->clear();
+  m_controller->commentReplyListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(m_controller->m_currentVideo.aid);
+  params["oid"] = QString::number(m_controller->videoAid());
   params["type"] = "1";
   params["root"] = QString::number(rootRpid);
   params["ps"] = "20";
-  params["pn"] = QString::number(m_controller->m_commentReplyPage);
+  params["pn"] = QString::number(m_commentReplyPage);
 
   m_controller->apiGet(
       "/video/comments/replies", params,
@@ -172,42 +181,42 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
 
         QJsonObject pageObj = data.value("page").toObject();
         int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("num").toInt(m_controller->m_commentReplyPage);
+        int num = pageObj.value("num").toInt(m_commentReplyPage);
         int size = pageObj.value("size").toInt(20);
         bool hasMore = (count > 0) ? (num * size < count) : (items.size() >= size);
 
-        m_controller->m_commentReplyHasMore = hasMore;
-        emit m_controller->replyHasMoreChanged();
+        m_commentReplyHasMore = hasMore;
+        emit replyHasMoreChanged();
 
-        m_controller->m_commentReplyModel->setItems(items);
-        m_controller->m_commentReplyModel->setLoading(false);
+        m_controller->commentReplyListModel()->setItems(items);
+        m_controller->commentReplyListModel()->setLoading(false);
         if (items.isEmpty()) {
-          m_controller->m_commentReplyModel->setErrorMessage("暂无回复");
+          m_controller->commentReplyListModel()->setErrorMessage("暂无回复");
         }
       },
       [this](int, const QString &msg) {
-        m_controller->m_commentReplyHasMore = false;
-        emit m_controller->replyHasMoreChanged();
-        m_controller->m_commentReplyModel->setLoading(false);
-        m_controller->m_commentReplyModel->setErrorMessage(msg);
+        m_commentReplyHasMore = false;
+        emit replyHasMoreChanged();
+        m_controller->commentReplyListModel()->setLoading(false);
+        m_controller->commentReplyListModel()->setErrorMessage(msg);
         emit m_controller->toastMessage(QString("回复加载失败：%1").arg(msg));
       });
 }
 
 void BiliCommentModule::fetchMoreCommentReplies() {
-  if (m_controller->m_currentCommentRootRpid <= 0) return;
-  if (!m_controller->m_commentReplyHasMore) return;
-  if (m_controller->m_commentReplyModel->loading()) return;
+  if (m_currentCommentRootRpid <= 0) return;
+  if (!m_commentReplyHasMore) return;
+  if (m_controller->commentReplyListModel()->loading()) return;
 
-  m_controller->m_commentReplyPage++;
-  m_controller->m_commentReplyModel->setLoading(true);
+  m_commentReplyPage++;
+  m_controller->commentReplyListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(m_controller->m_currentVideo.aid);
+  params["oid"] = QString::number(m_controller->videoAid());
   params["type"] = "1";
-  params["root"] = QString::number(m_controller->m_currentCommentRootRpid);
+  params["root"] = QString::number(m_currentCommentRootRpid);
   params["ps"] = "20";
-  params["pn"] = QString::number(m_controller->m_commentReplyPage);
+  params["pn"] = QString::number(m_commentReplyPage);
 
   m_controller->apiGet(
       "/video/comments/replies", params,
@@ -224,27 +233,27 @@ void BiliCommentModule::fetchMoreCommentReplies() {
 
         QJsonObject pageObj = data.value("page").toObject();
         int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("num").toInt(m_controller->m_commentReplyPage);
+        int num = pageObj.value("num").toInt(m_commentReplyPage);
         int size = pageObj.value("size").toInt(20);
         bool hasMore = (count > 0) ? (num * size < count) : (items.size() >= size);
 
-        m_controller->m_commentReplyHasMore = hasMore;
-        emit m_controller->replyHasMoreChanged();
+        m_commentReplyHasMore = hasMore;
+        emit replyHasMoreChanged();
 
-        m_controller->m_commentReplyModel->appendItems(items);
-        m_controller->m_commentReplyModel->setLoading(false);
+        m_controller->commentReplyListModel()->appendItems(items);
+        m_controller->commentReplyListModel()->setLoading(false);
       },
       [this](int, const QString &msg) {
-        m_controller->m_commentReplyModel->setLoading(false);
+        m_controller->commentReplyListModel()->setLoading(false);
         emit m_controller->toastMessage(QString("回复加载失败：%1").arg(msg));
       },
       true);
 }
 
 void BiliCommentModule::fetchMoreComments() {
-  if (m_controller->m_commentModel->loading())
+  if (m_controller->commentListModel()->loading())
     return;
-  m_controller->m_commentPage++;
-  fetchComments(m_controller->m_commentPage);
+  m_commentPage++;
+  fetchComments(m_commentPage);
 }
 

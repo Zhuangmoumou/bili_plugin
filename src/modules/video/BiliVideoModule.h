@@ -1,16 +1,19 @@
 #pragma once
 
+#include <QObject>
 #include <QtGlobal>
 #include <QString>
 
 class BiliController;
 
-class BiliVideoModule {
+class BiliVideoModule : public QObject {
+  Q_OBJECT
 public:
   explicit BiliVideoModule(BiliController *controller);
-  void reportCurrentVideoAsRecentViewIfNeeded();
+  Q_INVOKABLE void reportCurrentVideoAsRecentViewIfNeeded();
   void refreshCurrentPlaybackProgress();
-  void fetchVideoDetail(const QString &bvid);
+  Q_INVOKABLE void fetchVideoDetail(const QString &bvid);
+  Q_INVOKABLE QObject *videoPartModel();
 
 private:
   BiliController *m_controller;

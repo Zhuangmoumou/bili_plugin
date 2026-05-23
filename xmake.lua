@@ -16,6 +16,7 @@ target('bili_plugin')
     add_files('src/*.cpp')
     add_files('src/modules/**/*.cpp')
     add_files('src/*.h')
+    add_files('src/modules/**/*.h')
     add_includedirs('src')
 
     add_frameworks(

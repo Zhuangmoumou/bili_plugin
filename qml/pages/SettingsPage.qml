@@ -106,7 +106,7 @@ Rectangle {
                             MouseArea {
                                 id: fontMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleFontSize(controller.subtitleFontSize - 1) }
+                                onClicked: { if (controller) controller.playback.setSubtitleFontSize(controller.subtitleFontSize - 1) }
                             }
                         }
 
@@ -119,7 +119,7 @@ Rectangle {
                             MouseArea {
                                 id: fontPlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleFontSize(controller.subtitleFontSize + 1) }
+                                onClicked: { if (controller) controller.playback.setSubtitleFontSize(controller.subtitleFontSize + 1) }
                             }
                         }
                     }
@@ -147,7 +147,7 @@ Rectangle {
                             MouseArea {
                                 id: boldMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleWeight(controller.subtitleWeight - 100) }
+                                onClicked: { if (controller) controller.playback.setSubtitleWeight(controller.subtitleWeight - 100) }
                             }
                         }
 
@@ -160,7 +160,7 @@ Rectangle {
                             MouseArea {
                                 id: boldPlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleWeight(controller.subtitleWeight + 100) }
+                                onClicked: { if (controller) controller.playback.setSubtitleWeight(controller.subtitleWeight + 100) }
                             }
                         }
                     }
@@ -227,7 +227,7 @@ Rectangle {
 
                                 MouseArea {
                                     anchors.fill: parent
-                                    onClicked: { if (controller) controller.setSubtitleColorPreset(modelData.key) }
+                                    onClicked: { if (controller) controller.playback.setSubtitleColorPreset(modelData.key) }
                                 }
                             }
                         }
@@ -257,7 +257,7 @@ Rectangle {
                             Text { anchors.centerIn: parent; text: "开"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleOutlineEnabled(true) }
+                                onClicked: { if (controller) controller.playback.setSubtitleOutlineEnabled(true) }
                             }
                         }
 
@@ -269,7 +269,7 @@ Rectangle {
                             Text { anchors.centerIn: parent; text: "关"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleOutlineEnabled(false) }
+                                onClicked: { if (controller) controller.playback.setSubtitleOutlineEnabled(false) }
                             }
                         }
                     }
@@ -298,7 +298,7 @@ Rectangle {
                             Text { anchors.centerIn: parent; text: "开"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleBackgroundEnabled(true) }
+                                onClicked: { if (controller) controller.playback.setSubtitleBackgroundEnabled(true) }
                             }
                         }
 
@@ -310,7 +310,7 @@ Rectangle {
                             Text { anchors.centerIn: parent; text: "关"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleBackgroundEnabled(false) }
+                                onClicked: { if (controller) controller.playback.setSubtitleBackgroundEnabled(false) }
                             }
                         }
                     }
@@ -338,7 +338,7 @@ Rectangle {
                             MouseArea {
                                 id: bgOpacityMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleBackgroundOpacity((Math.round(controller.subtitleBackgroundOpacity * 10) - 1) / 10) }
+                                onClicked: { if (controller) controller.playback.setSubtitleBackgroundOpacity((Math.round(controller.subtitleBackgroundOpacity * 10) - 1) / 10) }
                             }
                         }
 
@@ -351,7 +351,7 @@ Rectangle {
                             MouseArea {
                                 id: bgOpacityPlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleBackgroundOpacity((Math.round(controller.subtitleBackgroundOpacity * 10) + 1) / 10) }
+                                onClicked: { if (controller) controller.playback.setSubtitleBackgroundOpacity((Math.round(controller.subtitleBackgroundOpacity * 10) + 1) / 10) }
                             }
                         }
                     }
@@ -379,7 +379,7 @@ Rectangle {
                             MouseArea {
                                 id: outlineMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleOutlineWidth(controller.subtitleOutlineWidth - 1) }
+                                onClicked: { if (controller) controller.playback.setSubtitleOutlineWidth(controller.subtitleOutlineWidth - 1) }
                             }
                         }
 
@@ -392,7 +392,7 @@ Rectangle {
                             MouseArea {
                                 id: outlinePlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleOutlineWidth(controller.subtitleOutlineWidth + 1) }
+                                onClicked: { if (controller) controller.playback.setSubtitleOutlineWidth(controller.subtitleOutlineWidth + 1) }
                             }
                         }
                     }
@@ -420,7 +420,7 @@ Rectangle {
                             MouseArea {
                                 id: marginMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleMarginV(controller.subtitleMarginV - 1) }
+                                onClicked: { if (controller) controller.playback.setSubtitleMarginV(controller.subtitleMarginV - 1) }
                             }
                         }
 
@@ -433,7 +433,7 @@ Rectangle {
                             MouseArea {
                                 id: marginPlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleMarginV(controller.subtitleMarginV + 1) }
+                                onClicked: { if (controller) controller.playback.setSubtitleMarginV(controller.subtitleMarginV + 1) }
                             }
                         }
                     }
@@ -461,7 +461,7 @@ Rectangle {
                             MouseArea {
                                 id: spacingMinusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleSpacing(subtitleSettingsColumn.round1(controller.subtitleSpacing - 0.1)) }
+                                onClicked: { if (controller) controller.playback.setSubtitleSpacing(subtitleSettingsColumn.round1(controller.subtitleSpacing - 0.1)) }
                             }
                         }
 
@@ -474,7 +474,7 @@ Rectangle {
                             MouseArea {
                                 id: spacingPlusArea
                                 anchors.fill: parent
-                                onClicked: { if (controller) controller.setSubtitleSpacing(subtitleSettingsColumn.round1(controller.subtitleSpacing + 0.1)) }
+                                onClicked: { if (controller) controller.playback.setSubtitleSpacing(subtitleSettingsColumn.round1(controller.subtitleSpacing + 0.1)) }
                             }
                         }
                     }
@@ -558,7 +558,7 @@ Rectangle {
                             anchors.fill: parent
                             onClicked: {
                                 settingsPage.restartConfirmVisible = false
-                                if (controller) controller.restartGoServer()
+                                if (controller) controller.up.restartGoServer()
                             }
                         }
                     }

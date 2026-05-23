@@ -2,6 +2,7 @@
 
 #include "BiliController.h"
 #include "BiliModels.h"
+#include "modules/favorite/BiliFavoriteModule.h"
 #include "BiliNetwork.h"
 
 #include <QJsonArray>
@@ -91,45 +92,48 @@ QVector<VideoItem> parseWatchLaterItems(const QJsonObject &data) {
 }  // namespace
 
 BiliHistoryModule::BiliHistoryModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliHistoryModule::recentHistoryModel() { return m_controller->recentHistoryListModel(); }
+QObject *BiliHistoryModule::watchLaterModel() { return m_controller->watchLaterListModel(); }
 
 void BiliHistoryModule::fetchRecentHistory() {
   BiliController *controller = m_controller;
   if (!controller) return;
-  if (!controller->m_loggedIn) {
+  if (!controller->loggedIn()) {
     emit controller->toastMessage("请先登录后查看最近观看");
     return;
   }
 
-  if (controller->m_recentHistoryModel->loading())
+  if (controller->recentHistoryListModel()->loading())
     return;
 
-  controller->m_recentHistoryMax = 0;
-  controller->m_recentHistoryViewAt = 0;
-  controller->m_recentHistoryModel->clear();
-  controller->m_recentHistoryModel->setLoading(true);
+  m_recentHistoryMax = 0;
+  m_recentHistoryViewAt = 0;
+  controller->recentHistoryListModel()->clear();
+  controller->recentHistoryListModel()->setLoading(true);
   controller->setIsLoading(true);
 
   QMap<QString, QString> params;
   QPointer<BiliController> self(controller);
-  controller->m_network->get(
+  controller->network()->get(
       "/history/recent", params,
-      [self](const QJsonObject &data) {
+      [this, self](const QJsonObject &data) {
         if (!self) return;
 
         QJsonObject cursor = data.value("cursor").toObject();
-        self->m_recentHistoryMax = cursor.value("max").toVariant().toInt();
-        self->m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
+        m_recentHistoryMax = cursor.value("max").toVariant().toInt();
+        m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
 
         QVector<VideoItem> items = parseRecentHistoryItems(data);
-        self->m_recentHistoryModel->appendItems(items);
-        self->m_recentHistoryModel->setHasMore(!items.isEmpty());
-        self->m_recentHistoryModel->setLoading(false);
+        self->recentHistoryListModel()->appendItems(items);
+        self->recentHistoryListModel()->setHasMore(!items.isEmpty());
+        self->recentHistoryListModel()->setLoading(false);
         self->setIsLoading(false);
       },
       [self](int, const QString &msg) {
         if (!self) return;
-        self->m_recentHistoryModel->setLoading(false);
+        self->recentHistoryListModel()->setLoading(false);
         self->setIsLoading(false);
         emit self->toastMessage(QString("最近观看加载失败：%1").arg(msg));
       });
@@ -138,39 +142,39 @@ void BiliHistoryModule::fetchRecentHistory() {
 void BiliHistoryModule::fetchMoreRecentHistory() {
   BiliController *controller = m_controller;
   if (!controller) return;
-  if (controller->m_recentHistoryModel->loading() || !controller->m_recentHistoryModel->hasMore())
+  if (controller->recentHistoryListModel()->loading() || !controller->recentHistoryListModel()->hasMore())
     return;
 
   QMap<QString, QString> params;
-  if (controller->m_recentHistoryMax > 0) {
-    params["max"] = QString::number(controller->m_recentHistoryMax);
+  if (m_recentHistoryMax > 0) {
+    params["max"] = QString::number(m_recentHistoryMax);
   }
-  if (controller->m_recentHistoryViewAt > 0) {
-    params["view_at"] = QString::number(controller->m_recentHistoryViewAt);
+  if (m_recentHistoryViewAt > 0) {
+    params["view_at"] = QString::number(m_recentHistoryViewAt);
   }
 
-  controller->m_recentHistoryModel->setLoading(true);
+  controller->recentHistoryListModel()->setLoading(true);
   controller->setIsLoading(true);
 
   QPointer<BiliController> self(controller);
-  controller->m_network->get(
+  controller->network()->get(
       "/history/recent", params,
-      [self](const QJsonObject &data) {
+      [this, self](const QJsonObject &data) {
         if (!self) return;
 
         QJsonObject cursor = data.value("cursor").toObject();
-        self->m_recentHistoryMax = cursor.value("max").toVariant().toInt();
-        self->m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
+        m_recentHistoryMax = cursor.value("max").toVariant().toInt();
+        m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
 
         QVector<VideoItem> items = parseRecentHistoryItems(data);
-        self->m_recentHistoryModel->appendItems(items);
-        self->m_recentHistoryModel->setHasMore(!items.isEmpty());
-        self->m_recentHistoryModel->setLoading(false);
+        self->recentHistoryListModel()->appendItems(items);
+        self->recentHistoryListModel()->setHasMore(!items.isEmpty());
+        self->recentHistoryListModel()->setLoading(false);
         self->setIsLoading(false);
       },
       [self](int, const QString &msg) {
         if (!self) return;
-        self->m_recentHistoryModel->setLoading(false);
+        self->recentHistoryListModel()->setLoading(false);
         self->setIsLoading(false);
         emit self->toastMessage(QString("最近观看加载失败：%1").arg(msg));
       });
@@ -179,21 +183,21 @@ void BiliHistoryModule::fetchMoreRecentHistory() {
 void BiliHistoryModule::fetchWatchLater(int page, int pageSize) {
   BiliController *controller = m_controller;
   if (!controller) return;
-  if (!controller->m_loggedIn) {
+  if (!controller->loggedIn()) {
     emit controller->toastMessage("请先登录后查看稍后再看");
     return;
   }
-  if (controller->m_watchLaterModel->loading())
+  if (controller->watchLaterListModel()->loading())
     return;
 
   page = qBound(1, page, 1000);
   pageSize = qBound(1, pageSize, 30);
 
   if (page == 1) {
-    controller->m_watchLaterModel->clear();
+    controller->watchLaterListModel()->clear();
   }
-  controller->m_watchLaterModel->setLoading(true);
-  controller->m_watchLaterModel->setErrorMessage("");
+  controller->watchLaterListModel()->setLoading(true);
+  controller->watchLaterListModel()->setErrorMessage("");
   controller->setIsLoading(true);
 
   QMap<QString, QString> params;
@@ -201,9 +205,9 @@ void BiliHistoryModule::fetchWatchLater(int page, int pageSize) {
   params["ps"] = QString::number(pageSize);
 
   QPointer<BiliController> self(controller);
-  controller->m_network->get(
+  controller->network()->get(
       "/toview/list", params,
-      [self, page, pageSize](const QJsonObject &data) {
+      [this, self, page, pageSize](const QJsonObject &data) {
         if (!self) return;
 
         QVector<VideoItem> items = parseWatchLaterItems(data);
@@ -212,22 +216,22 @@ void BiliHistoryModule::fetchWatchLater(int page, int pageSize) {
           hasMore = items.size() >= pageSize;
         }
 
-        self->m_watchLaterPage = page;
-        self->m_watchLaterHasMore = hasMore;
-        self->m_watchLaterModel->appendItems(items);
-        self->m_watchLaterModel->setHasMore(hasMore);
-        self->m_watchLaterModel->setLoading(false);
+        m_watchLaterPage = page;
+        m_watchLaterHasMore = hasMore;
+        self->watchLaterListModel()->appendItems(items);
+        self->watchLaterListModel()->setHasMore(hasMore);
+        self->watchLaterListModel()->setLoading(false);
         self->setIsLoading(false);
 
         if (items.isEmpty() && page == 1) {
-          self->m_watchLaterModel->setErrorMessage("暂无稍后再看");
+          self->watchLaterListModel()->setErrorMessage("暂无稍后再看");
         }
       },
       [self](int, const QString &msg) {
         if (!self) return;
-        self->m_watchLaterModel->setLoading(false);
+        self->watchLaterListModel()->setLoading(false);
         self->setIsLoading(false);
-        self->m_watchLaterModel->setErrorMessage(msg);
+        self->watchLaterListModel()->setErrorMessage(msg);
         emit self->toastMessage(QString("稍后再看加载失败：%1").arg(msg));
       });
 }
@@ -235,15 +239,15 @@ void BiliHistoryModule::fetchWatchLater(int page, int pageSize) {
 void BiliHistoryModule::fetchMoreWatchLater() {
   BiliController *controller = m_controller;
   if (!controller) return;
-  if (!controller->m_watchLaterHasMore || controller->m_watchLaterModel->loading())
+  if (!m_watchLaterHasMore || controller->watchLaterListModel()->loading())
     return;
-  if (controller->m_watchLaterModel->count() <= 0)
+  if (controller->watchLaterListModel()->count() <= 0)
     return;
-  fetchWatchLater(controller->m_watchLaterPage + 1, 20);
+  fetchWatchLater(m_watchLaterPage + 1, 20);
 }
 
 void BiliHistoryModule::addToWatchLater() {
   BiliController *controller = m_controller;
   if (!controller) return;
-  controller->toggleWatchLater();
+  controller->favoriteModule()->toggleWatchLater();
 }

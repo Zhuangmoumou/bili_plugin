@@ -30,7 +30,7 @@ Rectangle {
     function requestInitialRanking() {
         if (!controller || initialRankingRequested) return
         initialRankingRequested = true
-        controller.fetchRanking(categoryBar.selectedRid)
+        controller.feed.fetchRanking(categoryBar.selectedRid)
         rankingModelAttached = true
     }
 
@@ -112,7 +112,7 @@ Rectangle {
                         initialRankingTimer.stop();
                         initialRankingRequested = true;
                         if (controller) {
-                            controller.fetchRanking(rid);
+                            controller.feed.fetchRanking(rid);
                             rankingModelAttached = true;
                         }
                     }
@@ -137,7 +137,7 @@ Rectangle {
         anchors.rightMargin: Theme.spacingSmall
         anchors.topMargin: Theme.spacingSmall
         anchors.bottomMargin: Math.max(0, Theme.spacingSmall - 3)
-        model: controller && rankingPage.rankingModelAttached ? controller.rankingModel() : null
+        model: controller && rankingPage.rankingModelAttached ? controller.feed.rankingModel() : null
         orientation: ListView.Horizontal
         spacing: Theme.spacingMedium
         clip: true

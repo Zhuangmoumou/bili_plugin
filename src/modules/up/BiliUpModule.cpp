@@ -5,6 +5,7 @@
 #include "BiliNetwork.h"
 #include "modules/history/BiliHistoryModule.h"
 #include "modules/login/BiliLoginModule.h"
+#include "modules/playback/BiliPlaybackModule.h"
 #include "modules/season/BiliSeasonModule.h"
 
 #include <QCoreApplication>
@@ -37,7 +38,10 @@ extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
 BiliUpModule::BiliUpModule(BiliController *controller)
-    : m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {}
+
+QObject *BiliUpModule::upVideoModel() { return m_controller->m_upVideoModel; }
+QObject *BiliUpModule::upSeasonModel() { return m_controller->m_upSeasonModel; }
 
 // ====== UP 主主页 ======
 
@@ -288,7 +292,7 @@ void BiliUpModule::fetchUpVideos(qint64 mid, int page, int pageSize) {
 void BiliUpModule::fetchMoreUpVideos() {
   // 若当前选中的是合集/系列，则委托到合集翻页
   if (m_controller->m_upSelectedSeasonId > 0) {
-    m_controller->fetchMoreUpSeasonVideos();
+    m_controller->m_seasonModule->fetchMoreUpSeasonVideos();
     return;
   }
   if (!m_controller->m_upVideoHasMore || m_controller->m_upVideoModel->loading())
@@ -385,7 +389,7 @@ void BiliUpModule::selectUpSeason(qint64 seasonId, const QString &name, bool isS
   } else {
     m_controller->m_upSeasonVideoPage = 1;
     m_controller->m_upSeasonVideoHasMore = true;
-    m_controller->fetchUpSeasonVideos(1, 30);
+    m_controller->m_seasonModule->fetchUpSeasonVideos(1, 30);
   }
 }
 
@@ -469,7 +473,7 @@ void BiliUpModule::playVideoPart(int index) {
         // 这里可以根据需求决定是否立即播放
         // downloadAndPlay(m_controller->m_playQuality); 
         // 或者只获取URL
-        m_controller->fetchPlayUrl(m_controller->m_playQuality);
+        m_controller->m_playbackModule->fetchPlayUrl(m_controller->m_playQuality);
     }
 }
 

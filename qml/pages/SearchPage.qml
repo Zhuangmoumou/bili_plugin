@@ -266,7 +266,7 @@ Rectangle {
     function doSearch() {
         var kw = searchInput.text.trim();
         if (kw.length === 0) return;
-        var searchModel = controller ? controller.searchModel() : null;
+        var searchModel = controller ? controller.search.searchModel() : null;
         if (searchModel && searchModel.keyword === kw && searchModel.count > 0) {
             showResults = true;
             restoreSearchPosition();
@@ -274,7 +274,7 @@ Rectangle {
         }
         savedResultContentX = 0;
         searchResultList.contentX = 0;
-        if (controller) controller.search(kw);
+        if (controller) controller.search.search(kw);
         showResults = true;
     }
 
@@ -366,7 +366,7 @@ Rectangle {
                             anchors.fill: parent
                             anchors.margins: -4
                             onClicked: {
-                                if (controller) controller.clearSearchHistory()
+                                if (controller) controller.search.clearSearchHistory()
                             }
                         }
                     }
@@ -379,7 +379,7 @@ Rectangle {
                     
                     Repeater {
                         id: historyRepeater
-                        model: controller ? controller.searchHistoryModel() : null
+                        model: controller ? controller.search.searchHistoryModel() : null
 
                         Rectangle {
                             height: 24
@@ -430,7 +430,7 @@ Rectangle {
                                 onReleased: {
                                     var inside = mouse.x >= 0 && mouse.x <= width && mouse.y >= 0 && mouse.y <= height;
                                     if (deleteArmed && inside && controller) {
-                                        controller.removeSearchHistory(model.display);
+                                        controller.search.removeSearchHistory(model.display);
                                     }
                                     deleteArmed = false;
                                 }
@@ -474,7 +474,7 @@ Rectangle {
 
             // 热搜项目
             Repeater {
-                model: controller ? controller.hotSearchModel() : null
+                model: controller ? controller.search.hotSearchModel() : null
 
                 Rectangle {
                     width: hotSearchCol.width
@@ -555,7 +555,7 @@ Rectangle {
             right: parent.right
             margins: 6
         }
-        model: controller ? controller.searchModel() : null
+        model: controller ? controller.search.searchModel() : null
         orientation: ListView.Horizontal
         spacing: 10
         clip: true
@@ -583,7 +583,7 @@ Rectangle {
         }
 
         onAtXEndChanged: {
-            if (atXEnd && controller) controller.searchMore();
+            if (atXEnd && controller) controller.search.searchMore();
         }
 
         onCountChanged: {
@@ -609,7 +609,7 @@ Rectangle {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: {
-                    var sm = controller ? controller.searchModel() : null;
+                    var sm = controller ? controller.search.searchModel() : null;
                     if (sm && sm.errorMessage) return sm.errorMessage;
                     return "未找到相关视频";
                 }
@@ -696,13 +696,13 @@ Rectangle {
     Component.onCompleted: {
         if (controller) {
             // 返回搜索页时，如果已有结果就直接恢复，不再触发新的请求
-            var searchModel = controller.searchModel();
+            var searchModel = controller.search.searchModel();
             if (searchModel && searchModel.keyword && searchModel.count > 0) {
                 searchInput.text = searchModel.keyword;
                 showResults = true;
                 restoreSearchPosition();
             } else {
-                controller.fetchHotSearch();
+                controller.search.fetchHotSearch();
             }
         }
     }

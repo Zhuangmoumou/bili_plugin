@@ -29,14 +29,14 @@ Rectangle {
 
     function requestInitialPopular() {
         if (!controller || initialPopularRequested) return
-        var model = controller.popularModel()
+        var model = controller.feed.popularModel()
         if (model && model.count > 0) {
             initialPopularRequested = true
             popularModelAttached = true
             return
         }
         initialPopularRequested = true
-        controller.fetchPopular()
+        controller.feed.fetchPopular()
         popularModelAttached = true
     }
 
@@ -76,7 +76,7 @@ Rectangle {
             initialPopularTimer.stop()
             initialPopularRequested = true
             popularModelAttached = true
-            controller.fetchPopular(1, 10)
+            controller.feed.fetchPopular(1, 10)
             controller.toastMessage("已刷新推荐")
             return
         }
@@ -109,7 +109,7 @@ Rectangle {
             id: popularList
             anchors.fill: parent
             anchors.margins: 4
-            model: controller && homePage.popularModelAttached ? controller.popularModel() : null
+            model: controller && homePage.popularModelAttached ? controller.feed.popularModel() : null
             orientation: ListView.Horizontal
             spacing: 6
             clip: true
@@ -134,7 +134,7 @@ Rectangle {
 
                 onAtXEndChanged: {
                     if (atXEnd && controller && !isLoading && popularList.count > 0) {
-                        controller.fetchMorePopular()
+                        controller.feed.fetchMorePopular()
                     }
                 }
 
@@ -161,7 +161,7 @@ Rectangle {
                 id: rankingList
                 anchors.fill: parent
                 anchors.margins: 4
-                model: controller ? controller.rankingModel() : null
+                model: controller ? controller.feed.rankingModel() : null
                 orientation: ListView.Horizontal
                 spacing: 6
                 clip: true
