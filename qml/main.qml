@@ -412,6 +412,27 @@ Rectangle {
                             root.navigateTo("detail", { bvid: bvid })
                         });
                     }
+                    onWatchLaterRequested: root.navigateTo("watchLater")
+                }
+            }
+        }
+
+        Loader {
+            active: currentPage === "watchLater" || root.stackContains("watchLater")
+            visible: currentPage === "watchLater"
+            enabled: visible
+            anchors.fill: parent
+            sourceComponent: Component {
+                Pages.WatchLaterPage {
+                    controller: root.rootController
+                    rootRef: root
+                    onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
                 }
             }
         }

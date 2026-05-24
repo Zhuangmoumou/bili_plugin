@@ -13,25 +13,21 @@ Rectangle {
     property var controller: null
     signal backClicked()
     signal videoSelected(string bvid)
+    signal watchLaterRequested()
 
-    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置, 5=字幕设置, 6=稍后再看
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置, 5=字幕设置
     property int favView: 0
     property string currentFavTitle: ""
     property int currentFavId: 0
     property real recentHistoryContentX: 0
     property bool recentHistoryForceStart: false
-    property real watchLaterContentX: 0
-    property bool restoreWatchLaterOnShow: false
-    property bool watchLaterForceStart: false
     property bool loginPanelVisible: false
     property int previousFavView: 0
     property int lastAnimatedFavView: 0
-    property int favViewDirection: 1
     readonly property bool profileImagesActive: visible && isManagedViewCurrent(0)
     readonly property bool favoriteFolderImagesActive: visible && isManagedViewCurrent(1)
     readonly property bool favoriteItemImagesActive: visible && isManagedViewCurrent(2)
     readonly property bool recentHistoryImagesActive: visible && isManagedViewCurrent(3)
-    readonly property bool watchLaterImagesActive: visible && isManagedViewCurrent(6)
     readonly property bool loginImagesActive: visible && loginArea.visible
 
     function normalizedFavView(view) {
@@ -47,11 +43,10 @@ Rectangle {
     }
 
     function managedViewOffset(viewId) {
-        if (normalizedFavView(favView) === viewId)
+        var currentView = normalizedFavView(favView)
+        if (currentView === viewId)
             return 0
-        if (previousFavView === viewId)
-            return favViewDirection > 0 ? -10 : 10
-        return favViewDirection > 0 ? 10 : -10
+        return viewId < currentView ? -10 : 10
     }
 
     function openFavorites() {
@@ -100,10 +95,6 @@ Rectangle {
             favView = 0
             return
         }
-        if (favView === 6) {
-            favView = 0
-            return
-        }
         if (favView === 4) {
             favView = 0
             return
@@ -126,9 +117,6 @@ Rectangle {
                 if (favView === 3 && recentLoader.item && recentLoader.item.restorePosition) {
                     recentLoader.item.restorePosition()
                 }
-                if (favView === 6 && watchLaterLoader.item && watchLaterLoader.item.restorePosition) {
-                    watchLaterLoader.item.restorePosition()
-                }
             })
         }
     }
@@ -138,7 +126,6 @@ Rectangle {
         if (nextView === lastAnimatedFavView)
             return
         previousFavView = lastAnimatedFavView
-        favViewDirection = nextView > lastAnimatedFavView ? 1 : -1
         lastAnimatedFavView = nextView
         favViewTransitionCleanup.restart()
     }
@@ -178,7 +165,6 @@ Rectangle {
             if (favView === 1) return "我的收藏夹"
             if (favView === 2) return currentFavTitle.length > 0 ? currentFavTitle : "收藏夹"
             if (favView === 3) return "最近观看"
-            if (favView === 6) return "稍后再看"
             if (favView === 4) return "设置"
             if (favView === 5) return "字幕设置"
             return "个人中心"
@@ -1157,16 +1143,7 @@ Rectangle {
                                 MouseArea {
                                     id: watchLaterEntryArea
                                     anchors.fill: parent
-                                    onClicked: {
-                                        restoreWatchLaterOnShow = false
-                                        watchLaterForceStart = true
-                                        watchLaterContentX = 0
-                                        if (watchLaterLoader.item && watchLaterLoader.item.resetPosition) {
-                                            watchLaterLoader.item.resetPosition()
-                                        }
-                                        favView = 6
-                                        if (controller) Qt.callLater(function() { controller.history.fetchWatchLater(1, 20) })
-                                    }
+                                    onClicked: userPage.watchLaterRequested()
                                 }
                             }
 
@@ -1468,142 +1445,6 @@ Rectangle {
                             text: "暂无最近观看"
                             color: Theme.textTertiary
                             anchors.centerIn: parent
-                        }
-
-                        Component.onCompleted: {
-                            Qt.callLater(function() { restorePosition() })
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── 稍后再看 ──
-        Item {
-            id: watchLaterView
-            anchors.fill: parent
-            visible: userPage.shouldShowManagedView(6)
-            enabled: userPage.isManagedViewCurrent(6)
-            opacity: userPage.isManagedViewCurrent(6) ? 1 : 0
-            z: userPage.isManagedViewCurrent(6) ? 1 : 0
-            transform: Translate {
-                x: userPage.managedViewOffset(6)
-                Behavior on x { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
-            }
-            Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
-
-            Loader {
-                id: watchLaterLoader
-                anchors.fill: parent
-                active: watchLaterView.visible
-                asynchronous: true
-                sourceComponent: Component {
-                    Item {
-                        anchors.fill: parent
-
-                        function resetPosition() {
-                            watchLaterList.contentX = 0
-                            Qt.callLater(function() {
-                                watchLaterList.contentX = 0
-                                Qt.callLater(function() { watchLaterList.contentX = 0 })
-                            })
-                        }
-
-                        function restorePosition() {
-                            if (userPage.watchLaterForceStart) {
-                                resetPosition()
-                                return
-                            }
-                            if (watchLaterView.visible && userPage.restoreWatchLaterOnShow && userPage.watchLaterContentX > 0) {
-                                watchLaterList.contentX = userPage.watchLaterContentX
-                            } else {
-                                resetPosition()
-                            }
-                        }
-
-                        Connections {
-                            target: controller ? controller.history.watchLaterModel() : null
-                            function onLoadingChanged() {
-                                if (!target) return
-                                if (userPage.restoreWatchLaterOnShow) return
-                                userPage.watchLaterForceStart = true
-                                resetPosition()
-                            }
-                            function onCountChanged() {
-                                if (userPage.restoreWatchLaterOnShow) return
-                                if (userPage.watchLaterForceStart) resetPosition()
-                            }
-                        }
-
-                        ListView {
-                            id: watchLaterList
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingSmall
-                            model: controller ? controller.history.watchLaterModel() : null
-                            orientation: ListView.Horizontal
-                            spacing: Theme.spacingMedium
-                            clip: true
-                            onContentWidthChanged: {
-                                if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) contentX = 0
-                            }
-                            onCountChanged: {
-                                if (!userPage.restoreWatchLaterOnShow && userPage.watchLaterForceStart) {
-                                    contentX = 0
-                                    if (count > 0) {
-                                        Qt.callLater(function() {
-                                            contentX = 0
-                                            userPage.watchLaterForceStart = false
-                                        })
-                                    }
-                                }
-                            }
-
-                            cacheBuffer: 640
-                            displayMarginBeginning: 160
-                            displayMarginEnd: 160
-
-                            property bool _loadingMore: false
-                            onAtXEndChanged: {
-                                if (!atXEnd || !controller || _loadingMore) return
-                                _loadingMore = true
-                                Qt.callLater(function() {
-                                    controller.history.fetchMoreWatchLater()
-                                    _loadingMore = false
-                                })
-                            }
-
-                            delegate: Components.VideoCardCompact {
-                                height: watchLaterList.height
-                                videoTitle: model.title || ""
-                                coverUrl: model.pic || ""
-                                imageActive: userPage.watchLaterImagesActive
-                                upName: model.ownerName || ""
-                                viewCount: ""
-                                durationText: model.durationText || ""
-                                bvid: model.bvid || ""
-                                showCollection: model.partCount > 1
-                                onClicked: {
-                                    userPage.watchLaterContentX = watchLaterList.contentX
-                                    userPage.restoreWatchLaterOnShow = true
-                                    userPage.watchLaterForceStart = false
-                                    userPage.videoSelected(bvid)
-                                }
-                            }
-                        }
-
-                        Text {
-                            visible: watchLaterList.count === 0 && controller && !controller.isLoading
-                            text: "暂无稍后再看"
-                            color: Theme.textTertiary
-                            anchors.centerIn: parent
-                        }
-
-                        Components.LoadingIndicator {
-                            anchors.centerIn: parent
-                            running: controller ? controller.isLoading : false
-                            onCancelRequested: {
-                                if (controller) controller.cancelAll();
-                            }
                         }
 
                         Component.onCompleted: {
