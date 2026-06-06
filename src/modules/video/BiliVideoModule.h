@@ -13,6 +13,9 @@ public:
   Q_INVOKABLE void reportCurrentVideoAsRecentViewIfNeeded();
   void refreshCurrentPlaybackProgress();
   Q_INVOKABLE void fetchVideoDetail(const QString &bvid);
+  Q_INVOKABLE void captureCurrentVideoDetail();
+  Q_INVOKABLE bool restoreCachedVideoDetail(const QString &bvid);
+  Q_INVOKABLE void dropCachedVideoDetail(const QString &bvid);
   Q_INVOKABLE QObject *videoPartModel();
 
 private:

@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QDebug>
 #include <QNetworkReply>
+#include <QTcpSocket>
 
 // 安全回调包装宏 - 在回调执行前检查对象是否仍存在
 #define SAFE_CALLBACK(controller, ...)                                         \
@@ -84,6 +85,7 @@ BiliController::BiliController(QObject *parent)
   m_subtitleOutlineWidth = settings.value("subtitleOutlineWidth", m_subtitleOutlineWidth).toInt();
   m_subtitleBackgroundEnabled = settings.value("subtitleBackgroundEnabled", m_subtitleBackgroundEnabled).toBool();
   m_subtitleBackgroundOpacity = settings.value("subtitleBackgroundOpacity", m_subtitleBackgroundOpacity).toDouble();
+  m_videoCardOffscreenPlaceholderEnabled = settings.value("videoCardOffscreenPlaceholderEnabled", m_videoCardOffscreenPlaceholderEnabled).toBool();
 }
 
 BiliController::~BiliController() {
@@ -352,7 +354,6 @@ void BiliController::setUpVideoTotal(int total) {
 #include <QThread>
 #include <QtQml>
 #include <signal.h>
-#include <iostream>
 
 static QQmlEngine *s_engine = nullptr;
 
@@ -366,10 +367,16 @@ static const QString API_SERVER_PATH =
     "/userdisk/PenMods/plugins/bili_plugin/";
 static const QString API_SERVER_EXEC = "server"; // Go 编译的可执行文件名
 
+// 检查本地 API 服务是否已经可用，避免每次插件启动都杀旧进程
+static bool isApiServerAlive() {
+  QTcpSocket socket;
+  socket.connectToHost("127.0.0.1", 8000);
+  return socket.waitForConnected(300);
+}
+
 // 查找并结束旧的 API 服务进程
 static void killExistingApiServer() {
-  std::cout << "BiliPlugin: Checking for existing API server processes..."
-            << std::endl;
+  qDebug() << "BiliPlugin: Checking for existing API server processes...";
 
   QString execPath = API_SERVER_PATH + "/" + API_SERVER_EXEC;
 
@@ -387,8 +394,7 @@ static void killExistingApiServer() {
       bool ok;
       int pidNum = pid.toInt(&ok);
       if (ok && pidNum > 0) {
-        std::cout << "BiliPlugin: Killing existing process PID: " << pidNum
-                  << std::endl;
+        qDebug() << "BiliPlugin: Killing existing process PID:" << pidNum;
         kill(pidNum, SIGTERM);
       }
     }
@@ -402,21 +408,27 @@ static void killExistingApiServer() {
       int pidNum = pid.toInt(&ok);
       if (ok && pidNum > 0) {
         if (kill(pidNum, 0) == 0) {
-          std::cout << "BiliPlugin: Force killing PID: " << pidNum << std::endl;
+          qWarning() << "BiliPlugin: Force killing PID:" << pidNum;
           kill(pidNum, SIGKILL);
         }
       }
     }
   }
 
-  std::cout << "BiliPlugin: Existing API server cleanup done" << std::endl;
+  qDebug() << "BiliPlugin: Existing API server cleanup done";
 }
 
 // 启动 API 服务器
 static bool startApiServerImpl() {
-  std::cout << "BiliPlugin: Starting API server..." << std::endl;
+  qDebug() << "BiliPlugin: Starting API server...";
 
-  // 先结束旧进程
+  // 若已有可用服务，直接复用，避免 kill 旧进程导致启动慢和中断请求
+  if (isApiServerAlive()) {
+    qDebug() << "BiliPlugin: API server already running, reuse it";
+    return true;
+  }
+
+  // 只有端口不可用时才清理残留进程
   killExistingApiServer();
 
   // 等待端口释放
@@ -425,15 +437,14 @@ static bool startApiServerImpl() {
   // 检查可执行文件是否存在
   QString execPath = API_SERVER_PATH + "/" + API_SERVER_EXEC;
   if (!QFile::exists(execPath)) {
-    std::cerr << "BiliPlugin: API server executable not found: "
-              << execPath.toStdString() << std::endl;
+    qWarning() << "BiliPlugin: API server executable not found:" << execPath;
     return false;
   }
 
   // 检查执行权限
   QFile serverFile(execPath);
   if (!(serverFile.permissions() & QFile::ExeUser)) {
-    std::cout << "BiliPlugin: Setting executable permission..." << std::endl;
+    qDebug() << "BiliPlugin: Setting executable permission...";
     serverFile.setPermissions(serverFile.permissions() | QFile::ExeUser |
                               QFile::ExeGroup | QFile::ExeOther);
   }
@@ -446,15 +457,15 @@ static bool startApiServerImpl() {
   QObject::connect(
       s_apiServerProcess, &QProcess::readyReadStandardOutput, []() {
         if (s_apiServerProcess) {
-          std::cout << "API Server: "
-                    << s_apiServerProcess->readAllStandardOutput().constData();
+          qDebug() << "API Server:"
+                   << s_apiServerProcess->readAllStandardOutput().constData();
         }
       });
 
   QObject::connect(s_apiServerProcess, &QProcess::readyReadStandardError, []() {
     if (s_apiServerProcess) {
-      std::cerr << "API Server Error: "
-                << s_apiServerProcess->readAllStandardError().constData();
+      qWarning() << "API Server Error:"
+                 << s_apiServerProcess->readAllStandardError().constData();
     }
   });
 
@@ -462,10 +473,9 @@ static bool startApiServerImpl() {
       s_apiServerProcess,
       QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
       [](int exitCode, QProcess::ExitStatus exitStatus) {
-        std::cout << "BiliPlugin: API server exited with code " << exitCode
-                  << ", status: "
-                  << (exitStatus == QProcess::NormalExit ? "normal" : "crashed")
-                  << std::endl;
+        qWarning() << "BiliPlugin: API server exited with code" << exitCode
+                   << ", status:"
+                   << (exitStatus == QProcess::NormalExit ? "normal" : "crashed");
       });
 
   // 直接启动 Go 可执行文件
@@ -473,53 +483,59 @@ static bool startApiServerImpl() {
 
   // 等待启动
   if (!s_apiServerProcess->waitForStarted(5000)) {
-    std::cerr << "BiliPlugin: Failed to start API server: "
-              << s_apiServerProcess->errorString().toStdString() << std::endl;
+    qWarning() << "BiliPlugin: Failed to start API server:"
+               << s_apiServerProcess->errorString();
     delete s_apiServerProcess;
     s_apiServerProcess = nullptr;
     return false;
   }
 
-  // 等待服务器初始化
-  QThread::msleep(1000);
+  // 等待服务器就绪：用短轮询代替固定 sleep，通常更快
+  bool ready = false;
+  for (int i = 0; i < 20; ++i) {
+    if (isApiServerAlive()) {
+      ready = true;
+      break;
+    }
+    QThread::msleep(100);
+  }
 
   // 检查进程是否还在运行
-  if (s_apiServerProcess->state() != QProcess::Running) {
-    std::cerr << "BiliPlugin: API server failed to stay running" << std::endl;
+  if (s_apiServerProcess->state() != QProcess::Running || !ready) {
+    qWarning() << "BiliPlugin: API server failed to stay running or become ready";
     delete s_apiServerProcess;
     s_apiServerProcess = nullptr;
     return false;
   }
 
-  std::cout << "BiliPlugin: API server started successfully, PID: "
-            << s_apiServerProcess->processId() << std::endl;
+  qDebug() << "BiliPlugin: API server started successfully, PID:"
+           << s_apiServerProcess->processId();
   return true;
 }
 
 // 停止 API 服务器
 static void stopApiServerImpl() {
-  std::cout << "BiliPlugin: Stopping API server..." << std::endl;
+  qDebug() << "BiliPlugin: Stopping API server...";
 
-  if (s_apiServerProcess) {
-    // 优雅关闭
-    s_apiServerProcess->terminate();
-
-    // 等待退出
-    if (!s_apiServerProcess->waitForFinished(3000)) {
-      std::cout << "BiliPlugin: API server not responding, force killing..."
-                << std::endl;
-      s_apiServerProcess->kill();
-      s_apiServerProcess->waitForFinished(2000);
-    }
-
-    delete s_apiServerProcess;
-    s_apiServerProcess = nullptr;
+  if (!s_apiServerProcess) {
+    // 当前插件没有持有本次启动的 server 进程，可能是复用了已有服务；不要误杀。
+    qDebug() << "BiliPlugin: No owned API server process, skip stop";
+    return;
   }
 
-  // 确保清理所有残留进程
-  killExistingApiServer();
+  // 只停止当前插件启动的进程，不再 pgrep 全局清理，避免杀掉可复用服务
+  s_apiServerProcess->terminate();
 
-  std::cout << "BiliPlugin: API server stopped" << std::endl;
+  if (!s_apiServerProcess->waitForFinished(3000)) {
+    qWarning() << "BiliPlugin: API server not responding, force killing...";
+    s_apiServerProcess->kill();
+    s_apiServerProcess->waitForFinished(2000);
+  }
+
+  delete s_apiServerProcess;
+  s_apiServerProcess = nullptr;
+
+  qDebug() << "BiliPlugin: API server stopped";
 }
 
 } // extern "C"
@@ -536,7 +552,7 @@ void bili_stopApiServer() {
 extern "C" {
 
 void init_plugin() {
-  std::cout << "BiliPlugin: Initializing..." << std::endl;
+  qDebug() << "BiliPlugin: Initializing...";
 
   qmlRegisterType<BiliController>("BiliPlugin", 1, 0, "BiliController");
   qmlRegisterType<VideoListModel>("BiliPlugin", 1, 0, "VideoListModel");
@@ -549,11 +565,10 @@ void init_plugin() {
 
   // 启动 API 服务器
   if (!bili_startApiServer()) {
-    std::cerr << "BiliPlugin: Warning - API server failed to start"
-              << std::endl;
+    qWarning() << "BiliPlugin: Warning - API server failed to start";
   }
 
-  std::cout << "BiliPlugin: Registered successfully!" << std::endl;
+  qDebug() << "BiliPlugin: Registered successfully!";
 }
 
 void attach_engine(QQmlEngine *engine) {
@@ -573,13 +588,12 @@ void attach_engine(QQmlEngine *engine) {
 
     s_engine->addImageProvider("bili", s_imageProvider);
 
-    std::cout << "BiliPlugin: Engine attached, ImageProvider registered"
-              << std::endl;
+    qDebug() << "BiliPlugin: Engine attached, ImageProvider registered";
   }
 }
 
 void destroy_plugin() {
-  std::cout << "BiliPlugin: Destroying..." << std::endl;
+  qDebug() << "BiliPlugin: Destroying...";
 
   // 先停止 API 服务器
   bili_stopApiServer();
@@ -599,7 +613,7 @@ void destroy_plugin() {
 
   s_engine = nullptr;
 
-  std::cout << "BiliPlugin: Destroyed successfully" << std::endl;
+  qDebug() << "BiliPlugin: Destroyed successfully";
 }
 
 } // extern "C"

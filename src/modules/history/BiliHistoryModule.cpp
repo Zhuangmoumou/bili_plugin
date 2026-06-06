@@ -1,5 +1,6 @@
 #include "modules/history/BiliHistoryModule.h"
 
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliModels.h"
 #include "modules/favorite/BiliFavoriteModule.h"
@@ -11,6 +12,18 @@
 #include <QtGlobal>
 
 namespace {
+
+struct ParsedRecentHistory {
+  int max = 0;
+  int viewAt = 0;
+  QVector<VideoItem> items;
+};
+
+struct ParsedWatchLater {
+  int page = 1;
+  QVector<VideoItem> items;
+  bool hasMore = false;
+};
 
 QJsonArray recentHistoryList(const QJsonObject &data) {
   QJsonArray list = data.value("list").toArray();
@@ -89,6 +102,27 @@ QVector<VideoItem> parseWatchLaterItems(const QJsonObject &data) {
   return items;
 }
 
+ParsedRecentHistory parseRecentHistoryPayload(const QJsonObject &data) {
+  ParsedRecentHistory result;
+  QJsonObject cursor = data.value("cursor").toObject();
+  result.max = cursor.value("max").toVariant().toInt();
+  result.viewAt = cursor.value("view_at").toVariant().toInt();
+  result.items = parseRecentHistoryItems(data);
+  return result;
+}
+
+ParsedWatchLater parseWatchLaterPayload(const QJsonObject &data, int page,
+                                        int pageSize) {
+  ParsedWatchLater result;
+  result.page = page;
+  result.items = parseWatchLaterItems(data);
+  result.hasMore = data.value("has_more").toBool(false);
+  if (!data.contains("has_more")) {
+    result.hasMore = result.items.size() >= pageSize;
+  }
+  return result;
+}
+
 }  // namespace
 
 BiliHistoryModule::BiliHistoryModule(BiliController *controller)
@@ -120,16 +154,18 @@ void BiliHistoryModule::fetchRecentHistory() {
       "/history/recent", params,
       [this, self](const QJsonObject &data) {
         if (!self) return;
-
-        QJsonObject cursor = data.value("cursor").toObject();
-        m_recentHistoryMax = cursor.value("max").toVariant().toInt();
-        m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
-
-        QVector<VideoItem> items = parseRecentHistoryItems(data);
-        self->recentHistoryListModel()->appendItems(items);
-        self->recentHistoryListModel()->setHasMore(!items.isEmpty());
-        self->recentHistoryListModel()->setLoading(false);
-        self->setIsLoading(false);
+        biliRunInWorker(
+            self, [data]() { return parseRecentHistoryPayload(data); },
+            [this, self](ParsedRecentHistory result) {
+              if (!self)
+                return;
+              m_recentHistoryMax = result.max;
+              m_recentHistoryViewAt = result.viewAt;
+              self->recentHistoryListModel()->appendItems(result.items);
+              self->recentHistoryListModel()->setHasMore(!result.items.isEmpty());
+              self->recentHistoryListModel()->setLoading(false);
+              self->setIsLoading(false);
+            });
       },
       [self](int, const QString &msg) {
         if (!self) return;
@@ -161,16 +197,18 @@ void BiliHistoryModule::fetchMoreRecentHistory() {
       "/history/recent", params,
       [this, self](const QJsonObject &data) {
         if (!self) return;
-
-        QJsonObject cursor = data.value("cursor").toObject();
-        m_recentHistoryMax = cursor.value("max").toVariant().toInt();
-        m_recentHistoryViewAt = cursor.value("view_at").toVariant().toInt();
-
-        QVector<VideoItem> items = parseRecentHistoryItems(data);
-        self->recentHistoryListModel()->appendItems(items);
-        self->recentHistoryListModel()->setHasMore(!items.isEmpty());
-        self->recentHistoryListModel()->setLoading(false);
-        self->setIsLoading(false);
+        biliRunInWorker(
+            self, [data]() { return parseRecentHistoryPayload(data); },
+            [this, self](ParsedRecentHistory result) {
+              if (!self)
+                return;
+              m_recentHistoryMax = result.max;
+              m_recentHistoryViewAt = result.viewAt;
+              self->recentHistoryListModel()->appendItems(result.items);
+              self->recentHistoryListModel()->setHasMore(!result.items.isEmpty());
+              self->recentHistoryListModel()->setLoading(false);
+              self->setIsLoading(false);
+            });
       },
       [self](int, const QString &msg) {
         if (!self) return;
@@ -209,23 +247,25 @@ void BiliHistoryModule::fetchWatchLater(int page, int pageSize) {
       "/toview/list", params,
       [this, self, page, pageSize](const QJsonObject &data) {
         if (!self) return;
+        biliRunInWorker(
+            self,
+            [data, page, pageSize]() {
+              return parseWatchLaterPayload(data, page, pageSize);
+            },
+            [this, self](ParsedWatchLater result) {
+              if (!self)
+                return;
+              m_watchLaterPage = result.page;
+              m_watchLaterHasMore = result.hasMore;
+              self->watchLaterListModel()->appendItems(result.items);
+              self->watchLaterListModel()->setHasMore(result.hasMore);
+              self->watchLaterListModel()->setLoading(false);
+              self->setIsLoading(false);
 
-        QVector<VideoItem> items = parseWatchLaterItems(data);
-        bool hasMore = data.value("has_more").toBool(false);
-        if (!data.contains("has_more")) {
-          hasMore = items.size() >= pageSize;
-        }
-
-        m_watchLaterPage = page;
-        m_watchLaterHasMore = hasMore;
-        self->watchLaterListModel()->appendItems(items);
-        self->watchLaterListModel()->setHasMore(hasMore);
-        self->watchLaterListModel()->setLoading(false);
-        self->setIsLoading(false);
-
-        if (items.isEmpty() && page == 1) {
-          self->watchLaterListModel()->setErrorMessage("暂无稍后再看");
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                self->watchLaterListModel()->setErrorMessage("暂无稍后再看");
+              }
+            });
       },
       [self](int, const QString &msg) {
         if (!self) return;

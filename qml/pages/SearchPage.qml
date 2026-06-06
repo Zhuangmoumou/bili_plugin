@@ -36,14 +36,6 @@ Rectangle {
         }
     }
 
-    function videoCoverSource(url) {
-        if (!url) return ""
-        // 兼容 data url / 已经是 image provider
-        if (String(url).indexOf("data:image/") === 0) return url
-        if (String(url).indexOf("image://") === 0) return url
-        return "image://bili/" + encodeURIComponent(url)
-    }
-
     // ═══════════════════════════════════════════════════════════
     // 搜索栏
     // ═══════════════════════════════════════════════════════════
@@ -244,6 +236,8 @@ Rectangle {
     // 搜索逻辑
     // ═══════════════════════════════════════════════════════════
     property bool showResults: false
+    readonly property bool resultImagesActive: visible && showResults
+    property bool searchLoadingMore: false
     property real savedResultContentX: (rootRef && rootRef.searchSavedResultX > 0) ? rootRef.searchSavedResultX : 0
 
     onSavedResultContentXChanged: {
@@ -560,11 +554,16 @@ Rectangle {
         spacing: 10
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        cacheBuffer: 640
+        displayMarginBeginning: 160
+        displayMarginEnd: 160
 
         delegate: Components.VideoCardCompact {
             height: searchResultList.height
             videoTitle: model.title || ""
-            coverUrl: searchPage.videoCoverSource(model.pic || "")
+            coverUrl: model.pic || ""
+            imageActive: searchPage.resultImagesActive
+            preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
             upName: model.ownerName || ""
             viewCount: model.views || ""
             durationText: model.durationText || ""
@@ -582,11 +581,38 @@ Rectangle {
             }
         }
 
+        Row {
+            visible: showResults
+                     && controller
+                     && controller.search.searchModel()
+                     && controller.search.searchModel().loading
+                     && searchResultList.count === 0
+            anchors.left: parent.left
+            anchors.leftMargin: 2
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 10
+            Repeater {
+                model: 3
+                Components.VideoCardCompact {
+                    height: searchResultList.height
+                    placeholder: true
+                    fontFamily: searchPage.fontFamily
+                    titleScale: 0.95
+                    infoSpacing: 0.5
+                }
+            }
+        }
+
         onAtXEndChanged: {
-            if (atXEnd && controller) controller.search.searchMore();
+            if (!atXEnd || !controller) return
+            if (searchResultList.contentWidth <= searchResultList.width + 2) return
+            if (searchPage.searchLoadingMore || controller.isLoading) return
+            searchPage.searchLoadingMore = true
+            controller.search.searchMore()
         }
 
         onCountChanged: {
+            searchPage.searchLoadingMore = false
             if (searchPage.showResults) searchPage.restoreSearchPosition();
         }
 
@@ -687,6 +713,14 @@ Rectangle {
         running: controller ? controller.isLoading : false
         onCancelRequested: {
             if (controller) controller.cancelAll();
+        }
+    }
+
+    Connections {
+        target: controller
+        ignoreUnknownSignals: true
+        function onIsLoadingChanged() {
+            if (!controller || !controller.isLoading) searchPage.searchPage.searchLoadingMore = false
         }
     }
 

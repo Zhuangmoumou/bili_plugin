@@ -544,9 +544,13 @@ Rectangle {
                     orientation: ListView.Horizontal
                     spacing: 6
                     clip: true
+                    cacheBuffer: 640
+                    displayMarginBeginning: 160
+                    displayMarginEnd: 160
                     model: controller ? controller.up.upVideoModel() : null
                     leftMargin: 4
                     rightMargin: 4
+                    property bool _loadingMore: false
 
                     // 注意：当列表内容不足以撑满宽度时，atXEnd 会一直为 true，
                     // 可能导致无限触发“加载更多”并表现为“循环同一列表”。
@@ -555,8 +559,10 @@ Rectangle {
                         if (!controller) return
                         if (!atXEnd) return
                         if (upVideoList.contentWidth <= upVideoList.width + 2) return
+                        if (upVideoList._loadingMore) return
                         if (upVideoList.model && upVideoList.model.loading) return
                         if (upVideoList.model && upVideoList.model.hasMore === false) return
+                        upVideoList._loadingMore = true
                         controller.up.fetchMoreUpVideos()
                     }
 
@@ -564,6 +570,8 @@ Rectangle {
                         height: upVideoList.height
                         videoTitle: model.title || ""
                         coverUrl: model.pic || ""
+                        imageActive: upPage.visible
+                        preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                         upName: model.ownerName || ""
                         viewCount: model.views || ""
                         durationText: model.durationText || ""
@@ -574,13 +582,35 @@ Rectangle {
                         subScale: 0.85
                         onClicked: upPage.videoSelected(bvid)
                     }
+
+                    Row {
+                        visible: upVideoList.count === 0 && controller && controller.isLoading
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+                        Repeater {
+                            model: 3
+                            Components.VideoCardCompact {
+                                height: upVideoList.height
+                                placeholder: true
+                                fontFamily: Theme.fontFamily
+                                titleScale: 0.9
+                                subScale: 0.85
+                            }
+                        }
+                    }
                 }
 
                 Connections {
                     target: upVideoList.model
                     function onLoadingChanged() {
                         if (!target || target.loading) return
+                        upVideoList._loadingMore = false
                         upPage.clampScrollState()
+                    }
+                    function onCountChanged() {
+                        upVideoList._loadingMore = false
                     }
                 }
 

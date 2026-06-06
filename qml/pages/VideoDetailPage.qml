@@ -18,6 +18,9 @@ Rectangle {
     property bool fullPartTitleVisible: false
     property string fullPartTitleText: ""
     property bool relatedExpanded: false
+    property bool relatedImagesDeferred: false
+    property bool relatedSectionNearViewport: false
+    property bool relatedSectionReady: false
 
     // 清晰度选择（默认16）
     property int selectedQuality: 16
@@ -103,6 +106,26 @@ Rectangle {
         controller.video.reportCurrentVideoAsRecentViewIfNeeded()
     }
 
+    function captureLoadedDetailSnapshot() {
+        if (!controller || !controller.video || !controller.video.captureCurrentVideoDetail) return
+        if (!controller.videoBvid || controller.videoBvid.length === 0) return
+        controller.video.captureCurrentVideoDetail()
+    }
+
+    function restoreCachedDetailIfAvailable() {
+        if (!controller || !controller.video || !controller.video.restoreCachedVideoDetail) return false
+        if (!bvid || bvid.length === 0) return false
+        _restoringCachedDetail = true
+        var restored = controller.video.restoreCachedVideoDetail(bvid)
+        _restoringCachedDetail = false
+        if (restored) {
+            _pendingRefreshBvid = ""
+            delayedDetailRefreshTimer.stop()
+            _needRestorePartAfterRefresh = false
+        }
+        return restored
+    }
+
     // 分P列表横向滚动位置
     property real savedPartListX: (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
                               ? rootRef.detailPartListXCache[bvid]
@@ -112,9 +135,13 @@ Rectangle {
     property int savedPartCid: 0
     property bool _needRestorePartAfterRefresh: false
     property bool _restoringPartNow: false
+    property bool _restoringCachedDetail: false
     property bool _completed: false
+    property int skeletonPaintToken: 0
 
     onBvidChanged: {
+        captureLoadedDetailSnapshot()
+        skeletonPaintToken += 1
         savedPartListX = (rootRef && bvid && rootRef.detailPartListXCache && rootRef.detailPartListXCache[bvid] !== undefined)
                          ? rootRef.detailPartListXCache[bvid]
                          : 0
@@ -123,7 +150,9 @@ Rectangle {
         _needRestorePartAfterRefresh = false
         _restoringPartNow = false
         relatedExpanded = false
-        refreshDetail(true)
+        if (!restoreCachedDetailIfAvailable()) {
+            refreshDetail(true)
+        }
     }
 
     onSavedPartListXChanged: {
@@ -136,7 +165,50 @@ Rectangle {
     property bool coinPickerVisible: false
     property bool coinSelectLike: false
     readonly property bool heroImagesActive: visible
-    readonly property bool relatedImagesActive: visible && relatedExpanded
+    readonly property bool relatedImagesActive: visible && relatedExpanded && !relatedImagesDeferred && relatedSectionNearViewport
+    readonly property bool detailContentReady: controller && controller.videoBvid === detailPage.bvid && controller.videoTitle.length > 0
+
+    onRelatedExpandedChanged: {
+        if (!relatedExpanded) {
+            relatedImagesDeferred = false
+            relatedSectionNearViewport = false
+            relatedImageResumeTimer.stop()
+            return
+        }
+        Qt.callLater(function() {
+            detailPage.updateRelatedSectionNearViewport()
+            if (mainFlick && mainFlick.moving) {
+                detailPage.deferRelatedImages()
+            } else {
+                detailPage.resumeRelatedImagesSoon()
+            }
+        })
+    }
+
+    function updateRelatedSectionNearViewport() {
+        if (!relatedExpanded || !relatedSectionReady) {
+            relatedSectionNearViewport = false
+            return
+        }
+
+        var sectionTop = relatedSection.y
+        var sectionBottom = sectionTop + relatedSection.height
+        var viewportTop = mainFlick.contentY - 120
+        var viewportBottom = mainFlick.contentY + mainFlick.height + 160
+        relatedSectionNearViewport = sectionBottom >= viewportTop && sectionTop <= viewportBottom
+    }
+
+    function deferRelatedImages() {
+        if (!relatedExpanded) return
+        relatedImageResumeTimer.stop()
+        relatedImagesDeferred = true
+    }
+
+    function resumeRelatedImagesSoon() {
+        if (!relatedExpanded) return
+        updateRelatedSectionNearViewport()
+        relatedImageResumeTimer.restart()
+    }
 
     function restorePartListPosition() {
         if (!videoPartList || !videoPartList.visible) return;
@@ -241,6 +313,11 @@ Rectangle {
         flickableDirection: Flickable.VerticalFlick
         clip: true
         boundsBehavior: Flickable.DragOverBounds
+        onContentYChanged: detailPage.updateRelatedSectionNearViewport()
+        onMovementStarted: detailPage.deferRelatedImages()
+        onFlickStarted: detailPage.deferRelatedImages()
+        onMovementEnded: detailPage.resumeRelatedImagesSoon()
+        onFlickEnded: detailPage.resumeRelatedImagesSoon()
 
         Column {
             id: mainColumn
@@ -256,9 +333,91 @@ Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 height: Math.max(66, heroInfoColumn.implicitHeight + 2)
 
+                Item {
+                    id: heroSkeleton
+                    anchors.fill: parent
+                    visible: !detailPage.detailContentReady
+
+                    Rectangle {
+                        width: 110
+                        height: 66
+                        radius: 8
+                        color: "#1e293b"
+                        anchors.left: parent.left
+                        clip: true
+
+                        Canvas {
+                            anchors.fill: parent
+                            property int paintToken: detailPage.skeletonPaintToken
+                            Component.onCompleted: requestPaint()
+                            onPaintTokenChanged: requestPaint()
+                            onVisibleChanged: if (visible) requestPaint()
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.fillStyle = Qt.rgba(1, 1, 1, 0.045)
+                                ctx.fillRect(0, 0, width, height)
+                                ctx.strokeStyle = Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.26)
+                                ctx.lineWidth = 1.4
+                                ctx.lineCap = "round"
+                                ctx.lineJoin = "round"
+                                ctx.beginPath()
+                                ctx.moveTo(28, 43)
+                                ctx.lineTo(45, 29)
+                                ctx.lineTo(58, 40)
+                                ctx.lineTo(70, 31)
+                                ctx.lineTo(88, 45)
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.arc(78, 20, 4, 0, Math.PI * 2, false)
+                                ctx.stroke()
+                            }
+                        }
+                    }
+
+                    Canvas {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 119
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.topMargin: 2
+                        height: 62
+                        property int paintToken: detailPage.skeletonPaintToken
+                        Component.onCompleted: requestPaint()
+                        onPaintTokenChanged: requestPaint()
+                        onVisibleChanged: if (visible) requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            function pill(x, y, w, h, color) {
+                                ctx.fillStyle = color
+                                ctx.beginPath()
+                                ctx.moveTo(x + h / 2, y)
+                                ctx.lineTo(x + w - h / 2, y)
+                                ctx.quadraticCurveTo(x + w, y, x + w, y + h / 2)
+                                ctx.quadraticCurveTo(x + w, y + h, x + w - h / 2, y + h)
+                                ctx.lineTo(x + h / 2, y + h)
+                                ctx.quadraticCurveTo(x, y + h, x, y + h / 2)
+                                ctx.quadraticCurveTo(x, y, x + h / 2, y)
+                                ctx.fill()
+                            }
+                            pill(0, 0, width * 0.94, 9, Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.20))
+                            pill(0, 13, width * 0.70, 9, Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.16))
+                            pill(0, 31, width * 0.48, 14, Qt.rgba(96 / 255, 165 / 255, 250 / 255, 0.16))
+                            pill(0, 52, width * 0.28, 7, Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.13))
+                            pill(width * 0.34, 52, width * 0.24, 7, Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.13))
+                        }
+                    }
+                }
+
                 // 封面容器
                 Rectangle {
                     id: coverContainer
+                    visible: detailPage.detailContentReady
                     width: 110
                     height: 66
                     radius: 8
@@ -270,12 +429,24 @@ Rectangle {
                         id: coverImage
                         anchors.fill: parent
                         source: controller && controller.videoPic && detailPage.heroImagesActive
-                        ? "image://bili/" + encodeURIComponent(controller.videoPic) : ""
+                        ? "image://bili/size/640x340/" + encodeURIComponent(controller.videoPic) : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         smooth: true
                         mipmap: true
-                        opacity: status === Image.Ready ? 1 : 0
+                        visible: false
+                    }
+
+                    OpacityMask {
+                        anchors.fill: coverImage
+                        source: coverImage
+                        opacity: coverImage.status === Image.Ready ? 1 : 0
+                        maskSource: Rectangle {
+                            width: coverImage.width
+                            height: coverImage.height
+                            radius: coverContainer.radius
+                            visible: false
+                        }
                         Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
                     }
 
@@ -332,6 +503,7 @@ Rectangle {
 
                 // 播放按钮（封面正中）
                 Rectangle {
+                    visible: detailPage.detailContentReady
                     anchors.centerIn: coverContainer
                     width: 30
                     height: 30
@@ -385,6 +557,7 @@ Rectangle {
                 // 右侧信息列
                 Column {
                     id: heroInfoColumn
+                    visible: detailPage.detailContentReady
                     anchors.left: coverContainer.right
                     anchors.leftMargin: 9
                     anchors.right: parent.right
@@ -576,6 +749,7 @@ Rectangle {
                 height: 36
 
                 Row {
+                    visible: detailPage.detailContentReady
                     id: actionRow
                     anchors.fill: parent
                     spacing: 6
@@ -636,6 +810,51 @@ Rectangle {
                         }
                     }
                 }
+
+                Row {
+                    visible: !detailPage.detailContentReady
+                    anchors.fill: parent
+                    spacing: 6
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            width: (parent.width - parent.spacing * 3) / 4
+                            height: 36
+                            radius: 8
+                            color: Qt.rgba(1, 1, 1, 0.05)
+                            border.color: Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+                            Canvas {
+                                anchors.centerIn: parent
+                                width: 38
+                                height: 22
+                                property int paintToken: detailPage.skeletonPaintToken
+                                Component.onCompleted: requestPaint()
+                                onPaintTokenChanged: requestPaint()
+                                onVisibleChanged: if (visible) requestPaint()
+                                onWidthChanged: requestPaint()
+                                onHeightChanged: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.fillStyle = Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.16)
+                                    ctx.beginPath()
+                                    ctx.arc(width / 2, 7, 5, 0, Math.PI * 2, false)
+                                    ctx.fill()
+                                    ctx.beginPath()
+                                    ctx.moveTo(4, 17)
+                                    ctx.lineTo(width - 4, 17)
+                                    ctx.quadraticCurveTo(width, 17, width, 20)
+                                    ctx.quadraticCurveTo(width, 22, width - 4, 22)
+                                    ctx.lineTo(4, 22)
+                                    ctx.quadraticCurveTo(0, 22, 0, 20)
+                                    ctx.quadraticCurveTo(0, 17, 4, 17)
+                                    ctx.fill()
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // ─────────────────────────────────────────────
@@ -644,7 +863,8 @@ Rectangle {
             Item {
                 width: parent.width - 16
                 anchors.horizontalCenter: parent.horizontalCenter
-                height: 24
+                height: detailPage.detailContentReady ? 24 : 0
+                visible: detailPage.detailContentReady
 
                 Row {
                     id: toolRow
@@ -690,7 +910,8 @@ Rectangle {
             Item {
                 width: parent.width - 16
                 anchors.horizontalCenter: parent.horizontalCenter
-                height: 24
+                height: detailPage.detailContentReady ? 24 : 0
+                visible: detailPage.detailContentReady
 
                 Text {
                     id: qualityHeader
@@ -911,9 +1132,51 @@ Rectangle {
                 color: surfaceColor
                 border.color: surfaceBorder
                 border.width: 1
-                height: descColumn.implicitHeight + 18
+                height: detailPage.detailContentReady ? descColumn.implicitHeight + 18 : 48
+
+                Canvas {
+                    visible: !detailPage.detailContentReady
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    property int paintToken: detailPage.skeletonPaintToken
+                    Component.onCompleted: requestPaint()
+                    onPaintTokenChanged: requestPaint()
+                    onVisibleChanged: if (visible) requestPaint()
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.fillStyle = Qt.rgba(96 / 255, 165 / 255, 250 / 255, 0.18)
+                        ctx.beginPath()
+                        ctx.moveTo(4, 0)
+                        ctx.lineTo(42, 0)
+                        ctx.quadraticCurveTo(46, 0, 46, 4)
+                        ctx.quadraticCurveTo(46, 8, 42, 8)
+                        ctx.lineTo(4, 8)
+                        ctx.quadraticCurveTo(0, 8, 0, 4)
+                        ctx.quadraticCurveTo(0, 0, 4, 0)
+                        ctx.fill()
+                        ctx.fillStyle = Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.14)
+                        var widths = [width * 0.92, width * 0.76]
+                        for (var i = 0; i < widths.length; ++i) {
+                            var y = 17 + i * 11
+                            var w = widths[i]
+                            ctx.beginPath()
+                            ctx.moveTo(4, y)
+                            ctx.lineTo(w - 4, y)
+                            ctx.quadraticCurveTo(w, y, w, y + 4)
+                            ctx.quadraticCurveTo(w, y + 8, w - 4, y + 8)
+                            ctx.lineTo(4, y + 8)
+                            ctx.quadraticCurveTo(0, y + 8, 0, y + 4)
+                            ctx.quadraticCurveTo(0, y, 4, y)
+                            ctx.fill()
+                        }
+                    }
+                }
 
                 Column {
+                    visible: detailPage.detailContentReady
                     id: descColumn
                     anchors.fill: parent
                     anchors.margins: 9
@@ -1116,8 +1379,12 @@ Rectangle {
                 width: parent.width - 16
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 6
-                visible: controller && controller.videoBvid === detailPage.bvid
+                visible: detailPage.detailContentReady && controller && controller.videoBvid === detailPage.bvid
                 readonly property var relatedModel: controller ? controller.season.relatedVideoModel() : null
+                Component.onCompleted: {
+                    detailPage.relatedSectionReady = true
+                    detailPage.updateRelatedSectionNearViewport()
+                }
 
                 Rectangle {
                     id: relatedEntryCard
@@ -1220,16 +1487,18 @@ Rectangle {
                         onClicked: {
                             if (!controller || controller.videoBvid !== detailPage.bvid) return
                             detailPage.relatedExpanded = true
-                            controller.season.fetchRelatedVideos()
+                            Qt.callLater(function() {
+                                if (controller && controller.videoBvid === detailPage.bvid) {
+                                    controller.season.fetchRelatedVideos()
+                                }
+                            })
                         }
                     }
                 }
 
                 Item {
                     width: parent.width
-                    height: detailPage.relatedExpanded
-                            ? ((relatedSection.relatedModel && relatedSection.relatedModel.count > 0) ? 135 : 30)
-                            : 0
+                    height: detailPage.relatedExpanded ? 135 : 0
                     visible: detailPage.relatedExpanded
                     clip: true
 
@@ -1239,6 +1508,9 @@ Rectangle {
                         orientation: ListView.Horizontal
                         spacing: 6
                         clip: true
+                        cacheBuffer: 240
+                        displayMarginBeginning: 80
+                        displayMarginEnd: 80
                         model: relatedSection.relatedModel
                         leftMargin: 2
                         rightMargin: 2
@@ -1250,6 +1522,7 @@ Rectangle {
                             videoTitle: model.title || ""
                             coverUrl: model.pic || ""
                             imageActive: detailPage.relatedImagesActive
+                            preferOffscreenPlaceholder: true
                             upName: model.ownerName || ""
                             viewCount: model.views || ""
                             durationText: model.durationText || ""
@@ -1264,23 +1537,22 @@ Rectangle {
                         }
                     }
 
-                    Rectangle {
+                    Row {
                         visible: relatedSection.relatedModel && relatedSection.relatedModel.loading && relatedSection.relatedModel.count === 0
-                        anchors.centerIn: parent
-                        width: loadingRelatedText.implicitWidth + 18
-                        height: 22
-                        radius: 11
-                        color: Qt.rgba(1, 1, 1, 0.06)
-                        border.color: surfaceBorder
-                        border.width: 1
-
-                        Text {
-                            id: loadingRelatedText
-                            anchors.centerIn: parent
-                            text: "加载中"
-                            color: "#94a3b8"
-                            font.family: fontFamily
-                            font.pixelSize: 9
+                        anchors.left: parent.left
+                        anchors.leftMargin: 2
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+                        Repeater {
+                            model: 3
+                            Components.VideoCardCompact {
+                                width: 105
+                                height: 135
+                                placeholder: true
+                                fontFamily: detailPage.fontFamily
+                                titleScale: 0.9
+                                subScale: 0.85
+                            }
                         }
                     }
 
@@ -2002,130 +2274,63 @@ Rectangle {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // 加载指示器
-    // ═══════════════════════════════════════════════════════════
-    Rectangle {
-        id: loadingOverlay
-        anchors.centerIn: parent
-        width: 72
-        height: 86
-        radius: 18
-        color: "#ee0d1117"
-        border.color: Qt.rgba(1, 1, 1, 0.1)
-        border.width: 1
-        visible: controller ? controller.isLoading : false
-        opacity: visible ? 1 : 0
-        scale: visible ? 1 : 0.8
-
-        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutBack } }
-
-        Column {
-            anchors.centerIn: parent
-            spacing: 8
-
-            Canvas {
-                id: loadingSpinner
-                width: 28
-                height: 28
-                anchors.horizontalCenter: parent.horizontalCenter
-
-                property real rotationAngle: 0
-
-                onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.clearRect(0, 0, width, height)
-                    ctx.save()
-                    ctx.translate(14, 14)
-                    ctx.rotate(rotationAngle)
-
-                    ctx.strokeStyle = primaryColor
-                    ctx.lineWidth = 2.5
-                    ctx.lineCap = "round"
-                    ctx.beginPath()
-                    ctx.arc(0, 0, 10, 0, Math.PI * 1.5)
-                    ctx.stroke()
-
-                    ctx.restore()
-                }
-
-                NumberAnimation on rotationAngle {
-                    from: 0
-                    to: Math.PI * 2
-                    duration: 1000
-                    loops: Animation.Infinite
-                    running: controller ? controller.isLoading : false
-                }
-
-                onRotationAngleChanged: requestPaint()
-            }
-
-            Text {
-                text: "加载中"
-                color: "#94a3b8"
-                font.family: fontFamily
-                font.pixelSize: 10
-                anchors.horizontalCenter: parent.horizontalCenter
-            }
-
-            Rectangle {
-                height: 18
-                width: cancelTextItem.implicitWidth + 12
-                radius: 9
-                color: cancelArea.pressed
-                       ? Qt.rgba(0.23, 0.51, 0.96, 0.25)
-                       : Qt.rgba(0.23, 0.51, 0.96, 0.12)
-                border.color: Qt.rgba(0.23, 0.51, 0.96, 0.35)
-                border.width: 1
-                anchors.horizontalCenter: parent.horizontalCenter
-
-                scale: cancelArea.pressed ? 0.9 : 1.0
-                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                Behavior on color { ColorAnimation { duration: 100 } }
-
-                Text {
-                    id: cancelTextItem
-                    anchors.centerIn: parent
-                    text: "取消"
-                    color: "#cbd5e1"
-                    font.family: fontFamily
-                    font.pixelSize: 9
-                }
-
-                MouseArea {
-                    id: cancelArea
-                    anchors.fill: parent
-                    onClicked: {
-                        if (controller) controller.cancelAll();
-                    }
-                }
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
     // 入场动画 + 生命周期
     // ═══════════════════════════════════════════════════════════
     property double _lastRefreshMs: 0
+    property string _pendingRefreshBvid: ""
+
+    Timer {
+        id: delayedDetailRefreshTimer
+        interval: 300
+        repeat: false
+        onTriggered: detailPage.runPendingRefresh()
+    }
+
+    Timer {
+        id: relatedImageResumeTimer
+        interval: 120
+        repeat: false
+        onTriggered: {
+            detailPage.updateRelatedSectionNearViewport()
+            detailPage.relatedImagesDeferred = false
+        }
+    }
+
+    function runPendingRefresh() {
+        if (!controller || _pendingRefreshBvid.length === 0) return
+        if (_pendingRefreshBvid !== bvid) {
+            _pendingRefreshBvid = ""
+            return
+        }
+        if (!visible) return
+        var requestBvid = _pendingRefreshBvid
+        _pendingRefreshBvid = ""
+        controller.video.fetchVideoDetail(requestBvid)
+    }
 
     function refreshDetail(force) {
         if (!controller || bvid.length === 0) return;
         var nowMs = Date.now();
-        if (!force && (nowMs - _lastRefreshMs) < 400) return;
+        var hasPendingRefresh = _pendingRefreshBvid.length > 0 || delayedDetailRefreshTimer.running
+        if (!force && !hasPendingRefresh && (nowMs - _lastRefreshMs) < 400) return;
         _lastRefreshMs = nowMs;
-        controller.video.fetchVideoDetail(bvid);
+        _pendingRefreshBvid = bvid;
+        delayedDetailRefreshTimer.restart();
     }
 
     Component.onCompleted: {
         _completed = true
+        skeletonPaintToken += 1
 
         if (rootRef && rootRef.playQualitySelected > 0) {
             selectedQuality = rootRef.playQualitySelected
         }
         updateQualities()
 
-        if (controller && bvid.length > 0) {
-            refreshDetail(true)
+        if (controller && bvid.length > 0 && !detailContentReady) {
+            if (!restoreCachedDetailIfAvailable()) {
+                refreshDetail(true)
+            }
         }
 
         enterAnimation.start()
@@ -2138,27 +2343,37 @@ Rectangle {
             if (controller) {
                 savedPartCid = controller.videoCid || 0
             }
-            if (_completed) {
-                _needRestorePartAfterRefresh = true
-                refreshDetail(false)
+            if (_completed && controller && controller.videoBvid !== detailPage.bvid) {
+                skeletonPaintToken += 1
+                if (!restoreCachedDetailIfAvailable()) {
+                    _needRestorePartAfterRefresh = true
+                    refreshDetail(false)
+                }
             }
         } else {
             if (videoPartList) savedPartListX = videoPartList.contentX
             if (controller) savedPartCid = controller.videoCid || 0
+            captureLoadedDetailSnapshot()
         }
     }
 
     Connections {
         target: controller
-        function onAcceptQualitiesChanged() { detailPage.updateQualities(); }
+        function onAcceptQualitiesChanged() {
+            detailPage.updateQualities();
+            detailPage.captureLoadedDetailSnapshot();
+        }
         function onVideoDetailChanged() {
             if (controller && controller.videoCid > 0 && controller.videoBvid === detailPage.bvid) {
-                controller.playback.fetchAcceptQualities(detailPage.selectedQuality)
-                controller.favorite.fetchFavoriteStatus()
-                controller.favorite.fetchCoinStatus()
-                controller.favorite.fetchLikeStatus()
-                controller.favorite.fetchWatchLaterStatus()
-                detailPage.reportRecentViewForCurrentSession()
+                if (!detailPage._restoringCachedDetail) {
+                    controller.playback.fetchAcceptQualities(detailPage.selectedQuality)
+                    controller.favorite.fetchFavoriteStatus()
+                    controller.favorite.fetchCoinStatus()
+                    controller.favorite.fetchLikeStatus()
+                    controller.favorite.fetchWatchLaterStatus()
+                    detailPage.reportRecentViewForCurrentSession()
+                }
+                detailPage.captureLoadedDetailSnapshot()
             }
 
             if (detailPage._needRestorePartAfterRefresh && !detailPage._restoringPartNow) {
@@ -2190,6 +2405,12 @@ Rectangle {
                 controller.favorite.fetchWatchLaterStatus()
             }
         }
+        function onFavoriteStatusChanged() { detailPage.captureLoadedDetailSnapshot(); }
+        function onCoinStatusChanged() { detailPage.captureLoadedDetailSnapshot(); }
+        function onLikeStatusChanged() { detailPage.captureLoadedDetailSnapshot(); }
+        function onWatchLaterStatusChanged() { detailPage.captureLoadedDetailSnapshot(); }
+        function onSubtitleListChanged() { detailPage.captureLoadedDetailSnapshot(); }
+        function onSelectedSubtitleChanged() { detailPage.captureLoadedDetailSnapshot(); }
     }
 
     ParallelAnimation {

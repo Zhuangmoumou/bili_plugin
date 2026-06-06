@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
@@ -107,6 +108,7 @@ class BiliController : public QObject {
   Q_PROPERTY(int subtitleOutlineWidth READ subtitleOutlineWidth NOTIFY subtitleStyleChanged)
   Q_PROPERTY(bool subtitleBackgroundEnabled READ subtitleBackgroundEnabled NOTIFY subtitleStyleChanged)
   Q_PROPERTY(double subtitleBackgroundOpacity READ subtitleBackgroundOpacity NOTIFY subtitleStyleChanged)
+  Q_PROPERTY(bool videoCardOffscreenPlaceholderEnabled READ videoCardOffscreenPlaceholderEnabled NOTIFY preferenceSettingsChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -203,6 +205,7 @@ public:
   int subtitleOutlineWidth() const { return m_subtitleOutlineWidth; }
   bool subtitleBackgroundEnabled() const { return m_subtitleBackgroundEnabled; }
   double subtitleBackgroundOpacity() const { return m_subtitleBackgroundOpacity; }
+  bool videoCardOffscreenPlaceholderEnabled() const { return m_videoCardOffscreenPlaceholderEnabled; }
 
   bool loggedIn() const;
   qint64 upUserMid() const { return m_upUserMid; }
@@ -286,6 +289,7 @@ signals:
   void subtitleListChanged();
   void selectedSubtitleChanged();
   void subtitleStyleChanged();
+  void preferenceSettingsChanged();
   void loginStateChanged();
   void qrcodeChanged();
   void globalErrorChanged();
@@ -347,6 +351,29 @@ private:
   qint64 m_videoSeasonMid = 0;
   int m_videoSeasonTotal = 0;
 
+  struct VideoDetailSnapshot {
+    VideoItem video;
+    qint64 playbackProgressCid = 0;
+    int playbackProgressSeconds = 0;
+    qint64 seasonId = 0;
+    QString seasonTitle;
+    QString seasonCover;
+    qint64 seasonMid = 0;
+    int seasonTotal = 0;
+    QVector<VideoPartItem> parts;
+    QVector<int> acceptQualities;
+    bool isFavorited = false;
+    bool isCoined = false;
+    bool isLiked = false;
+    bool isWatchLater = false;
+    QJsonArray subtitleItems;
+    qint64 selectedSubtitleId = 0;
+    QString selectedSubtitleLabel;
+    bool valid = false;
+  };
+
+  QHash<QString, VideoDetailSnapshot> m_videoDetailSnapshots;
+
   QString m_playUrl;
   int m_playQuality;
   QVector<int> m_acceptQualities;
@@ -371,6 +398,7 @@ private:
   int m_subtitleOutlineWidth = 1;
   bool m_subtitleBackgroundEnabled = false;
   double m_subtitleBackgroundOpacity = 0.5;
+  bool m_videoCardOffscreenPlaceholderEnabled = false;
   QPointer<QNetworkReply> m_downloadReply;
   QPointer<QProcess> m_externalPlayerProcess;
 

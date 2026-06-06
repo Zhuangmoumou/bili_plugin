@@ -135,6 +135,7 @@ Rectangle {
                 videoTitle: model.title || ""
                 coverUrl: model.pic || ""
                 imageActive: watchLaterPage.watchLaterImagesActive
+                preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                 upName: model.ownerName || ""
                 viewCount: ""
                 durationText: model.durationText || ""

@@ -1,4 +1,5 @@
 #include "modules/up/BiliUpModule.h"
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
@@ -31,11 +32,149 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
+
+namespace {
+
+struct ParsedUpVideos {
+  qint64 mid = 0;
+  int page = 1;
+  QVector<VideoItem> items;
+  bool totalKnown = false;
+  int total = 0;
+  qint64 nextCursor = 0;
+  bool hasMore = false;
+};
+
+ParsedUpVideos parseUpVideosPayload(const QJsonObject &data, qint64 mid,
+                                    int page, int pageSize) {
+  ParsedUpVideos result;
+  result.mid = mid;
+  result.page = page;
+
+  QJsonArray list;
+  if (data.value("list").isObject()) {
+    QJsonObject listObj = data.value("list").toObject();
+    list = listObj.value("vlist").toArray();
+  }
+  if (list.isEmpty()) {
+    list = data.value("vlist").toArray();
+  }
+  if (list.isEmpty()) {
+    list = data.value("item").toArray();
+  }
+
+  result.items.reserve(list.size());
+  for (const QJsonValue &v : list) {
+    if (!v.isObject())
+      continue;
+
+    QJsonObject obj = v.toObject();
+    QJsonObject archiveObj = obj.value("archive").toObject();
+    VideoItem item = archiveObj.isEmpty()
+                         ? VideoListModel::parseVideoItem(obj)
+                         : VideoListModel::parseVideoItem(archiveObj);
+
+    if (item.aid <= 0) {
+      item.aid = obj.value("aid").toVariant().toLongLong();
+    }
+    if (item.aid <= 0) {
+      item.aid = obj.value("param").toString().toLongLong();
+    }
+
+    if (item.pubdate <= 0) {
+      item.pubdate = obj.value("pubdate").toVariant().toLongLong();
+    }
+    if (item.pubdate <= 0) {
+      item.pubdate = obj.value("ctime").toVariant().toLongLong();
+    }
+    if (item.pubdate <= 0) {
+      item.pubdate = obj.value("created").toVariant().toLongLong();
+    }
+    if (item.pubdate <= 0 && !archiveObj.isEmpty()) {
+      item.pubdate = archiveObj.value("created").toVariant().toLongLong();
+    }
+
+    result.items.append(item);
+  }
+
+  std::sort(result.items.begin(), result.items.end(),
+            [](const VideoItem &a, const VideoItem &b) {
+              return a.pubdate > b.pubdate;
+            });
+
+  QJsonObject pageObj = data.value("page").toObject();
+  result.total = BiliJson::intValue(data.value("count"), &result.totalKnown);
+  if (!result.totalKnown)
+    result.total = BiliJson::intValue(pageObj.value("count"), &result.totalKnown);
+  if (!result.totalKnown)
+    result.total = BiliJson::intValue(pageObj.value("total"), &result.totalKnown);
+
+  QJsonObject cursorObj = data.value("cursor").toObject();
+  if (!cursorObj.isEmpty()) {
+    result.nextCursor = cursorObj.value("next").toVariant().toLongLong();
+    if (result.nextCursor <= 0) {
+      result.nextCursor = cursorObj.value("max").toVariant().toLongLong();
+    }
+  }
+
+  if (result.nextCursor <= 0 && !result.items.isEmpty()) {
+    result.nextCursor =
+        result.items.last().aid > 0 ? result.items.last().aid
+                                    : result.items.last().pubdate;
+  }
+
+  result.hasMore = !result.items.isEmpty();
+  if (data.contains("has_next")) {
+    result.hasMore = data.value("has_next").toBool(false);
+  } else {
+    const int count = pageObj.value("count").toInt(0);
+    const int num = pageObj.value("pn").toInt(page);
+    const int size = pageObj.value("ps").toInt(pageSize);
+    if (count > 0 && size > 0) {
+      result.hasMore = (num * size < count);
+    } else {
+      result.hasMore = (result.nextCursor > 0) && (result.items.size() >= pageSize);
+    }
+  }
+
+  return result;
+}
+
+QVector<UpSeasonItem> parseUpSeasonsPayload(const QJsonObject &data) {
+  QVector<UpSeasonItem> items;
+  QJsonObject itemsLists = data.value("items_lists").toObject();
+
+  auto parseList = [&items](const QJsonArray &arr, bool isSeries) {
+    for (const QJsonValue &v : arr) {
+      if (!v.isObject())
+        continue;
+      QJsonObject obj = v.toObject();
+      QJsonObject meta = obj.value("meta").toObject();
+      UpSeasonItem it;
+      if (isSeries) {
+        it.seasonId = meta.value("series_id").toVariant().toLongLong();
+      } else {
+        it.seasonId = meta.value("season_id").toVariant().toLongLong();
+      }
+      it.name = meta.value("name").toString();
+      it.cover = meta.value("cover").toString();
+      it.total = meta.value("total").toInt();
+      it.isSeries = isSeries;
+      if (it.seasonId > 0 && !it.name.isEmpty())
+        items.append(it);
+    }
+  };
+
+  parseList(itemsLists.value("seasons_list").toArray(), false);
+  parseList(itemsLists.value("series_list").toArray(), true);
+  return items;
+}
+
+} // namespace
 
 BiliUpModule::BiliUpModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
@@ -167,119 +306,44 @@ void BiliUpModule::fetchUpVideos(qint64 mid, int page, int pageSize) {
     params["pn"] = QString::number(page);
   }
 
+  QPointer<BiliController> self(m_controller);
+  const qint64 requestMid = mid;
+  const int requestPage = page;
+  const int requestPageSize = pageSize;
   m_controller->apiGet(
       "/user/videos", params,
-      [this, page, pageSize](const QJsonObject &data) {
-        QJsonArray list;
-        if (data.value("list").isObject()) {
-          QJsonObject listObj = data.value("list").toObject();
-          list = listObj.value("vlist").toArray();
-        }
-        if (list.isEmpty()) {
-          list = data.value("vlist").toArray();
-        }
-        if (list.isEmpty()) {
-          list = data.value("item").toArray();
-        }
+      [self, requestMid, requestPage, requestPageSize](const QJsonObject &data) {
+        if (!self)
+          return;
+        biliRunInWorker(
+            self,
+            [data, requestMid, requestPage, requestPageSize]() {
+              return parseUpVideosPayload(data, requestMid, requestPage,
+                                          requestPageSize);
+            },
+            [self](ParsedUpVideos result) {
+              if (!self || !self->m_upVideoModel)
+                return;
+              if (self->m_upUserMid != result.mid ||
+                  self->m_upVideoPage != result.page ||
+                  self->m_upSelectedSeasonId > 0) {
+                return;
+              }
 
-        QVector<VideoItem> items;
-        items.reserve(list.size());
-        for (const QJsonValue &v : list) {
-          if (v.isObject()) {
-            QJsonObject obj = v.toObject();
-            QJsonObject archiveObj = obj.value("archive").toObject();
-            VideoItem item = archiveObj.isEmpty()
-                                 ? VideoListModel::parseVideoItem(obj)
-                                 : VideoListModel::parseVideoItem(archiveObj);
+              self->m_upVideoModel->appendItems(result.items);
+              if (result.totalKnown)
+                self->setUpVideoTotal(result.total);
+              if (result.nextCursor > 0)
+                self->m_upVideoCursorNext = result.nextCursor;
 
-            // APP space/archive/cursor：常见字段
-            // - aid 不一定在 archive 对象里，可能在 param 字段（字符串）
-            // - 时间戳常用 ctime
-            if (item.aid <= 0) {
-              item.aid = obj.value("aid").toVariant().toLongLong();
-            }
-            if (item.aid <= 0) {
-              item.aid = obj.value("param").toString().toLongLong();
-            }
+              self->m_upVideoHasMore = result.hasMore;
+              self->m_upVideoModel->setHasMore(result.hasMore);
+              self->m_upVideoModel->setLoading(false);
 
-            if (item.pubdate <= 0) {
-              item.pubdate = obj.value("pubdate").toVariant().toLongLong();
-            }
-            if (item.pubdate <= 0) {
-              item.pubdate = obj.value("ctime").toVariant().toLongLong();
-            }
-            if (item.pubdate <= 0) {
-              item.pubdate = obj.value("created").toVariant().toLongLong();
-            }
-            if (item.pubdate <= 0 && !archiveObj.isEmpty()) {
-              item.pubdate = archiveObj.value("created").toVariant().toLongLong();
-            }
-
-            items.append(item);
-          }
-        }
-
-        std::sort(items.begin(), items.end(),
-                  [](const VideoItem &a, const VideoItem &b) {
-                    return a.pubdate > b.pubdate;
-                  });
-
-        m_controller->m_upVideoModel->appendItems(items);
-
-        QJsonObject pageObj = data.value("page").toObject();
-        bool totalKnown = false;
-        int total = BiliJson::intValue(data.value("count"), &totalKnown);
-        if (!totalKnown) total = BiliJson::intValue(pageObj.value("count"), &totalKnown);
-        if (!totalKnown) total = BiliJson::intValue(pageObj.value("total"), &totalKnown);
-        if (totalKnown) m_controller->setUpVideoTotal(total);
-
-        // 解析游标（APP cursor）
-        // space/archive/cursor 在很多情况下不返回 data.cursor，而是要求客户端用“上一页最后一个 aid”继续翻页。
-        qint64 nextCursor = 0;
-
-        QJsonObject cursorObj = data.value("cursor").toObject();
-        if (!cursorObj.isEmpty()) {
-          nextCursor = cursorObj.value("next").toVariant().toLongLong();
-          if (nextCursor <= 0) {
-            nextCursor = cursorObj.value("max").toVariant().toLongLong();
-          }
-        }
-
-        // 兜底：用最后一条的 aid（优先）/pubdate 作为游标
-        if (nextCursor <= 0 && !items.isEmpty()) {
-          if (items.last().aid > 0) {
-            nextCursor = items.last().aid;
-          } else {
-            nextCursor = items.last().pubdate;
-          }
-        }
-
-        if (nextCursor > 0) {
-          m_controller->m_upVideoCursorNext = nextCursor;
-        }
-
-        bool hasMore = !items.isEmpty();
-        if (data.contains("has_next")) {
-          hasMore = data.value("has_next").toBool(false);
-        } else {
-          // 兼容 web 分页
-          int count = pageObj.value("count").toInt(0);
-          int num = pageObj.value("pn").toInt(page);
-          int size = pageObj.value("ps").toInt(pageSize);
-          if (count > 0 && size > 0) {
-            hasMore = (num * size < count);
-          } else {
-            // 若是游标模式但缺失 has_next，则按 nextCursor 是否变化判断
-            hasMore = (m_controller->m_upVideoCursorNext > 0) && (items.size() >= pageSize);
-          }
-        }
-        m_controller->m_upVideoHasMore = hasMore;
-        m_controller->m_upVideoModel->setHasMore(hasMore);
-        m_controller->m_upVideoModel->setLoading(false);
-
-        if (items.isEmpty() && m_controller->m_upVideoPage == 1) {
-          m_controller->m_upVideoModel->setErrorMessage("暂无投稿");
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                self->m_upVideoModel->setErrorMessage("暂无投稿");
+              }
+            });
       },
       [this](int, const QString &msg) {
         m_controller->m_upVideoModel->setLoading(false);
@@ -323,35 +387,14 @@ void BiliUpModule::fetchUpSeasons(qint64 mid) {
       [self, mid](const QJsonObject &data) {
         if (!self || self->m_upUserMid != mid) return;
         if (!self->m_upSeasonModel) return;
-
-        QVector<UpSeasonItem> items;
-        QJsonObject itemsLists = data.value("items_lists").toObject();
-
-        auto parseList = [&](const QJsonArray &arr, bool isSeries) {
-          for (const QJsonValue &v : arr) {
-            if (!v.isObject()) continue;
-            QJsonObject obj = v.toObject();
-            QJsonObject meta = obj.value("meta").toObject();
-            UpSeasonItem it;
-            if (isSeries) {
-              it.seasonId = meta.value("series_id").toVariant().toLongLong();
-            } else {
-              it.seasonId = meta.value("season_id").toVariant().toLongLong();
-            }
-            it.name = meta.value("name").toString();
-            it.cover = meta.value("cover").toString();
-            it.total = meta.value("total").toInt();
-            it.isSeries = isSeries;
-            if (it.seasonId > 0 && !it.name.isEmpty())
-              items.append(it);
-          }
-        };
-
-        parseList(itemsLists.value("seasons_list").toArray(), false);
-        parseList(itemsLists.value("series_list").toArray(), true);
-
-        self->m_upSeasonModel->setItems(items);
-        self->m_upSeasonModel->setLoading(false);
+        biliRunInWorker(
+            self, [data]() { return parseUpSeasonsPayload(data); },
+            [self, mid](QVector<UpSeasonItem> items) {
+              if (!self || self->m_upUserMid != mid || !self->m_upSeasonModel)
+                return;
+              self->m_upSeasonModel->setItems(items);
+              self->m_upSeasonModel->setLoading(false);
+            });
       },
       [self](int, const QString &msg) {
         if (!self || !self->m_upSeasonModel) return;

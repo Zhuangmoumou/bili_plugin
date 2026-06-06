@@ -1,4 +1,5 @@
 #include "modules/favorite/BiliFavoriteModule.h"
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
@@ -30,11 +31,72 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
+
+namespace {
+
+struct ParsedFavoriteItems {
+  qint64 mediaId = 0;
+  int page = 1;
+  QVector<VideoItem> items;
+  bool hasMore = false;
+};
+
+QVector<FavoriteFolderItem> parseFavoriteFoldersPayload(const QJsonObject &data) {
+  QJsonArray list = data.value("list").toArray();
+  QVector<FavoriteFolderItem> items;
+  items.reserve(list.size());
+  for (const QJsonValue &v : list) {
+    if (v.isObject()) {
+      items.append(FavoriteFolderModel::parseFavoriteFolderItem(v.toObject()));
+    }
+  }
+  return items;
+}
+
+ParsedFavoriteItems parseFavoriteItemsPayload(const QJsonObject &data,
+                                              qint64 mediaId, int page) {
+  ParsedFavoriteItems result;
+  result.mediaId = mediaId;
+  result.page = page;
+
+  QJsonArray list = data.value("medias").toArray();
+  result.items.reserve(list.size());
+  for (const QJsonValue &v : list) {
+    if (!v.isObject())
+      continue;
+
+    QJsonObject obj = v.toObject();
+    VideoItem item = VideoListModel::parseVideoItem(obj);
+    item.pic = obj.value("cover").toString();
+    item.duration = obj.value("duration").toInt();
+
+    QJsonObject upper = obj.value("upper").toObject();
+    item.ownerName = upper.value("name").toString();
+    item.ownerMid = upper.value("mid").toVariant().toLongLong();
+    item.ownerFace = upper.value("face").toString();
+
+    QJsonObject cntInfo = obj.value("cnt_info").toObject();
+    item.views = cntInfo.value("play").toVariant().toLongLong();
+    if (item.views <= 0) {
+      item.views = cntInfo.value("view").toVariant().toLongLong();
+    }
+    item.danmaku = cntInfo.value("danmaku").toVariant().toLongLong();
+    item.likes = cntInfo.value("like").toVariant().toLongLong();
+    item.favorites = cntInfo.value("favorite").toVariant().toLongLong();
+
+    result.items.append(item);
+  }
+
+  const bool hasMore = data.value("has_more").toBool(false);
+  result.hasMore = hasMore ? true : !result.items.isEmpty();
+  return result;
+}
+
+} // namespace
 
 BiliFavoriteModule::BiliFavoriteModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
@@ -64,53 +126,52 @@ void BiliFavoriteModule::fetchFavoriteFolders() {
   QMap<QString, QString> params;
   params["mid"] = QString::number(m_controller->m_userId);
 
+  QPointer<BiliController> self(m_controller);
   m_controller->apiGet(
       "/fav/folder/list", params,
-      [this](const QJsonObject &data) {
+      [self](const QJsonObject &data) {
+        if (!self || !self->m_favoriteFolderModel)
+          return;
+        biliRunInWorker(
+            self, [data]() { return parseFavoriteFoldersPayload(data); },
+            [self](QVector<FavoriteFolderItem> items) {
+              if (!self || !self->m_favoriteFolderModel)
+                return;
 
-        QJsonArray list = data.value("list").toArray();
-        QVector<FavoriteFolderItem> items;
-        items.reserve(list.size());
-        for (const QJsonValue &v : list) {
-          if (v.isObject()) {
-            items.append(FavoriteFolderModel::parseFavoriteFolderItem(v.toObject()));
-          }
-        }
+              self->m_favoriteFolderModel->setItems(items);
+              self->m_favoriteFolderModel->setLoading(false);
 
-        m_controller->m_favoriteFolderModel->setItems(items);
-        m_controller->m_favoriteFolderModel->setLoading(false);
+              for (const FavoriteFolderItem &folder : items) {
+                QMap<QString, QString> p;
+                qint64 mediaId = folder.id > 0 ? folder.id : folder.fid;
+                if (mediaId <= 0) continue;
+                p["media_id"] = QString::number(mediaId);
+                p["pn"] = "1";
+                p["ps"] = "1";
+                p["order"] = "mtime";
+                p["type"] = "0";
 
-        // 更新封面为每个收藏夹的首个视频封面
-        for (const FavoriteFolderItem &folder : items) {
-          QMap<QString, QString> p;
-          qint64 mediaId = folder.id > 0 ? folder.id : folder.fid;
-          if (mediaId <= 0) continue;
-          p["media_id"] = QString::number(mediaId);
-          p["pn"] = "1";
-          p["ps"] = "1";
-          p["order"] = "mtime";
-          p["type"] = "0";
+                QPointer<BiliController> self2(self);
+                self->m_network->get(
+                    "/fav/resource/list", p,
+                    [self2, mediaId](const QJsonObject &data2) {
+                      if (!self2) return;
+                      QJsonArray medias = data2.value("medias").toArray();
+                      if (!medias.isEmpty()) {
+                        QJsonObject first = medias.first().toObject();
+                        QString cover = first.value("cover").toString();
+                        if (!cover.isEmpty()) {
+                          self2->m_favoriteFolderModel->updateCover(mediaId, cover);
+                        }
+                      }
+                    },
+                    nullptr);
+              }
 
-          QPointer<BiliController> self2(m_controller);
-          m_controller->m_network->get(
-              "/fav/resource/list", p,
-              [self2, mediaId](const QJsonObject &data2) {
-                if (!self2) return;
-                QJsonArray medias = data2.value("medias").toArray();
-                if (!medias.isEmpty()) {
-                  QJsonObject first = medias.first().toObject();
-                  QString cover = first.value("cover").toString();
-                  if (!cover.isEmpty()) {
-                    self2->m_favoriteFolderModel->updateCover(mediaId, cover);
-                  }
-                }
-              },
-              nullptr);
-        }
-
-        if (items.isEmpty()) {
-          emit m_controller->toastMessage("暂无收藏夹");
-        }
+              if (items.isEmpty()) {
+                emit self->toastMessage("暂无收藏夹");
+              }
+            });
       },
       [this](int, const QString &msg) {
         m_controller->m_favoriteFolderModel->setLoading(false);
@@ -146,47 +207,34 @@ void BiliFavoriteModule::fetchFavoriteItems(qint64 mediaId, int page, int pageSi
   params["order"] = "mtime";
   params["type"] = "0";
 
+  QPointer<BiliController> self(m_controller);
+  const qint64 requestMediaId = mediaId;
+  const int requestPage = page;
   m_controller->apiGet(
       "/fav/resource/list", params,
-      [this](const QJsonObject &data) {
+      [this, self, requestMediaId, requestPage](const QJsonObject &data) {
+        if (!self || !self->m_favoriteItemModel)
+          return;
+        biliRunInWorker(
+            self,
+            [data, requestMediaId, requestPage]() {
+              return parseFavoriteItemsPayload(data, requestMediaId, requestPage);
+            },
+            [this, self](ParsedFavoriteItems result) {
+              if (!self || !self->m_favoriteItemModel ||
+                  m_currentFavoriteId != result.mediaId ||
+                  m_favoritePage != result.page) {
+                return;
+              }
 
-        QJsonArray list = data.value("medias").toArray();
-        QVector<VideoItem> items;
-        items.reserve(list.size());
-        for (const QJsonValue &v : list) {
-          if (!v.isObject())
-            continue;
+              self->m_favoriteItemModel->appendItems(result.items);
+              self->m_favoriteItemModel->setHasMore(result.hasMore);
+              self->m_favoriteItemModel->setLoading(false);
 
-          QJsonObject obj = v.toObject();
-          VideoItem item = VideoListModel::parseVideoItem(obj);
-          item.pic = obj.value("cover").toString();
-          item.duration = obj.value("duration").toInt();
-
-          QJsonObject upper = obj.value("upper").toObject();
-          item.ownerName = upper.value("name").toString();
-          item.ownerMid = upper.value("mid").toVariant().toLongLong();
-          item.ownerFace = upper.value("face").toString();
-
-          QJsonObject cntInfo = obj.value("cnt_info").toObject();
-          item.views = cntInfo.value("play").toVariant().toLongLong();
-          if (item.views <= 0) {
-            item.views = cntInfo.value("view").toVariant().toLongLong();
-          }
-          item.danmaku = cntInfo.value("danmaku").toVariant().toLongLong();
-          item.likes = cntInfo.value("like").toVariant().toLongLong();
-          item.favorites = cntInfo.value("favorite").toVariant().toLongLong();
-
-          items.append(item);
-        }
-
-        m_controller->m_favoriteItemModel->appendItems(items);
-        bool hasMore = data.value("has_more").toBool(false);
-        m_controller->m_favoriteItemModel->setHasMore(hasMore ? true : !items.isEmpty());
-        m_controller->m_favoriteItemModel->setLoading(false);
-
-        if (items.isEmpty() && m_favoritePage == 1) {
-          m_controller->m_favoriteItemModel->setErrorMessage("收藏夹为空");
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                self->m_favoriteItemModel->setErrorMessage("收藏夹为空");
+              }
+            });
       },
       [this](int, const QString &msg) {
         m_controller->m_favoriteItemModel->setLoading(false);
@@ -222,11 +270,17 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
+  const qint64 requestAid = aid;
 
   m_controller->apiGet(
       "/fav/status", params,
-      [this](const QJsonObject &data) {
-        m_favoriteStatusLoadingAid = 0;
+      [this, requestAid](const QJsonObject &data) {
+        if (m_favoriteStatusLoadingAid == requestAid) {
+          m_favoriteStatusLoadingAid = 0;
+        }
+        if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
+          return;
+        }
 
         bool fav = false;
         if (data.value("favoured").isBool()) {
@@ -239,8 +293,13 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
           emit m_controller->favoriteStatusChanged();
         }
       },
-      [this](int, const QString &msg) {
-        m_favoriteStatusLoadingAid = 0;
+      [this, requestAid](int, const QString &msg) {
+        if (m_favoriteStatusLoadingAid == requestAid) {
+          m_favoriteStatusLoadingAid = 0;
+        }
+        if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
+          return;
+        }
         emit m_controller->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
       });
 }
@@ -260,11 +319,17 @@ void BiliFavoriteModule::fetchCoinStatus() {
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
+  const qint64 requestAid = aid;
 
   m_controller->apiGet(
       "/coin/status", params,
-      [this](const QJsonObject &data) {
-        m_coinStatusLoadingAid = 0;
+      [this, requestAid](const QJsonObject &data) {
+        if (m_coinStatusLoadingAid == requestAid) {
+          m_coinStatusLoadingAid = 0;
+        }
+        if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
+          return;
+        }
 
         bool coined = false;
         int multiply = data.value("multiply").toInt(0);
@@ -278,8 +343,13 @@ void BiliFavoriteModule::fetchCoinStatus() {
           emit m_controller->coinStatusChanged();
         }
       },
-      [this](int, const QString &msg) {
-        m_coinStatusLoadingAid = 0;
+      [this, requestAid](int, const QString &msg) {
+        if (m_coinStatusLoadingAid == requestAid) {
+          m_coinStatusLoadingAid = 0;
+        }
+        if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
+          return;
+        }
         emit m_controller->toastMessage(QString("获取投币状态失败：%1").arg(msg));
       });
 }
@@ -345,11 +415,17 @@ void BiliFavoriteModule::fetchLikeStatus() {
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
+  const qint64 requestAid = aid;
 
   m_controller->apiGet(
       "/like/status", params,
-      [this](const QJsonObject &data) {
-        m_likeStatusLoadingAid = 0;
+      [this, requestAid](const QJsonObject &data) {
+        if (m_likeStatusLoadingAid == requestAid) {
+          m_likeStatusLoadingAid = 0;
+        }
+        if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
+          return;
+        }
 
         int liked = 0;
         if (data.value("liked").isBool()) {
@@ -365,8 +441,13 @@ void BiliFavoriteModule::fetchLikeStatus() {
           emit m_controller->likeStatusChanged();
         }
       },
-      [this](int, const QString &msg) {
-        m_likeStatusLoadingAid = 0;
+      [this, requestAid](int, const QString &msg) {
+        if (m_likeStatusLoadingAid == requestAid) {
+          m_likeStatusLoadingAid = 0;
+        }
+        if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
+          return;
+        }
         emit m_controller->toastMessage(QString("获取点赞状态失败：%1").arg(msg));
       });
 }
@@ -383,6 +464,8 @@ void BiliFavoriteModule::fetchWatchLaterStatus() {
     return;
   }
   m_watchLaterStatusLoadingAid = aid;
+  const qint64 requestAid = aid;
+  const QString requestBvid = m_controller->m_currentVideo.bvid;
 
   QMap<QString, QString> params;
   params["pn"] = "1";
@@ -390,8 +473,15 @@ void BiliFavoriteModule::fetchWatchLaterStatus() {
 
   m_controller->apiGet(
       "/toview/list", params,
-      [this](const QJsonObject &data) {
-        m_watchLaterStatusLoadingAid = 0;
+      [this, requestAid, requestBvid](const QJsonObject &data) {
+        if (m_watchLaterStatusLoadingAid == requestAid) {
+          m_watchLaterStatusLoadingAid = 0;
+        }
+        if (!m_controller ||
+            m_controller->m_currentVideo.aid != requestAid ||
+            m_controller->m_currentVideo.bvid != requestBvid) {
+          return;
+        }
         QJsonArray list = data.value("list").toArray();
         if (list.isEmpty()) {
           list = data.value("data").toArray();
@@ -415,8 +505,15 @@ void BiliFavoriteModule::fetchWatchLaterStatus() {
           emit m_controller->watchLaterStatusChanged();
         }
       },
-      [this](int, const QString &msg) {
-        m_watchLaterStatusLoadingAid = 0;
+      [this, requestAid, requestBvid](int, const QString &msg) {
+        if (m_watchLaterStatusLoadingAid == requestAid) {
+          m_watchLaterStatusLoadingAid = 0;
+        }
+        if (!m_controller ||
+            m_controller->m_currentVideo.aid != requestAid ||
+            m_controller->m_currentVideo.bvid != requestBvid) {
+          return;
+        }
         emit m_controller->toastMessage(QString("获取稍后再看状态失败：%1").arg(msg));
       });
 }

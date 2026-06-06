@@ -27,6 +27,7 @@ Rectangle {
     property double lastRecommendRefreshMs: 0
     property bool initialPopularRequested: false
     property bool popularModelAttached: false
+    property bool popularLoadingMore: false
     readonly property bool popularImagesActive: visible && tabIndex === 0
     readonly property bool rankingImagesActive: visible && tabIndex === 1
     readonly property bool profileImagesActive: visible && tabIndex === 3
@@ -128,6 +129,7 @@ Rectangle {
                     videoTitle: model.title || ""
                     coverUrl: model.pic || ""
                     imageActive: homePage.popularImagesActive
+                    preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                     upName: model.ownerName || ""
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
@@ -138,8 +140,26 @@ Rectangle {
                 }
 
                 onAtXEndChanged: {
-                    if (atXEnd && controller && !isLoading && popularList.count > 0) {
-                        controller.feed.fetchMorePopular()
+                    if (!atXEnd || !controller) return
+                    if (popularList.contentWidth <= popularList.width + 2) return
+                    if (isLoading || homePage.popularLoadingMore || popularList.count <= 0) return
+                    homePage.popularLoadingMore = true
+                    controller.feed.fetchMorePopular()
+                }
+
+                Row {
+                    visible: initialPopularRequested && popularList.count === 0 && isLoading
+                    anchors.left: parent.left
+                    anchors.leftMargin: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    Repeater {
+                        model: 3
+                        VideoCardCompact {
+                            height: popularList.height
+                            placeholder: true
+                            fontFamily: homePage.fontFamily
+                        }
                     }
                 }
 
@@ -180,6 +200,7 @@ Rectangle {
                     videoTitle: model.title || ""
                     coverUrl: model.pic || ""
                     imageActive: homePage.rankingImagesActive
+                    preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                     upName: model.ownerName || ""
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
@@ -189,6 +210,22 @@ Rectangle {
                     showRank: true
                     fontFamily: homePage.fontFamily
                     onClicked: homePage.videoSelected(bvid)
+                }
+
+                Row {
+                    visible: rankingList.count === 0 && isLoading
+                    anchors.left: parent.left
+                    anchors.leftMargin: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    Repeater {
+                        model: 3
+                        VideoCardCompact {
+                            height: rankingList.height
+                            placeholder: true
+                            fontFamily: homePage.fontFamily
+                        }
+                    }
                 }
 
                 Text {
@@ -519,6 +556,14 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    Connections {
+        target: controller
+        ignoreUnknownSignals: true
+        function onIsLoadingChanged() {
+            if (!controller || !controller.isLoading) homePage.popularLoadingMore = false
         }
     }
 

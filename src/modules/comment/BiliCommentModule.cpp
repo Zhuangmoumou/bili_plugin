@@ -1,4 +1,5 @@
 #include "modules/comment/BiliCommentModule.h"
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
@@ -21,6 +22,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QRegExp>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringListModel>
@@ -30,11 +32,109 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
+
+namespace {
+
+struct ParsedComments {
+  int page = 1;
+  int total = 0;
+  QVector<CommentItem> items;
+};
+
+struct ParsedCommentReplies {
+  int page = 1;
+  QVector<CommentReplyItem> items;
+  bool hasMore = false;
+};
+
+ParsedComments parseCommentsPayload(const QJsonObject &data, int page) {
+  ParsedComments result;
+  result.page = page;
+
+  QJsonObject pageObj = data.value("page").toObject();
+  result.total = pageObj.value("count").toInt();
+
+  QJsonArray replies = data.value("replies").toArray();
+  QSet<qint64> seenRpids;
+  seenRpids.reserve(replies.size() + 6);
+
+  auto hasComment = [&seenRpids](qint64 rpid) {
+    return rpid > 0 && seenRpids.contains(rpid);
+  };
+  auto markComment = [&seenRpids](qint64 rpid) {
+    if (rpid > 0)
+      seenRpids.insert(rpid);
+  };
+  auto appendTopComment = [&result, &hasComment,
+                           &markComment](const QJsonObject &obj) {
+    if (obj.isEmpty())
+      return;
+    CommentItem topComment = CommentListModel::parseCommentItem(obj);
+    if (topComment.rpid <= 0 || hasComment(topComment.rpid))
+      return;
+    topComment.isTop = true;
+    markComment(topComment.rpid);
+    result.items.append(topComment);
+  };
+
+  if (page == 1) {
+    appendTopComment(data.value("upper").toObject().value("top").toObject());
+
+    QJsonObject topObj = data.value("top").toObject();
+    const QStringList topKeys = {"upper", "admin", "vote"};
+    for (const QString &key : topKeys) {
+      appendTopComment(topObj.value(key).toObject());
+    }
+
+    QJsonArray topReplies = data.value("top_replies").toArray();
+    for (const QJsonValue &v : topReplies) {
+      if (v.isObject())
+        appendTopComment(v.toObject());
+    }
+  }
+
+  result.items.reserve(result.items.size() + replies.size());
+  for (const QJsonValue &v : replies) {
+    if (!v.isObject())
+      continue;
+    CommentItem comment = CommentListModel::parseCommentItem(v.toObject());
+    if (!hasComment(comment.rpid)) {
+      markComment(comment.rpid);
+      result.items.append(comment);
+    }
+  }
+
+  return result;
+}
+
+ParsedCommentReplies parseCommentRepliesPayload(const QJsonObject &data,
+                                                int page) {
+  ParsedCommentReplies result;
+  result.page = page;
+
+  QJsonArray replies = data.value("replies").toArray();
+  result.items.reserve(replies.size());
+  for (const QJsonValue &v : replies) {
+    if (v.isObject()) {
+      result.items.append(
+          CommentReplyListModel::parseCommentReplyItem(v.toObject()));
+    }
+  }
+
+  QJsonObject pageObj = data.value("page").toObject();
+  const int count = pageObj.value("count").toInt(0);
+  const int num = pageObj.value("num").toInt(page);
+  const int size = pageObj.value("size").toInt(20);
+  result.hasMore =
+      (count > 0) ? (num * size < count) : (result.items.size() >= size);
+  return result;
+}
+
+} // namespace
 
 BiliCommentModule::BiliCommentModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
@@ -76,61 +176,28 @@ void BiliCommentModule::fetchComments(int page) {
   params["pn"] = QString::number(page);
   params["ps"] = "10";
 
+  QPointer<BiliController> self(m_controller);
+  const int requestPage = page;
   m_controller->apiGet(
       "/video/comments", params,
-      [this](const QJsonObject &data) {
+      [this, self, requestPage](const QJsonObject &data) {
+        if (!self)
+          return;
+        biliRunInWorker(
+            self, [data, requestPage]() {
+              return parseCommentsPayload(data, requestPage);
+            },
+            [this, self](ParsedComments result) {
+              if (!self || m_commentPage != result.page)
+                return;
+              self->commentListModel()->setTotalCount(result.total);
+              self->commentListModel()->appendItems(result.items);
+              self->commentListModel()->setLoading(false);
 
-        QJsonObject pageObj = data.value("page").toObject();
-        int total = pageObj.value("count").toInt();
-        m_controller->commentListModel()->setTotalCount(total);
-
-        QJsonArray replies = data.value("replies").toArray();
-
-        QVector<CommentItem> items;
-
-        auto hasComment = [&items](qint64 rpid) {
-          for (const CommentItem &item : items) {
-            if (item.rpid > 0 && item.rpid == rpid) return true;
-          }
-          return false;
-        };
-        auto appendTopComment = [&items, &hasComment](const QJsonObject &obj) {
-          if (obj.isEmpty()) return;
-          CommentItem topComment = CommentListModel::parseCommentItem(obj);
-          if (topComment.rpid <= 0 || hasComment(topComment.rpid)) return;
-          topComment.isTop = true;
-          items.append(topComment);
-        };
-
-        if (m_commentPage == 1) {
-          appendTopComment(data.value("upper").toObject().value("top").toObject());
-
-          QJsonObject topObj = data.value("top").toObject();
-          QStringList topKeys = {"upper", "admin", "vote"};
-          for (const QString &key : topKeys) {
-            appendTopComment(topObj.value(key).toObject());
-          }
-
-          QJsonArray topReplies = data.value("top_replies").toArray();
-          for (const QJsonValue &v : topReplies) {
-            if (v.isObject()) appendTopComment(v.toObject());
-          }
-        }
-
-        items.reserve(items.size() + replies.size());
-        for (const QJsonValue &v : replies) {
-          if (v.isObject()) {
-            CommentItem comment = CommentListModel::parseCommentItem(v.toObject());
-            if (!hasComment(comment.rpid)) items.append(comment);
-          }
-        }
-
-        m_controller->commentListModel()->appendItems(items);
-        m_controller->commentListModel()->setLoading(false);
-
-        if (items.isEmpty() && m_commentPage == 1) {
-          m_controller->commentListModel()->setErrorMessage("暂无评论");
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                self->commentListModel()->setErrorMessage("暂无评论");
+              }
+            });
       },
       [this](int code, const QString &msg) {
         m_controller->commentListModel()->setLoading(false);
@@ -166,33 +233,32 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
   params["ps"] = "20";
   params["pn"] = QString::number(m_commentReplyPage);
 
+  QPointer<BiliController> self(m_controller);
+  const qint64 requestRootRpid = rootRpid;
+  const int requestPage = m_commentReplyPage;
   m_controller->apiGet(
       "/video/comments/replies", params,
-      [this](const QJsonObject &data) {
+      [this, self, requestRootRpid, requestPage](const QJsonObject &data) {
+        if (!self)
+          return;
+        biliRunInWorker(
+            self, [data, requestPage]() {
+              return parseCommentRepliesPayload(data, requestPage);
+            },
+            [this, self, requestRootRpid](ParsedCommentReplies result) {
+              if (!self || m_currentCommentRootRpid != requestRootRpid ||
+                  m_commentReplyPage != result.page)
+                return;
 
-        QJsonArray replies = data.value("replies").toArray();
-        QVector<CommentReplyItem> items;
-        items.reserve(replies.size());
-        for (const QJsonValue &v : replies) {
-          if (v.isObject()) {
-            items.append(CommentReplyListModel::parseCommentReplyItem(v.toObject()));
-          }
-        }
+              m_commentReplyHasMore = result.hasMore;
+              emit replyHasMoreChanged();
 
-        QJsonObject pageObj = data.value("page").toObject();
-        int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("num").toInt(m_commentReplyPage);
-        int size = pageObj.value("size").toInt(20);
-        bool hasMore = (count > 0) ? (num * size < count) : (items.size() >= size);
-
-        m_commentReplyHasMore = hasMore;
-        emit replyHasMoreChanged();
-
-        m_controller->commentReplyListModel()->setItems(items);
-        m_controller->commentReplyListModel()->setLoading(false);
-        if (items.isEmpty()) {
-          m_controller->commentReplyListModel()->setErrorMessage("暂无回复");
-        }
+              self->commentReplyListModel()->setItems(result.items);
+              self->commentReplyListModel()->setLoading(false);
+              if (result.items.isEmpty()) {
+                self->commentReplyListModel()->setErrorMessage("暂无回复");
+              }
+            });
       },
       [this](int, const QString &msg) {
         m_commentReplyHasMore = false;
@@ -218,30 +284,29 @@ void BiliCommentModule::fetchMoreCommentReplies() {
   params["ps"] = "20";
   params["pn"] = QString::number(m_commentReplyPage);
 
+  QPointer<BiliController> self(m_controller);
+  const qint64 requestRootRpid = m_currentCommentRootRpid;
+  const int requestPage = m_commentReplyPage;
   m_controller->apiGet(
       "/video/comments/replies", params,
-      [this](const QJsonObject &data) {
+      [this, self, requestRootRpid, requestPage](const QJsonObject &data) {
+        if (!self)
+          return;
+        biliRunInWorker(
+            self, [data, requestPage]() {
+              return parseCommentRepliesPayload(data, requestPage);
+            },
+            [this, self, requestRootRpid](ParsedCommentReplies result) {
+              if (!self || m_currentCommentRootRpid != requestRootRpid ||
+                  m_commentReplyPage != result.page)
+                return;
 
-        QJsonArray replies = data.value("replies").toArray();
-        QVector<CommentReplyItem> items;
-        items.reserve(replies.size());
-        for (const QJsonValue &v : replies) {
-          if (v.isObject()) {
-            items.append(CommentReplyListModel::parseCommentReplyItem(v.toObject()));
-          }
-        }
+              m_commentReplyHasMore = result.hasMore;
+              emit replyHasMoreChanged();
 
-        QJsonObject pageObj = data.value("page").toObject();
-        int count = pageObj.value("count").toInt(0);
-        int num = pageObj.value("num").toInt(m_commentReplyPage);
-        int size = pageObj.value("size").toInt(20);
-        bool hasMore = (count > 0) ? (num * size < count) : (items.size() >= size);
-
-        m_commentReplyHasMore = hasMore;
-        emit replyHasMoreChanged();
-
-        m_controller->commentReplyListModel()->appendItems(items);
-        m_controller->commentReplyListModel()->setLoading(false);
+              self->commentReplyListModel()->appendItems(result.items);
+              self->commentReplyListModel()->setLoading(false);
+            });
       },
       [this](int, const QString &msg) {
         m_controller->commentReplyListModel()->setLoading(false);
@@ -256,4 +321,3 @@ void BiliCommentModule::fetchMoreComments() {
   m_commentPage++;
   fetchComments(m_commentPage);
 }
-

@@ -141,6 +141,9 @@ Rectangle {
         orientation: ListView.Horizontal
         spacing: Theme.spacingMedium
         clip: true
+        cacheBuffer: 640
+        displayMarginBeginning: 160
+        displayMarginEnd: 160
 
         delegate: Components.VideoCardCompact {
             height: rankList.height
@@ -152,12 +155,35 @@ Rectangle {
             subYOffset: -10
             videoTitle: model.title || ""
             coverUrl: model.pic || ""
+            imageActive: rankingPage.visible
+            preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
             upName: model.ownerName || ""
             viewCount: model.views || ""
             durationText: model.durationText || ""
             bvid: model.bvid || ""
             showCollection: model.partCount > 1
             onClicked: rankingPage.videoSelected(bvid)
+        }
+
+        Row {
+            visible: initialRankingRequested && rankList.count === 0 && controller && controller.isLoading
+            anchors.left: parent.left
+            anchors.leftMargin: 2
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingMedium
+            Repeater {
+                model: 3
+                Components.VideoCardCompact {
+                    height: rankList.height
+                    placeholder: true
+                    titleScale: 0.9
+                    titleBold: false
+                    subScale: 0.86
+                    infoSpacing: -1
+                    subYOffset: -10
+                    fontFamily: Theme.fontFamily
+                }
+            }
         }
 
         Column {

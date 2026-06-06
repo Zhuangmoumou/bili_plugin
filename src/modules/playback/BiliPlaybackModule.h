@@ -33,6 +33,7 @@ public:
   Q_INVOKABLE void setSubtitleOutlineWidth(int value);
   Q_INVOKABLE void setSubtitleBackgroundEnabled(bool enabled);
   Q_INVOKABLE void setSubtitleBackgroundOpacity(double value);
+  Q_INVOKABLE void setVideoCardOffscreenPlaceholderEnabled(bool enabled);
   Q_INVOKABLE void launchExternalPlayerCurrentSelection();
 
 private:

@@ -1,6 +1,7 @@
 #include "BiliModels.h"
 #include <QDateTime>
 #include <QDebug>
+#include <QSet>
 #include <cmath>
 
 // ============ VideoListModel ============
@@ -327,9 +328,26 @@ void CommentListModel::clear()
 void CommentListModel::appendItems(const QVector<CommentItem> &items)
 {
     if (items.isEmpty()) return;
+
+    QSet<qint64> existingRpids;
+    existingRpids.reserve(m_items.size() + items.size());
+    for (const CommentItem &item : m_items) {
+        if (item.rpid > 0) existingRpids.insert(item.rpid);
+    }
+
+    QVector<CommentItem> uniqueItems;
+    uniqueItems.reserve(items.size());
+    for (const CommentItem &item : items) {
+        if (item.rpid > 0 && existingRpids.contains(item.rpid)) continue;
+        if (item.rpid > 0) existingRpids.insert(item.rpid);
+        uniqueItems.append(item);
+    }
+
+    if (uniqueItems.isEmpty()) return;
+
     beginInsertRows(QModelIndex(), m_items.count(),
-                    m_items.count() + items.count() - 1);
-    m_items.append(items);
+                    m_items.count() + uniqueItems.count() - 1);
+    m_items.append(uniqueItems);
     endInsertRows();
     emit countChanged();
 }
@@ -675,6 +693,8 @@ QHash<int, QByteArray> VideoPartListModel::roleNames() const
 }
 
 int VideoPartListModel::count() const { return m_items.count(); }
+
+QVector<VideoPartItem> VideoPartListModel::items() const { return m_items; }
 
 void VideoPartListModel::clear()
 {

@@ -8,8 +8,10 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QQuickTextureFactory>
+#include <QStringList>
 #include <QThread>
 #include <QTimer>
+#include <QUrl>
 
 // 调试开关
 #ifdef DEBUG_IMAGE_PROVIDER
@@ -19,6 +21,77 @@
   if (0)                                                                       \
   qDebug()
 #endif
+
+namespace {
+
+constexpr const char *kOriginalImagePrefix = "original/";
+constexpr const char *kSizedImagePrefix = "size/";
+
+bool isNumericParam(const QString &param, QLatin1Char suffix) {
+  if (!param.endsWith(suffix) || param.size() <= 1)
+    return false;
+
+  bool ok = false;
+  param.left(param.size() - 1).toLongLong(&ok);
+  return ok;
+}
+
+QString appendBiliSizeLimitToPath(const QString &path, int maxWidth,
+                                  int maxHeight) {
+  const int atIndex = path.lastIndexOf(QLatin1Char('@'));
+  if (atIndex < 0)
+    return path + QStringLiteral("@%1w_%2h").arg(maxWidth).arg(maxHeight);
+
+  QString params = path.mid(atIndex + 1);
+  QString format;
+  const QStringList formats = {
+      QStringLiteral(".avg_color"), QStringLiteral(".jpeg"),
+      QStringLiteral(".jpg"),       QStringLiteral(".webp"),
+      QStringLiteral(".avif"),      QStringLiteral(".png")};
+
+  for (const QString &candidate : formats) {
+    if (params.endsWith(candidate, Qt::CaseInsensitive)) {
+      format = params.right(candidate.size());
+      params.chop(candidate.size());
+      break;
+    }
+  }
+
+  QStringList keptParams;
+  for (const QString &param : params.split(QLatin1Char('_'), Qt::SkipEmptyParts)) {
+    if (isNumericParam(param, QLatin1Char('w')) ||
+        isNumericParam(param, QLatin1Char('h'))) {
+      continue;
+    }
+    keptParams.append(param);
+  }
+
+  keptParams.append(QStringLiteral("%1w").arg(maxWidth));
+  keptParams.append(QStringLiteral("%1h").arg(maxHeight));
+
+  return path.left(atIndex + 1) + keptParams.join(QLatin1Char('_')) + format;
+}
+
+QString withBiliImageSizeLimit(const QString &urlString, int maxWidth = 320,
+                               int maxHeight = 170) {
+  QUrl url(urlString);
+  const QString host = url.host().toLower();
+  const bool isBiliImageHost =
+      host == QStringLiteral("hdslb.com") ||
+      host.endsWith(QStringLiteral(".hdslb.com")) ||
+      host == QStringLiteral("biliimg.com") ||
+      host.endsWith(QStringLiteral(".biliimg.com"));
+
+  if (!url.isValid() || !isBiliImageHost ||
+      !url.path().startsWith(QStringLiteral("/bfs/"))) {
+    return urlString;
+  }
+
+  url.setPath(appendBiliSizeLimitToPath(url.path(), maxWidth, maxHeight));
+  return url.toString();
+}
+
+} // namespace
 
 // ========== BiliImageResponse 实现 ==========
 
@@ -183,6 +256,32 @@ void BiliImageResponse::run() {
 
   // 2. 构造 URL / 解析 base64
   QString imageUrl = m_id;
+  int limitWidth = 320;
+  int limitHeight = 170;
+  const bool keepOriginal = imageUrl.startsWith(QLatin1String(kOriginalImagePrefix));
+  if (keepOriginal) {
+    imageUrl = imageUrl.mid(QString::fromLatin1(kOriginalImagePrefix).size());
+  } else if (imageUrl.startsWith(QLatin1String(kSizedImagePrefix))) {
+    const QString sizedImageUrl =
+        imageUrl.mid(QString::fromLatin1(kSizedImagePrefix).size());
+    const int slashIndex = sizedImageUrl.indexOf(QLatin1Char('/'));
+    if (slashIndex > 0) {
+      const QString sizeSpec = sizedImageUrl.left(slashIndex);
+      const int xIndex = sizeSpec.indexOf(QLatin1Char('x'));
+      if (xIndex > 0) {
+        bool widthOk = false;
+        bool heightOk = false;
+        const int requestedWidth = sizeSpec.left(xIndex).toInt(&widthOk);
+        const int requestedHeight = sizeSpec.mid(xIndex + 1).toInt(&heightOk);
+        if (widthOk && heightOk && requestedWidth > 0 && requestedHeight > 0 &&
+            requestedWidth <= 4096 && requestedHeight <= 4096) {
+          limitWidth = requestedWidth;
+          limitHeight = requestedHeight;
+        }
+      }
+      imageUrl = sizedImageUrl.mid(slashIndex + 1);
+    }
+  }
 
   // 检查是否为 base64 data URL (格式：data:image/png;base64,xxxx)
   if (imageUrl.startsWith("data:image/")) {
@@ -220,6 +319,9 @@ void BiliImageResponse::run() {
       return;
     }
   }
+
+  if (!keepOriginal)
+    imageUrl = withBiliImageSizeLimit(imageUrl, limitWidth, limitHeight);
 
   // 3. 同步下载（在线程池线程中，不阻塞渲染）
   m_image = scaledForRequestedSize(downloadImage(imageUrl));

@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // ==================== 日志工具 ====================
@@ -701,15 +703,10 @@ type clientSnapshot struct {
 // 让 loadSnapshot 始终返回非 nil 指针，省掉每次读路径的 nil 检查分支。
 var emptyClientSnapshot clientSnapshot
 
-type upstreamRateBucket struct {
-	mu     sync.Mutex
-	lastAt time.Time
-}
-
 type BilibiliClient struct {
 	mu              sync.RWMutex
-	readBucket      upstreamRateBucket
-	writeBucket     upstreamRateBucket
+	readLimiter     *rate.Limiter
+	writeLimiter    *rate.Limiter
 	sessdata        string
 	buvid3          string
 	biliJct         string
@@ -723,32 +720,18 @@ type BilibiliClient struct {
 	snapshot        atomic.Pointer[clientSnapshot]
 }
 
-// waitBeforeUpstream 对上游请求做分桶限速：
-// - GET 读取类请求：30ms，避免所有读接口被全局 350ms 串行拖慢。
-// - 非 GET 写请求：200ms，降低触发风控概率。
-func (c *BilibiliClient) waitBeforeUpstream(apiURL, method string) {
-	interval := 30 * time.Millisecond
-	bucket := &c.readBucket
+// waitBeforeUpstream 对上游请求做分桶令牌桶限速：
+//   - GET 读取类请求：稳态 ~33 rps（每 30ms 一个令牌），burst 5，
+//     让同一页面的聚合读请求在空闲后能并发放出，而不是被串成 30ms 阶梯。
+//   - 非 GET 写请求：稳态 ~5 rps（每 200ms 一个令牌），burst 2，降低触发风控概率。
+//
+// 令牌桶长期平均速率与旧漏桶一致，仅新增突发额度；ctx 取消时立即返回。
+func (c *BilibiliClient) waitBeforeUpstream(ctx context.Context, method string) error {
+	lim := c.readLimiter
 	if method != http.MethodGet {
-		interval = 200 * time.Millisecond
-		bucket = &c.writeBucket
+		lim = c.writeLimiter
 	}
-
-	bucket.mu.Lock()
-	now := time.Now()
-	nextAllowedAt := now
-	if !bucket.lastAt.IsZero() {
-		candidate := bucket.lastAt.Add(interval)
-		if candidate.After(nextAllowedAt) {
-			nextAllowedAt = candidate
-		}
-	}
-	bucket.lastAt = nextAllowedAt
-	bucket.mu.Unlock()
-
-	if wait := time.Until(nextAllowedAt); wait > 0 {
-		time.Sleep(wait)
-	}
+	return lim.Wait(ctx)
 }
 
 func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
@@ -769,8 +752,10 @@ func NewBilibiliClient(sessdata, buvid3 string) *BilibiliClient {
 		ResponseHeaderTimeout: 10 * time.Second,
 	}
 	c := &BilibiliClient{
-		sessdata: sessdata,
-		buvid3:   buvid3,
+		sessdata:     sessdata,
+		buvid3:       buvid3,
+		readLimiter:  rate.NewLimiter(rate.Every(30*time.Millisecond), 5),
+		writeLimiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 2),
 		httpClient: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: transport,
@@ -922,7 +907,7 @@ func (c *BilibiliClient) ensureBuvid3() {
 // 仅启动时刷新一次，避免高频刷新触发风控
 func (c *BilibiliClient) startCookieRefreshLoop() {}
 
-func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
+func (c *BilibiliClient) doRequest(ctx context.Context, apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	startTime := time.Now()
 	query := buildSortedQuery(params)
 	fullURL := apiURL
@@ -939,7 +924,7 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 		return nil, fmt.Errorf("不支持的请求方法: %s", method)
 	}
 
-	req, err := http.NewRequest(method, fullURL, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -948,7 +933,9 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
-	c.waitBeforeUpstream(apiURL, method)
+	if err := c.waitBeforeUpstream(ctx, method); err != nil {
+		return nil, err
+	}
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(startTime)
 	if err != nil {
@@ -967,20 +954,20 @@ func (c *BilibiliClient) doRequest(apiURL string, params map[string]string, meth
 	return json.RawMessage(body), nil
 }
 
-func (c *BilibiliClient) wbiRequest(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
+func (c *BilibiliClient) wbiRequest(ctx context.Context, apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	imgKey, subKey := c.getWbiKeys()
 	logDebug("WBI 请求 %s %s", method, apiURL)
 	// encWbi 会向 params 中写入 wts 并返回新的 filtered map，
 	// 调用方传入的 map 都是当次请求新建的临时 map，无需 copyMap 复制保护。
-	return c.doRequest(apiURL, encWbi(params, imgKey, subKey), method)
+	return c.doRequest(ctx, apiURL, encWbi(params, imgKey, subKey), method)
 }
 
-func (c *BilibiliClient) request(apiURL string, params map[string]string, method string) (json.RawMessage, error) {
+func (c *BilibiliClient) request(ctx context.Context, apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	logDebug("普通请求 %s %s", method, apiURL)
-	return c.doRequest(apiURL, params, method)
+	return c.doRequest(ctx, apiURL, params, method)
 }
 
-func (c *BilibiliClient) rawRequest(apiURL string, params map[string]string) ([]byte, error) {
+func (c *BilibiliClient) rawRequest(ctx context.Context, apiURL string, params map[string]string) ([]byte, error) {
 	query := buildSortedQuery(params)
 	fullURL := apiURL
 	if query != "" {
@@ -991,13 +978,15 @@ func (c *BilibiliClient) rawRequest(apiURL string, params map[string]string) ([]
 		}
 	}
 
-	req, err := http.NewRequest("GET", fullURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	c.setHeaders(req)
 
-	c.waitBeforeUpstream(apiURL, http.MethodGet)
+	if err := c.waitBeforeUpstream(ctx, http.MethodGet); err != nil {
+		return nil, err
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -1007,14 +996,16 @@ func (c *BilibiliClient) rawRequest(apiURL string, params map[string]string) ([]
 	return io.ReadAll(resp.Body)
 }
 
-func (c *BilibiliClient) rawGetURL(fullURL string) ([]byte, error) {
-	req, err := http.NewRequest("GET", fullURL, nil)
+func (c *BilibiliClient) rawGetURL(ctx context.Context, fullURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	c.setHeaders(req)
 
-	c.waitBeforeUpstream(fullURL, http.MethodGet)
+	if err := c.waitBeforeUpstream(ctx, http.MethodGet); err != nil {
+		return nil, err
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -1024,12 +1015,12 @@ func (c *BilibiliClient) rawGetURL(fullURL string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.RawMessage, error) {
+func (c *BilibiliClient) webPost(ctx context.Context, apiURL string, params map[string]string) (json.RawMessage, error) {
 	query := buildSortedQuery(params)
 
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
-		req, err := http.NewRequest("POST", apiURL, strings.NewReader(query))
+		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(query))
 		if err != nil {
 			return nil, err
 		}
@@ -1040,13 +1031,19 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 		req.Header.Set("Origin", "https://www.bilibili.com")
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 
-		c.waitBeforeUpstream(apiURL, http.MethodPost)
+		if err := c.waitBeforeUpstream(ctx, http.MethodPost); err != nil {
+			return nil, err
+		}
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
 			logWarn("webPost 请求失败 attempt=%d url=%s err=%s", attempt, apiURL, err.Error())
 			if attempt < 2 {
-				time.Sleep(300 * time.Millisecond)
+				select {
+				case <-time.After(300 * time.Millisecond):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			return nil, err
@@ -1058,7 +1055,11 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 			lastErr = readErr
 			logWarn("webPost 读取响应失败 attempt=%d url=%s err=%s", attempt, apiURL, readErr.Error())
 			if attempt < 2 {
-				time.Sleep(300 * time.Millisecond)
+				select {
+				case <-time.After(300 * time.Millisecond):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			return nil, readErr
@@ -1076,7 +1077,11 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 				string(body))
 			lastErr = fmt.Errorf("HTTP 403 Forbidden")
 			if attempt < 2 {
-				time.Sleep(300 * time.Millisecond)
+				select {
+				case <-time.After(300 * time.Millisecond):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			return nil, lastErr
@@ -1086,7 +1091,11 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 			logWarn("webPost 非成功状态 attempt=%d url=%s status=%d body=%s", attempt, apiURL, resp.StatusCode, string(body))
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 			if attempt < 2 {
-				time.Sleep(300 * time.Millisecond)
+				select {
+				case <-time.After(300 * time.Millisecond):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			return nil, lastErr
@@ -1108,25 +1117,25 @@ func (c *BilibiliClient) webPost(apiURL string, params map[string]string) (json.
 
 // ==================== API 方法 ====================
 
-func (c *BilibiliClient) GetPopularVideos(pn, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetPopularVideos(ctx context.Context, pn, ps int) (json.RawMessage, error) {
 	logInfo("获取热门视频 pn=%d ps=%d", pn, ps)
-	return c.wbiRequest("https://api.bilibili.com/x/web-interface/popular", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/popular", map[string]string{
 		"pn": strconv.Itoa(pn),
 		"ps": strconv.Itoa(ps),
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetRanking(rid int, typ string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetRanking(ctx context.Context, rid int, typ string) (json.RawMessage, error) {
 	logInfo("获取排行榜 rid=%d type=%s", rid, typ)
-	return c.wbiRequest("https://api.bilibili.com/x/web-interface/ranking/v2", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/ranking/v2", map[string]string{
 		"rid":  strconv.Itoa(rid),
 		"type": typ,
 	}, "GET")
 }
 
-func (c *BilibiliClient) SearchVideos(keyword string, page, pageSize int) (json.RawMessage, error) {
+func (c *BilibiliClient) SearchVideos(ctx context.Context, keyword string, page, pageSize int) (json.RawMessage, error) {
 	logInfo("搜索视频 keyword=\"%s\" page=%d", keyword, page)
-	return c.wbiRequest("https://api.bilibili.com/x/web-interface/wbi/search/type", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/search/type", map[string]string{
 		"search_type": "video",
 		"keyword":     keyword,
 		"page":        strconv.Itoa(page),
@@ -1134,7 +1143,7 @@ func (c *BilibiliClient) SearchVideos(keyword string, page, pageSize int) (json.
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetVideoInfo(aid int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetVideoInfo(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
 	logInfo("获取视频信息 aid=%d bvid=%s", aid, bvid)
 	params := map[string]string{}
 	if aid > 0 {
@@ -1143,10 +1152,10 @@ func (c *BilibiliClient) GetVideoInfo(aid int, bvid string) (json.RawMessage, er
 	if bvid != "" {
 		params["bvid"] = bvid
 	}
-	return c.wbiRequest("https://api.bilibili.com/x/web-interface/wbi/view", params, "GET")
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/view", params, "GET")
 }
 
-func (c *BilibiliClient) GetVideoRelated(aid int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetVideoRelated(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
 	logInfo("获取视频相关推荐 aid=%d bvid=%s", aid, bvid)
 	params := map[string]string{}
 	if aid > 0 {
@@ -1155,7 +1164,7 @@ func (c *BilibiliClient) GetVideoRelated(aid int, bvid string) (json.RawMessage,
 	if bvid != "" {
 		params["bvid"] = bvid
 	}
-	raw, err := c.request("https://api.bilibili.com/x/web-interface/archive/related", params, "GET")
+	raw, err := c.request(ctx, "https://api.bilibili.com/x/web-interface/archive/related", params, "GET")
 	if err != nil {
 		return nil, err
 	}
@@ -1172,9 +1181,9 @@ func (c *BilibiliClient) GetVideoRelated(aid int, bvid string) (json.RawMessage,
 	return raw, nil
 }
 
-func (c *BilibiliClient) GetVideoComments(oid, typ, sortVal, ps, pn int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetVideoComments(ctx context.Context, oid, typ, sortVal, ps, pn int) (json.RawMessage, error) {
 	logInfo("获取评论 oid=%d type=%d sort=%d", oid, typ, sortVal)
-	return c.request("https://api.bilibili.com/x/v2/reply", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/v2/reply", map[string]string{
 		"type": strconv.Itoa(typ),
 		"oid":  strconv.Itoa(oid),
 		"sort": strconv.Itoa(sortVal),
@@ -1183,9 +1192,9 @@ func (c *BilibiliClient) GetVideoComments(oid, typ, sortVal, ps, pn int) (json.R
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetCommentReplies(oid, root, typ, ps, pn int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetCommentReplies(ctx context.Context, oid, root, typ, ps, pn int) (json.RawMessage, error) {
 	logInfo("获取子评论 oid=%d root=%d type=%d", oid, root, typ)
-	return c.request("https://api.bilibili.com/x/v2/reply/reply", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/v2/reply/reply", map[string]string{
 		"type": strconv.Itoa(typ),
 		"oid":  strconv.Itoa(oid),
 		"root": strconv.Itoa(root),
@@ -1194,10 +1203,10 @@ func (c *BilibiliClient) GetCommentReplies(oid, root, typ, ps, pn int) (json.Raw
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserInfo(ctx context.Context, mid int) (json.RawMessage, error) {
 	logInfo("获取用户信息 mid=%d", mid)
 
-	baseRaw, err := c.wbiRequest("https://api.bilibili.com/x/space/wbi/acc/info", map[string]string{
+	baseRaw, err := c.wbiRequest(ctx, "https://api.bilibili.com/x/space/wbi/acc/info", map[string]string{
 		"mid": strconv.Itoa(mid),
 	}, "GET")
 	if err != nil {
@@ -1220,7 +1229,7 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 	}
 
 	// 补充粉丝/关注统计
-	relRaw, err := c.request("https://api.bilibili.com/x/relation/stat", map[string]string{
+	relRaw, err := c.request(ctx, "https://api.bilibili.com/x/relation/stat", map[string]string{
 		"vmid": strconv.Itoa(mid),
 	}, "GET")
 	if err == nil {
@@ -1243,7 +1252,7 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 	// 否则登录后初始化会额外增加一次上游请求，更容易触发风控。
 	sessdata, _, _, _, dedeUserID, _ := c.getAuth()
 	if sessdata != "" && dedeUserID != strconv.Itoa(mid) {
-		relationRaw, err := c.GetUserRelation(mid)
+		relationRaw, err := c.GetUserRelation(ctx, mid)
 		if err == nil {
 			var relationResp map[string]interface{}
 			if json.Unmarshal(relationRaw, &relationResp) == nil {
@@ -1269,14 +1278,14 @@ func (c *BilibiliClient) GetUserInfo(mid int) (json.RawMessage, error) {
 	return merged, nil
 }
 
-func (c *BilibiliClient) GetUserRelation(mid int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserRelation(ctx context.Context, mid int) (json.RawMessage, error) {
 	logInfo("获取用户关系 mid=%d", mid)
-	return c.request("https://api.bilibili.com/x/relation", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/relation", map[string]string{
 		"fid": strconv.Itoa(mid),
 	}, "GET")
 }
 
-func (c *BilibiliClient) ToggleUserFollow(mid int, follow bool) (json.RawMessage, error) {
+func (c *BilibiliClient) ToggleUserFollow(ctx context.Context, mid int, follow bool) (json.RawMessage, error) {
 	_, biliJct, err := c.requireLogin()
 	if err != nil {
 		return nil, err
@@ -1288,7 +1297,7 @@ func (c *BilibiliClient) ToggleUserFollow(mid int, follow bool) (json.RawMessage
 	}
 
 	logInfo("切换关注状态 mid=%d follow=%t", mid, follow)
-	return c.webPost("https://api.bilibili.com/x/relation/modify", map[string]string{
+	return c.webPost(ctx, "https://api.bilibili.com/x/relation/modify", map[string]string{
 		"fid":        strconv.Itoa(mid),
 		"act":        act,
 		"re_src":     "11",
@@ -1300,7 +1309,7 @@ func (c *BilibiliClient) ToggleUserFollow(mid int, follow bool) (json.RawMessage
 // GetUserVideosApp 使用 APP 游标接口获取投稿。
 // 注意：该接口实际使用 aid 作为游标参数（不是时间戳）。
 // cursorAid=0 表示首次；cursorAid>0 表示从“上一页最后一个视频的 aid”继续向后翻页。
-func (c *BilibiliClient) GetUserVideosApp(mid int, cursorAid int64, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAid int64, ps int) (json.RawMessage, error) {
 	if ps <= 0 {
 		ps = 20
 	}
@@ -1324,7 +1333,7 @@ func (c *BilibiliClient) GetUserVideosApp(mid int, cursorAid int64, ps int) (jso
 		params["aid"] = strconv.FormatInt(cursorAid, 10)
 	}
 	params = appSign(params)
-	raw, err := c.request("https://app.biliapi.com/x/v2/space/archive/cursor", params, "GET")
+	raw, err := c.request(ctx, "https://app.biliapi.com/x/v2/space/archive/cursor", params, "GET")
 	if err != nil {
 		return nil, err
 	}
@@ -1384,7 +1393,7 @@ func (c *BilibiliClient) GetUserVideosApp(mid int, cursorAid int64, ps int) (jso
 	return raw, nil
 }
 
-func (c *BilibiliClient) GetUserVideos(mid, pn, ps int, max int64) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max int64) (json.RawMessage, error) {
 	logInfo("获取用户投稿 mid=%d pn=%d ps=%d max=%d", mid, pn, ps, max)
 
 	// 经验：网页端 x/space/wbi/arc/search 更容易触发 -412 / 风控页，
@@ -1408,7 +1417,7 @@ func (c *BilibiliClient) GetUserVideos(mid, pn, ps int, max int64) (json.RawMess
 	// 该接口的 cursor 实际为 aid：即“上一页最后一个视频的 aid”（通常在 item[].param 字段）。
 	if cursor <= 0 && pn > 1 {
 		for i := 1; i < pn; i++ {
-			raw, err = c.GetUserVideosApp(mid, cursor, ps)
+			raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps)
 			if err != nil {
 				return nil, err
 			}
@@ -1454,7 +1463,7 @@ func (c *BilibiliClient) GetUserVideos(mid, pn, ps int, max int64) (json.RawMess
 	}
 
 	// 取目标页
-	raw, err = c.GetUserVideosApp(mid, cursor, ps)
+	raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps)
 	if err != nil {
 		return nil, err
 	}
@@ -1463,9 +1472,9 @@ func (c *BilibiliClient) GetUserVideos(mid, pn, ps int, max int64) (json.RawMess
 
 // 获取 UP 主的合集与系列列表（合集 = seasons，系列 = series）
 // 返回结构与官方 seasons_series_list 保持一致：data.items_lists.{seasons_list, series_list, page}
-func (c *BilibiliClient) GetUserSeasonsSeries(mid, pn, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserSeasonsSeries(ctx context.Context, mid, pn, ps int) (json.RawMessage, error) {
 	logInfo("获取 UP 合集列表 mid=%d pn=%d ps=%d", mid, pn, ps)
-	return c.wbiRequest("https://api.bilibili.com/x/polymer/web-space/seasons_series_list", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/polymer/web-space/seasons_series_list", map[string]string{
 		"mid":          strconv.Itoa(mid),
 		"page_num":     strconv.Itoa(pn),
 		"page_size":    strconv.Itoa(ps),
@@ -1474,13 +1483,13 @@ func (c *BilibiliClient) GetUserSeasonsSeries(mid, pn, ps int) (json.RawMessage,
 }
 
 // 获取 UP 主合集内的视频列表
-func (c *BilibiliClient) GetUserSeasonVideos(mid, seasonID, pn, ps int, sortReverse bool) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserSeasonVideos(ctx context.Context, mid, seasonID, pn, ps int, sortReverse bool) (json.RawMessage, error) {
 	logInfo("获取 UP 合集视频 mid=%d season=%d pn=%d ps=%d", mid, seasonID, pn, ps)
 	sr := "false"
 	if sortReverse {
 		sr = "true"
 	}
-	return c.wbiRequest("https://api.bilibili.com/x/polymer/web-space/seasons_archives_list", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/polymer/web-space/seasons_archives_list", map[string]string{
 		"mid":          strconv.Itoa(mid),
 		"season_id":    strconv.Itoa(seasonID),
 		"sort_reverse": sr,
@@ -1489,12 +1498,12 @@ func (c *BilibiliClient) GetUserSeasonVideos(mid, seasonID, pn, ps int, sortReve
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetLoginInfo() (json.RawMessage, error) {
+func (c *BilibiliClient) GetLoginInfo(ctx context.Context) (json.RawMessage, error) {
 	logInfo("获取登录信息")
-	return c.request("https://api.bilibili.com/x/web-interface/nav", map[string]string{}, "GET")
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/nav", map[string]string{}, "GET")
 }
 
-func (c *BilibiliClient) GetPlayerV2(aid, cid int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetPlayerV2(ctx context.Context, aid, cid int, bvid string) (json.RawMessage, error) {
 	params := map[string]string{
 		"aid": strconv.Itoa(aid),
 		"cid": strconv.Itoa(cid),
@@ -1502,10 +1511,10 @@ func (c *BilibiliClient) GetPlayerV2(aid, cid int, bvid string) (json.RawMessage
 	if bvid != "" {
 		params["bvid"] = bvid
 	}
-	return c.wbiRequest("https://api.bilibili.com/x/player/wbi/v2", params, "GET")
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/player/wbi/v2", params, "GET")
 }
 
-func (c *BilibiliClient) GetPlayUrl(aid, cid, qn, fnval int, platform string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetPlayUrl(ctx context.Context, aid, cid, qn, fnval int, platform string) (json.RawMessage, error) {
 	if qn <= 0 {
 		qn = 32
 	}
@@ -1532,7 +1541,7 @@ func (c *BilibiliClient) GetPlayUrl(aid, cid, qn, fnval int, platform string) (j
 	}
 
 	logInfo("获取播放地址 aid=%d cid=%d qn=%d fnval=%d platform=%s", aid, cid, qn, fnval, platform)
-	return c.wbiRequest("https://api.bilibili.com/x/player/wbi/playurl", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/player/wbi/playurl", map[string]string{
 		"avid":     strconv.Itoa(aid),
 		"cid":      strconv.Itoa(cid),
 		"qn":       strconv.Itoa(qn),
@@ -1545,16 +1554,16 @@ func (c *BilibiliClient) GetPlayUrl(aid, cid, qn, fnval int, platform string) (j
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetDanmaku(cid, segment int) ([]byte, error) {
+func (c *BilibiliClient) GetDanmaku(ctx context.Context, cid, segment int) ([]byte, error) {
 	logInfo("获取弹幕 cid=%d segment=%d", cid, segment)
-	return c.rawRequest("https://api.bilibili.com/x/v2/dm/web/seg.so", map[string]string{
+	return c.rawRequest(ctx, "https://api.bilibili.com/x/v2/dm/web/seg.so", map[string]string{
 		"type":          "1",
 		"oid":           strconv.Itoa(cid),
 		"segment_index": strconv.Itoa(segment),
 	})
 }
 
-func (c *BilibiliClient) GetDanmakuConfig(oid int, pid int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetDanmakuConfig(ctx context.Context, oid int, pid int) (json.RawMessage, error) {
 	logInfo("获取弹幕配置 oid=%d pid=%d", oid, pid)
 	params := map[string]string{
 		"type": "1",
@@ -1563,24 +1572,24 @@ func (c *BilibiliClient) GetDanmakuConfig(oid int, pid int) (json.RawMessage, er
 	if pid > 0 {
 		params["pid"] = strconv.Itoa(pid)
 	}
-	return c.request("https://api.bilibili.com/x/v2/dm/web/view", params, "GET")
+	return c.request(ctx, "https://api.bilibili.com/x/v2/dm/web/view", params, "GET")
 }
 
-func (c *BilibiliClient) GetHotSearch(limit int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetHotSearch(ctx context.Context, limit int) (json.RawMessage, error) {
 	logInfo("获取热搜 limit=%d", limit)
-	return c.request("https://api.bilibili.com/x/web-interface/search/square", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/search/square", map[string]string{
 		"limit": strconv.Itoa(limit),
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetRecommend(freshType int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetRecommend(ctx context.Context, freshType int) (json.RawMessage, error) {
 	logInfo("获取推荐 feed fresh_type=%d", freshType)
-	return c.wbiRequest("https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd", map[string]string{
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd", map[string]string{
 		"fresh_type": strconv.Itoa(freshType),
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetRecentHistory(max, viewAt, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetRecentHistory(ctx context.Context, max, viewAt, ps int) (json.RawMessage, error) {
 	logInfo("获取最近观看 max=%d view_at=%d ps=%d", max, viewAt, ps)
 	params := map[string]string{}
 	if max > 0 {
@@ -1593,10 +1602,10 @@ func (c *BilibiliClient) GetRecentHistory(max, viewAt, ps int) (json.RawMessage,
 		params["ps"] = strconv.Itoa(ps)
 	}
 	params["business"] = "archive"
-	return c.request("https://api.bilibili.com/x/web-interface/history/cursor", params, "GET")
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/history/cursor", params, "GET")
 }
 
-func (c *BilibiliClient) GetWatchLaterList(pn, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetWatchLaterList(ctx context.Context, pn, ps int) (json.RawMessage, error) {
 	if pn <= 0 {
 		pn = 1
 	}
@@ -1611,10 +1620,10 @@ func (c *BilibiliClient) GetWatchLaterList(pn, ps int) (json.RawMessage, error) 
 		"pn": strconv.Itoa(pn),
 		"ps": strconv.Itoa(ps),
 	}
-	return c.request("https://api.bilibili.com/x/v2/history/toview", params, "GET")
+	return c.request(ctx, "https://api.bilibili.com/x/v2/history/toview", params, "GET")
 }
 
-func (c *BilibiliClient) AddToWatchLater(aid int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) AddToWatchLater(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
 	_, biliJct, err := c.requireLogin()
 	if err != nil {
 		return nil, err
@@ -1629,10 +1638,10 @@ func (c *BilibiliClient) AddToWatchLater(aid int, bvid string) (json.RawMessage,
 	} else {
 		return nil, fmt.Errorf("aid 或 bvid 缺失")
 	}
-	return c.webPost("https://api.bilibili.com/x/v2/history/toview/add", params)
+	return c.webPost(ctx, "https://api.bilibili.com/x/v2/history/toview/add", params)
 }
 
-func (c *BilibiliClient) RemoveFromWatchLater(aid int) (json.RawMessage, error) {
+func (c *BilibiliClient) RemoveFromWatchLater(ctx context.Context, aid int) (json.RawMessage, error) {
 	_, biliJct, err := c.requireLogin()
 	if err != nil {
 		return nil, err
@@ -1644,19 +1653,28 @@ func (c *BilibiliClient) RemoveFromWatchLater(aid int) (json.RawMessage, error) 
 		"csrf": biliJct,
 		"aid":  strconv.Itoa(aid),
 	}
-	return c.webPost("https://api.bilibili.com/x/v2/history/toview/del", params)
+	return c.webPost(ctx, "https://api.bilibili.com/x/v2/history/toview/del", params)
 }
 
-func (c *BilibiliClient) GetFavoriteFolders(mid int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetFavoriteFolders(ctx context.Context, mid int) (json.RawMessage, error) {
 	logInfo("获取收藏夹列表 mid=%d", mid)
-	return c.request("https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
 		"up_mid": strconv.Itoa(mid),
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetFavoriteResources(mediaId, pn, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetFavoriteFoldersForResource(ctx context.Context, mid, aid int) (json.RawMessage, error) {
+	logInfo("获取视频所在收藏夹 mid=%d aid=%d", mid, aid)
+	return c.request(ctx, "https://api.bilibili.com/x/v3/fav/folder/created/list-all", map[string]string{
+		"up_mid": strconv.Itoa(mid),
+		"type":   "2",
+		"rid":    strconv.Itoa(aid),
+	}, "GET")
+}
+
+func (c *BilibiliClient) GetFavoriteResources(ctx context.Context, mediaId, pn, ps int) (json.RawMessage, error) {
 	logInfo("获取收藏夹内容 media_id=%d pn=%d ps=%d", mediaId, pn, ps)
-	return c.request("https://api.bilibili.com/x/v3/fav/resource/list", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/v3/fav/resource/list", map[string]string{
 		"media_id": strconv.Itoa(mediaId),
 		"pn":       strconv.Itoa(pn),
 		"ps":       strconv.Itoa(ps),
@@ -1665,14 +1683,14 @@ func (c *BilibiliClient) GetFavoriteResources(mediaId, pn, ps int) (json.RawMess
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetFavoriteStatus(aid int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetFavoriteStatus(ctx context.Context, aid int) (json.RawMessage, error) {
 	logInfo("获取收藏状态 aid=%d", aid)
-	return c.request("https://api.bilibili.com/x/v2/fav/video/favoured", map[string]string{
+	return c.request(ctx, "https://api.bilibili.com/x/v2/fav/video/favoured", map[string]string{
 		"aid": strconv.Itoa(aid),
 	}, "GET")
 }
 
-func (c *BilibiliClient) GetCoinStatus(aid int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetCoinStatus(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
 	logInfo("获取投币状态 aid=%d bvid=%s", aid, bvid)
 	params := map[string]string{}
 	if bvid != "" {
@@ -1680,10 +1698,10 @@ func (c *BilibiliClient) GetCoinStatus(aid int, bvid string) (json.RawMessage, e
 	} else if aid > 0 {
 		params["aid"] = strconv.Itoa(aid)
 	}
-	return c.request("https://api.bilibili.com/x/web-interface/archive/coins", params, "GET")
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/archive/coins", params, "GET")
 }
 
-func (c *BilibiliClient) AddCoin(aid int, multiply int, selectLike bool, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) AddCoin(ctx context.Context, aid int, multiply int, selectLike bool, bvid string) (json.RawMessage, error) {
 	_, buvid3, biliJct, err := c.requireRiskAuth()
 	if err != nil {
 		return nil, err
@@ -1711,10 +1729,10 @@ func (c *BilibiliClient) AddCoin(aid int, multiply int, selectLike bool, bvid st
 	}
 
 	apiURL := "https://api.bilibili.com/x/web-interface/coin/add"
-	return c.webPost(apiURL, params)
+	return c.webPost(ctx, apiURL, params)
 }
 
-func (c *BilibiliClient) GetLikeStatus(aid int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) GetLikeStatus(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
 	logInfo("获取点赞状态 aid=%d bvid=%s", aid, bvid)
 	params := map[string]string{}
 	if bvid != "" {
@@ -1722,10 +1740,10 @@ func (c *BilibiliClient) GetLikeStatus(aid int, bvid string) (json.RawMessage, e
 	} else if aid > 0 {
 		params["aid"] = strconv.Itoa(aid)
 	}
-	return c.request("https://api.bilibili.com/x/web-interface/archive/has/like", params, "GET")
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/archive/has/like", params, "GET")
 }
 
-func (c *BilibiliClient) ToggleLike(aid int, like int, bvid string) (json.RawMessage, error) {
+func (c *BilibiliClient) ToggleLike(ctx context.Context, aid int, like int, bvid string) (json.RawMessage, error) {
 	_, buvid3, biliJct, err := c.requireRiskAuth()
 	if err != nil {
 		return nil, err
@@ -1745,24 +1763,28 @@ func (c *BilibiliClient) ToggleLike(aid int, like int, bvid string) (json.RawMes
 	}
 
 	apiURL := "https://api.bilibili.com/x/web-interface/archive/like"
-	return c.webPost(apiURL, params)
+	return c.webPost(ctx, apiURL, params)
 }
 
-func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.RawMessage, error) {
+func (c *BilibiliClient) ToggleFavorite(ctx context.Context, aid int, add bool, mediaIds []int) (json.RawMessage, error) {
 	_, biliJct, err := c.requireLogin()
 	if err != nil {
 		return nil, err
+	}
+	mediaIDParam := joinIntParams(mediaIds)
+	if mediaIDParam == "" {
+		return nil, fmt.Errorf("收藏夹ID无效")
 	}
 
 	addMedia := ""
 	delMedia := ""
 	if add {
-		addMedia = strconv.Itoa(mediaId)
+		addMedia = mediaIDParam
 	} else {
-		delMedia = strconv.Itoa(mediaId)
+		delMedia = mediaIDParam
 	}
 
-	return c.webPost("https://api.bilibili.com/x/v3/fav/resource/deal", map[string]string{
+	return c.webPost(ctx, "https://api.bilibili.com/x/v3/fav/resource/deal", map[string]string{
 		"rid":           strconv.Itoa(aid),
 		"type":          "2",
 		"add_media_ids": addMedia,
@@ -1771,7 +1793,7 @@ func (c *BilibiliClient) ToggleFavorite(aid int, add bool, mediaId int) (json.Ra
 	})
 }
 
-func (c *BilibiliClient) ReportHeartbeat(aid, cid int, bvid string, playedTime int) (json.RawMessage, error) {
+func (c *BilibiliClient) ReportHeartbeat(ctx context.Context, aid, cid int, bvid string, playedTime int) (json.RawMessage, error) {
 	_, biliJct, err := c.requireLogin()
 	if err != nil {
 		return nil, err
@@ -1785,7 +1807,7 @@ func (c *BilibiliClient) ReportHeartbeat(aid, cid int, bvid string, playedTime i
 		"start_ts":         strconv.FormatInt(time.Now().Unix(), 10),
 		"csrf":             biliJct,
 	}
-	return c.request("https://api.bilibili.com/x/click-interface/web/heartbeat", params, "POST")
+	return c.request(ctx, "https://api.bilibili.com/x/click-interface/web/heartbeat", params, "POST")
 }
 
 // ==================== HTTP 辅助函数 ====================
@@ -1854,6 +1876,16 @@ func wrapResult(raw json.RawMessage) map[string]interface{} {
 	}
 }
 
+func joinIntParams(values []int) string {
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		if v > 0 {
+			parts = append(parts, strconv.Itoa(v))
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
 func getCookie(r *http.Request, name string) string {
 	c, err := r.Cookie(name)
 	if err != nil {
@@ -1888,8 +1920,8 @@ func intParam(val string, min int, defaultVal int, hasMin bool) (int, error) {
 	return n, nil
 }
 
-func getIntQuery(w http.ResponseWriter, r *http.Request, name string, min, def int, hasMin bool) (int, bool) {
-	n, err := intParam(r.URL.Query().Get(name), min, def, hasMin)
+func getIntQuery(w http.ResponseWriter, q url.Values, name string, min, def int, hasMin bool) (int, bool) {
+	n, err := intParam(q.Get(name), min, def, hasMin)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, false
@@ -1897,8 +1929,8 @@ func getIntQuery(w http.ResponseWriter, r *http.Request, name string, min, def i
 	return n, true
 }
 
-func requireIntQuery(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
-	v, ok := getIntQuery(w, r, name, 1, 0, true)
+func requireIntQuery(w http.ResponseWriter, q url.Values, name string) (int, bool) {
+	v, ok := getIntQuery(w, q, name, 1, 0, true)
 	if !ok {
 		return 0, false
 	}
@@ -1910,9 +1942,9 @@ func requireIntQuery(w http.ResponseWriter, r *http.Request, name string) (int, 
 	return v, true
 }
 
-func getInt64Query(r *http.Request, names ...string) int64 {
+func getInt64Query(q url.Values, names ...string) int64 {
 	for _, name := range names {
-		if val := r.URL.Query().Get(name); val != "" {
+		if val := q.Get(name); val != "" {
 			if v, err := strconv.ParseInt(val, 10, 64); err == nil {
 				return v
 			}
@@ -1921,12 +1953,12 @@ func getInt64Query(r *http.Request, names ...string) int64 {
 	return 0
 }
 
-func getPageParams(w http.ResponseWriter, r *http.Request, defaultPS int) (pn, ps int, ok bool) {
-	pn, ok = getIntQuery(w, r, "pn", 1, 1, true)
+func getPageParams(w http.ResponseWriter, q url.Values, defaultPS int) (pn, ps int, ok bool) {
+	pn, ok = getIntQuery(w, q, "pn", 1, 1, true)
 	if !ok {
 		return 0, 0, false
 	}
-	ps, ok = getIntQuery(w, r, "ps", 1, defaultPS, true)
+	ps, ok = getIntQuery(w, q, "ps", 1, defaultPS, true)
 	if !ok {
 		return 0, 0, false
 	}
@@ -1942,23 +1974,23 @@ func normalizeSubtitleColorPreset(value string) string {
 	}
 }
 
-func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fontSize int, marginV int, spacing float64, weight int, colorPreset string, outlineEnabled bool, outlineWidth int, backgroundEnabled bool, backgroundOpacity float64, ok bool) {
-	fontSize, err := intParam(r.URL.Query().Get("font_size"), 6, 10, true)
+func subtitleStyleParamsFromRequest(w http.ResponseWriter, q url.Values) (fontSize int, marginV int, spacing float64, weight int, colorPreset string, outlineEnabled bool, outlineWidth int, backgroundEnabled bool, backgroundOpacity float64, ok bool) {
+	fontSize, err := intParam(q.Get("font_size"), 6, 10, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
-	marginV, err = intParam(r.URL.Query().Get("margin_v"), 0, 2, false)
+	marginV, err = intParam(q.Get("margin_v"), 0, 2, false)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
-	spacing, err = floatParam(r.URL.Query().Get("spacing"), 2.0)
+	spacing, err = floatParam(q.Get("spacing"), 2.0)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
-	weight, err = intParam(r.URL.Query().Get("weight"), 100, 700, true)
+	weight, err = intParam(q.Get("weight"), 100, 700, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
@@ -1966,14 +1998,14 @@ func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fon
 	if weight > 900 {
 		weight = 900
 	}
-	colorPreset = normalizeSubtitleColorPreset(r.URL.Query().Get("color_preset"))
-	outlineFlag, err := intParam(r.URL.Query().Get("outline_enabled"), 0, 0, true)
+	colorPreset = normalizeSubtitleColorPreset(q.Get("color_preset"))
+	outlineFlag, err := intParam(q.Get("outline_enabled"), 0, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	outlineEnabled = outlineFlag != 0
-	outlineWidth, err = intParam(r.URL.Query().Get("outline_width"), 1, 1, true)
+	outlineWidth, err = intParam(q.Get("outline_width"), 1, 1, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
@@ -1981,13 +2013,13 @@ func subtitleStyleParamsFromRequest(w http.ResponseWriter, r *http.Request) (fon
 	if outlineWidth > 6 {
 		outlineWidth = 6
 	}
-	backgroundFlag, err := intParam(r.URL.Query().Get("background_enabled"), 0, 0, true)
+	backgroundFlag, err := intParam(q.Get("background_enabled"), 0, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
 	}
 	backgroundEnabled = backgroundFlag != 0
-	backgroundOpacity, err = floatParam(r.URL.Query().Get("background_opacity"), 0.5)
+	backgroundOpacity, err = floatParam(q.Get("background_opacity"), 0.5)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, 0, 0, 0, "", false, 0, false, 0, false
@@ -2174,87 +2206,93 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePopular(w http.ResponseWriter, r *http.Request) {
-	pn, ps, ok := getPageParams(w, r, 20)
+	q := r.URL.Query()
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/popular", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetPopularVideos(pn, ps)
+		return c.GetPopularVideos(r.Context(), pn, ps)
 	})
 }
 
 func handleRanking(w http.ResponseWriter, r *http.Request) {
-	rid, ok := getIntQuery(w, r, "rid", 0, 0, true)
+	q := r.URL.Query()
+	rid, ok := getIntQuery(w, q, "rid", 0, 0, true)
 	if !ok {
 		return
 	}
-	typ := r.URL.Query().Get("type")
+	typ := q.Get("type")
 	if typ == "" {
 		typ = "all"
 	}
 	handleAPI(w, "/ranking", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetRanking(rid, typ)
+		return c.GetRanking(r.Context(), rid, typ)
 	})
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
-	keyword := r.URL.Query().Get("keyword")
+	q := r.URL.Query()
+	keyword := q.Get("keyword")
 	if keyword == "" {
 		logWarn("搜索关键词为空")
 		writeError(w, 400, "keyword 不能为空")
 		return
 	}
-	page, ok := getIntQuery(w, r, "page", 1, 1, true)
+	page, ok := getIntQuery(w, q, "page", 1, 1, true)
 	if !ok {
 		return
 	}
-	pageSize, ok := getIntQuery(w, r, "page_size", 1, 20, true)
+	pageSize, ok := getIntQuery(w, q, "page_size", 1, 20, true)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/search", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.SearchVideos(keyword, page, pageSize)
+		return c.SearchVideos(r.Context(), keyword, page, pageSize)
 	})
 }
 
 func handleVideoInfo(w http.ResponseWriter, r *http.Request) {
-	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	q := r.URL.Query()
+	aid, ok := getIntQuery(w, q, "aid", 1, 0, true)
 	if !ok {
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 	if aid == 0 && bvid == "" {
 		logWarn("aid 和 bvid 都未提供")
 		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
 	handleAPI(w, "/video/info", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetVideoInfo(aid, bvid)
+		return c.GetVideoInfo(r.Context(), aid, bvid)
 	})
 }
 
 func handleVideoRelated(w http.ResponseWriter, r *http.Request) {
-	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	q := r.URL.Query()
+	aid, ok := getIntQuery(w, q, "aid", 1, 0, true)
 	if !ok {
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 	if aid == 0 && bvid == "" {
 		logWarn("aid 和 bvid 都未提供")
 		writeError(w, 400, "aid 或 bvid 至少提供一个")
 		return
 	}
 	handleAPI(w, "/video/related", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetVideoRelated(aid, bvid)
+		return c.GetVideoRelated(r.Context(), aid, bvid)
 	})
 }
 
 func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
-	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	q := r.URL.Query()
+	aid, ok := getIntQuery(w, q, "aid", 1, 0, true)
 	if !ok {
 		return
 	}
-	cid, ok := getIntQuery(w, r, "cid", 1, 0, true)
+	cid, ok := getIntQuery(w, q, "cid", 1, 0, true)
 	if !ok {
 		return
 	}
@@ -2263,17 +2301,17 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "aid 和 cid 为必填参数")
 		return
 	}
-	qn, ok := getIntQuery(w, r, "qn", 0, 64, true)
+	qn, ok := getIntQuery(w, q, "qn", 0, 64, true)
 	if !ok {
 		return
 	}
-	fnval, ok := getIntQuery(w, r, "fnval", 0, 1, false)
+	fnval, ok := getIntQuery(w, q, "fnval", 0, 1, false)
 	if !ok {
 		return
 	}
-	platform := r.URL.Query().Get("platform")
+	platform := q.Get("platform")
 	client := getClient()
-	result, err := client.GetPlayUrl(aid, cid, qn, fnval, platform)
+	result, err := client.GetPlayUrl(r.Context(), aid, cid, qn, fnval, platform)
 	if err != nil {
 		logError("处理 /video/playurl 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -2342,7 +2380,8 @@ func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVideoDanmaku(w http.ResponseWriter, r *http.Request) {
-	cid, ok := getIntQuery(w, r, "cid", 1, 0, true)
+	q := r.URL.Query()
+	cid, ok := getIntQuery(w, q, "cid", 1, 0, true)
 	if !ok {
 		return
 	}
@@ -2351,12 +2390,12 @@ func handleVideoDanmaku(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "cid 为必填参数")
 		return
 	}
-	segment, ok := getIntQuery(w, r, "segment", 1, 1, true)
+	segment, ok := getIntQuery(w, q, "segment", 1, 1, true)
 	if !ok {
 		return
 	}
 	client := getClient()
-	data, err := client.GetDanmaku(cid, segment)
+	data, err := client.GetDanmaku(r.Context(), cid, segment)
 	if err != nil {
 		logError("处理 /video/danmaku 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -2420,8 +2459,8 @@ func getSubtitleURL(subs []interface{}, sid int) string {
 	return ""
 }
 
-func fetchPlayerSubtitleList(client *BilibiliClient, aid, cid int, bvid string) ([]interface{}, error) {
-	result, err := client.GetPlayerV2(aid, cid, bvid)
+func fetchPlayerSubtitleList(ctx context.Context, client *BilibiliClient, aid, cid int, bvid string) ([]interface{}, error) {
+	result, err := client.GetPlayerV2(ctx, aid, cid, bvid)
 	if err != nil {
 		return nil, err
 	}
@@ -2445,8 +2484,8 @@ func fetchPlayerSubtitleList(client *BilibiliClient, aid, cid int, bvid string) 
 	return subs, nil
 }
 
-func fetchSubtitleBody(client *BilibiliClient, subtitleURL string) ([]interface{}, error) {
-	bodyRaw, err := client.rawGetURL(subtitleURL)
+func fetchSubtitleBody(ctx context.Context, client *BilibiliClient, subtitleURL string) ([]interface{}, error) {
+	bodyRaw, err := client.rawGetURL(ctx, subtitleURL)
 	if err != nil {
 		return nil, fmt.Errorf("字幕下载失败: %w", err)
 	}
@@ -2542,7 +2581,8 @@ func buildASSFromSubtitleBody(body []interface{}, fontSize int, marginV int, spa
 }
 
 func handleVideoDanmakuConfig(w http.ResponseWriter, r *http.Request) {
-	oid, ok := getIntQuery(w, r, "oid", 1, 0, true)
+	q := r.URL.Query()
+	oid, ok := getIntQuery(w, q, "oid", 1, 0, true)
 	if !ok {
 		return
 	}
@@ -2551,121 +2591,127 @@ func handleVideoDanmakuConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "oid 为必填参数")
 		return
 	}
-	pid, ok := getIntQuery(w, r, "pid", 1, 0, true)
+	pid, ok := getIntQuery(w, q, "pid", 1, 0, true)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/video/danmaku/config", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetDanmakuConfig(oid, pid)
+		return c.GetDanmakuConfig(r.Context(), oid, pid)
 	})
 }
 
 func handleVideoCommentsReplies(w http.ResponseWriter, r *http.Request) {
-	oid, ok := requireIntQuery(w, r, "oid")
+	q := r.URL.Query()
+	oid, ok := requireIntQuery(w, q, "oid")
 	if !ok {
 		return
 	}
-	root, ok := requireIntQuery(w, r, "root")
+	root, ok := requireIntQuery(w, q, "root")
 	if !ok {
 		return
 	}
-	typ, ok := getIntQuery(w, r, "type", 0, 1, true)
+	typ, ok := getIntQuery(w, q, "type", 0, 1, true)
 	if !ok {
 		return
 	}
-	pn, ps, ok := getPageParams(w, r, 20)
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/video/comments/replies", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetCommentReplies(oid, root, typ, ps, pn)
+		return c.GetCommentReplies(r.Context(), oid, root, typ, ps, pn)
 	})
 }
 
 func handleVideoComments(w http.ResponseWriter, r *http.Request) {
-	oid, ok := requireIntQuery(w, r, "oid")
+	q := r.URL.Query()
+	oid, ok := requireIntQuery(w, q, "oid")
 	if !ok {
 		return
 	}
-	typ, ok := getIntQuery(w, r, "type", 0, 1, true)
+	typ, ok := getIntQuery(w, q, "type", 0, 1, true)
 	if !ok {
 		return
 	}
-	sortVal, ok := getIntQuery(w, r, "sort", 0, 0, true)
+	sortVal, ok := getIntQuery(w, q, "sort", 0, 0, true)
 	if !ok {
 		return
 	}
-	pn, ps, ok := getPageParams(w, r, 20)
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/video/comments", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetVideoComments(oid, typ, sortVal, ps, pn)
+		return c.GetVideoComments(r.Context(), oid, typ, sortVal, ps, pn)
 	})
 }
 
 func handleUserVideos(w http.ResponseWriter, r *http.Request) {
-	mid, ok := requireIntQuery(w, r, "mid")
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
 	if !ok {
 		return
 	}
-	pn, ps, ok := getPageParams(w, r, 20)
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
-	maxVal := getInt64Query(r, "max", "cursor")
+	maxVal := getInt64Query(q, "max", "cursor")
 
 	handleAPI(w, "/user/videos", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetUserVideos(mid, pn, ps, maxVal)
+		return c.GetUserVideos(r.Context(), mid, pn, ps, maxVal)
 	})
 }
 
 func handleUserSeasons(w http.ResponseWriter, r *http.Request) {
-	mid, ok := requireIntQuery(w, r, "mid")
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
 	if !ok {
 		return
 	}
-	pn, ps, ok := getPageParams(w, r, 20)
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/user/seasons", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetUserSeasonsSeries(mid, pn, ps)
+		return c.GetUserSeasonsSeries(r.Context(), mid, pn, ps)
 	})
 }
 
 func handleUserSeasonVideos(w http.ResponseWriter, r *http.Request) {
-	mid, ok := requireIntQuery(w, r, "mid")
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
 	if !ok {
 		return
 	}
-	seasonID, ok := requireIntQuery(w, r, "season_id")
+	seasonID, ok := requireIntQuery(w, q, "season_id")
 	if !ok {
 		return
 	}
-	pn, ps, ok := getPageParams(w, r, 30)
+	pn, ps, ok := getPageParams(w, q, 30)
 	if !ok {
 		return
 	}
-	sortReverse := strings.EqualFold(r.URL.Query().Get("sort_reverse"), "true")
+	sortReverse := strings.EqualFold(q.Get("sort_reverse"), "true")
 	handleAPI(w, "/user/season/videos", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetUserSeasonVideos(mid, seasonID, pn, ps, sortReverse)
+		return c.GetUserSeasonVideos(r.Context(), mid, seasonID, pn, ps, sortReverse)
 	})
 }
 
 func handleUserInfo(w http.ResponseWriter, r *http.Request) {
-	mid, ok := requireIntQuery(w, r, "mid")
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
 	if !ok {
 		return
 	}
 	handleAPI(w, "/user/info", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetUserInfo(mid)
+		return c.GetUserInfo(r.Context(), mid)
 	})
 }
 
 func handleLoginInfo(w http.ResponseWriter, r *http.Request) {
 	client := getClient()
-	result, err := client.GetLoginInfo()
+	result, err := client.GetLoginInfo(r.Context())
 	if err != nil {
 		logError("处理 /login/info 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -2825,65 +2871,71 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHotSearch(w http.ResponseWriter, r *http.Request) {
-	limit, ok := getIntQuery(w, r, "limit", 1, 10, true)
+	q := r.URL.Query()
+	limit, ok := getIntQuery(w, q, "limit", 1, 10, true)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/hot/search", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetHotSearch(limit)
+		return c.GetHotSearch(r.Context(), limit)
 	})
 }
 
 func handleRecommend(w http.ResponseWriter, r *http.Request) {
-	freshType, ok := getIntQuery(w, r, "fresh_type", 0, 3, true)
+	q := r.URL.Query()
+	freshType, ok := getIntQuery(w, q, "fresh_type", 0, 3, true)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/recommend", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetRecommend(freshType)
+		return c.GetRecommend(r.Context(), freshType)
 	})
 }
 
 func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
-	maxVal, ok := getIntQuery(w, r, "max", 0, 0, false)
+	q := r.URL.Query()
+	maxVal, ok := getIntQuery(w, q, "max", 0, 0, false)
 	if !ok {
 		return
 	}
-	viewAt, ok := getIntQuery(w, r, "view_at", 0, 0, false)
+	viewAt, ok := getIntQuery(w, q, "view_at", 0, 0, false)
 	if !ok {
 		return
 	}
-	ps, ok := getIntQuery(w, r, "ps", 1, 0, true)
+	ps, ok := getIntQuery(w, q, "ps", 1, 0, true)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/history/recent", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetRecentHistory(maxVal, viewAt, ps)
+		return c.GetRecentHistory(r.Context(), maxVal, viewAt, ps)
 	})
 }
 
 func handleToviewList(w http.ResponseWriter, r *http.Request) {
-	pn, ps, ok := getPageParams(w, r, 20)
+	q := r.URL.Query()
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/toview/list", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetWatchLaterList(pn, ps)
+		return c.GetWatchLaterList(r.Context(), pn, ps)
 	})
 }
 
 func handleToviewAdd(w http.ResponseWriter, r *http.Request) {
-	aid, bvid, ok := requireAidOrBvid(w, r)
+	q := r.URL.Query()
+	aid, bvid, ok := requireAidOrBvid(w, q)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/toview/add", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.AddToWatchLater(aid, bvid)
+		return c.AddToWatchLater(r.Context(), aid, bvid)
 	})
 }
 
 func handleToviewDel(w http.ResponseWriter, r *http.Request) {
-	aid, ok := getIntQuery(w, r, "aid", 1, 0, true)
+	q := r.URL.Query()
+	aid, ok := getIntQuery(w, q, "aid", 1, 0, true)
 	if !ok {
 		return
 	}
@@ -2892,34 +2944,35 @@ func handleToviewDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleAPI(w, "/toview/del", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.RemoveFromWatchLater(aid)
+		return c.RemoveFromWatchLater(r.Context(), aid)
 	})
 }
 
 func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	q := r.URL.Query()
+	aid, err := intParam(q.Get("aid"), 1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
-	cid, err := intParam(r.URL.Query().Get("cid"), 1, 0, true)
+	cid, err := intParam(q.Get("cid"), 1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
-	playedTime, err := intParam(r.URL.Query().Get("played_time"), -1, 0, true)
+	playedTime, err := intParam(q.Get("played_time"), -1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 	if bvid == "" {
 		writeError(w, 400, "bvid 为必填参数")
 		return
 	}
 
 	client := getClient()
-	result, err := client.ReportHeartbeat(aid, cid, bvid, playedTime)
+	result, err := client.ReportHeartbeat(r.Context(), aid, cid, bvid, playedTime)
 	if err != nil {
 		logError("处理 /player/heartbeat 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -2929,36 +2982,107 @@ func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFavFolderList(w http.ResponseWriter, r *http.Request) {
-	mid, ok := requireIntQuery(w, r, "mid")
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
 	if !ok {
 		return
 	}
 	handleAPI(w, "/fav/folder/list", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetFavoriteFolders(mid)
+		return c.GetFavoriteFolders(r.Context(), mid)
 	})
 }
 
 func handleFavResourceList(w http.ResponseWriter, r *http.Request) {
-	mediaId, ok := requireIntQuery(w, r, "media_id")
+	q := r.URL.Query()
+	mediaId, ok := requireIntQuery(w, q, "media_id")
 	if !ok {
 		return
 	}
-	pn, ps, ok := getPageParams(w, r, 20)
+	pn, ps, ok := getPageParams(w, q, 20)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/fav/resource/list", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetFavoriteResources(mediaId, pn, ps)
+		return c.GetFavoriteResources(r.Context(), mediaId, pn, ps)
 	})
 }
 
-func requireAidOrBvid(w http.ResponseWriter, r *http.Request) (int, string, bool) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+type favoriteFolderListResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    *struct {
+		List []struct {
+			ID       int `json:"id"`
+			Fid      int `json:"fid"`
+			FavState int `json:"fav_state"`
+		} `json:"list"`
+	} `json:"data"`
+}
+
+func loginMidFromNav(raw json.RawMessage) (int, error) {
+	var resp struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Mid     int  `json:"mid"`
+			IsLogin bool `json:"isLogin"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return 0, fmt.Errorf("登录信息解析失败")
+	}
+	if resp.Code != 0 {
+		msg := resp.Message
+		if msg == "" {
+			msg = "登录信息请求失败"
+		}
+		return 0, fmt.Errorf("%s", msg)
+	}
+	if resp.Data.Mid <= 0 || !resp.Data.IsLogin {
+		return 0, fmt.Errorf("未登录")
+	}
+	return resp.Data.Mid, nil
+}
+
+func favoriteFolderMediaIDs(raw json.RawMessage, favoredOnly bool) ([]int, error) {
+	var resp favoriteFolderListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("收藏夹解析失败")
+	}
+	if resp.Code != 0 {
+		msg := resp.Message
+		if msg == "" {
+			msg = "收藏夹列表请求失败"
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	if resp.Data == nil || len(resp.Data.List) == 0 {
+		return nil, nil
+	}
+
+	mediaIDs := make([]int, 0, len(resp.Data.List))
+	for _, folder := range resp.Data.List {
+		if favoredOnly && folder.FavState != 1 {
+			continue
+		}
+		mediaID := folder.ID
+		if mediaID <= 0 {
+			mediaID = folder.Fid
+		}
+		if mediaID > 0 {
+			mediaIDs = append(mediaIDs, mediaID)
+		}
+	}
+	return mediaIDs, nil
+}
+
+func requireAidOrBvid(w http.ResponseWriter, q url.Values) (int, string, bool) {
+	aid, err := intParam(q.Get("aid"), 1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return 0, "", false
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 	if aid == 0 && bvid == "" {
 		logWarn("aid 和 bvid 均缺失")
 		writeError(w, 400, "aid 或 bvid 至少提供一个")
@@ -2968,50 +3092,54 @@ func requireAidOrBvid(w http.ResponseWriter, r *http.Request) (int, string, bool
 }
 
 func handleFavStatus(w http.ResponseWriter, r *http.Request) {
-	aid, ok := requireIntQuery(w, r, "aid")
+	q := r.URL.Query()
+	aid, ok := requireIntQuery(w, q, "aid")
 	if !ok {
 		return
 	}
 	handleAPI(w, "/fav/status", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetFavoriteStatus(aid)
+		return c.GetFavoriteStatus(r.Context(), aid)
 	})
 }
 
 func handleCoinStatus(w http.ResponseWriter, r *http.Request) {
-	aid, bvid, ok := requireAidOrBvid(w, r)
+	q := r.URL.Query()
+	aid, bvid, ok := requireAidOrBvid(w, q)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/coin/status", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetCoinStatus(aid, bvid)
+		return c.GetCoinStatus(r.Context(), aid, bvid)
 	})
 }
 
 func handleCoinAdd(w http.ResponseWriter, r *http.Request) {
-	aid, bvid, ok := requireAidOrBvid(w, r)
+	q := r.URL.Query()
+	aid, bvid, ok := requireAidOrBvid(w, q)
 	if !ok {
 		return
 	}
-	multiply, ok := getIntQuery(w, r, "multiply", 1, 1, true)
+	multiply, ok := getIntQuery(w, q, "multiply", 1, 1, true)
 	if !ok {
 		return
 	}
 	if multiply > 2 {
 		multiply = 2
 	}
-	selectLike := r.URL.Query().Get("select_like") == "1"
+	selectLike := q.Get("select_like") == "1"
 	handleAPI(w, "/coin/add", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.AddCoin(aid, multiply, selectLike, bvid)
+		return c.AddCoin(r.Context(), aid, multiply, selectLike, bvid)
 	})
 }
 
 func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
-	aid, bvid, ok := requireAidOrBvid(w, r)
+	q := r.URL.Query()
+	aid, bvid, ok := requireAidOrBvid(w, q)
 	if !ok {
 		return
 	}
 	client := getClient()
-	result, err := client.GetLikeStatus(aid, bvid)
+	result, err := client.GetLikeStatus(r.Context(), aid, bvid)
 	if err != nil {
 		logError("处理 /like/status 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3040,21 +3168,23 @@ func handleLikeStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLikeToggle(w http.ResponseWriter, r *http.Request) {
-	aid, bvid, ok := requireAidOrBvid(w, r)
+	q := r.URL.Query()
+	aid, bvid, ok := requireAidOrBvid(w, q)
 	if !ok {
 		return
 	}
-	likeVal, ok := getIntQuery(w, r, "like", 1, 1, true)
+	likeVal, ok := getIntQuery(w, q, "like", 1, 1, true)
 	if !ok {
 		return
 	}
 	handleAPI(w, "/like/toggle", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.ToggleLike(aid, likeVal, bvid)
+		return c.ToggleLike(r.Context(), aid, likeVal, bvid)
 	})
 }
 
 func handleFavToggle(w http.ResponseWriter, r *http.Request) {
-	aid, err := intParam(r.URL.Query().Get("aid"), 1, 0, true)
+	q := r.URL.Query()
+	aid, err := intParam(q.Get("aid"), 1, 0, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
@@ -3064,66 +3194,79 @@ func handleFavToggle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "aid 为必填参数")
 		return
 	}
-	action := r.URL.Query().Get("action")
+	action := q.Get("action")
 	add := action != "0"
 
-	mediaId, err := intParam(r.URL.Query().Get("media_id"), 1, 0, true)
+	mediaId, err := intParam(q.Get("media_id"), 1, 0, true)
 	if err != nil {
 		mediaId = 0
 	}
 
 	client := getClient()
-	if mediaId <= 0 {
-		// 未指定收藏夹时，回退到默认收藏夹
-		loginRaw, err := client.GetLoginInfo()
+	mediaIds := []int{}
+	if mediaId > 0 {
+		mediaIds = []int{mediaId}
+	}
+
+	if len(mediaIds) == 0 {
+		loginRaw, err := client.GetLoginInfo(r.Context())
 		if err != nil {
 			logError("获取登录信息失败: %s", err.Error())
 			writeError(w, 500, err.Error())
 			return
 		}
-		var loginResp map[string]interface{}
-		if err := json.Unmarshal(loginRaw, &loginResp); err != nil {
-			writeError(w, 500, "登录信息解析失败")
-			return
-		}
-		data, _ := loginResp["data"].(map[string]interface{})
-		midF, _ := data["mid"].(float64)
-		mid := int(midF)
-		if mid <= 0 {
-			writeError(w, 401, "未登录")
+		mid, err := loginMidFromNav(loginRaw)
+		if err != nil {
+			status := 500
+			if err.Error() == "未登录" {
+				status = 401
+			}
+			writeError(w, status, err.Error())
 			return
 		}
 
-		foldersRaw, err := client.GetFavoriteFolders(mid)
+		var foldersRaw json.RawMessage
+		if add {
+			foldersRaw, err = client.GetFavoriteFolders(r.Context(), mid)
+		} else {
+			foldersRaw, err = client.GetFavoriteFoldersForResource(r.Context(), mid, aid)
+		}
 		if err != nil {
 			logError("获取收藏夹失败: %s", err.Error())
 			writeError(w, 500, err.Error())
 			return
 		}
-		var favResp map[string]interface{}
-		if err := json.Unmarshal(foldersRaw, &favResp); err != nil {
-			writeError(w, 500, "收藏夹解析失败")
+
+		ids, err := favoriteFolderMediaIDs(foldersRaw, !add)
+		if err != nil {
+			writeError(w, 500, err.Error())
 			return
 		}
-		favData, _ := favResp["data"].(map[string]interface{})
-		list, _ := favData["list"].([]interface{})
-		if len(list) == 0 {
-			writeError(w, 500, "未找到收藏夹")
+		if len(ids) == 0 {
+			if add {
+				writeError(w, 500, "未找到收藏夹")
+			} else {
+				writeError(w, 500, "未找到视频所在收藏夹")
+			}
 			return
 		}
-		first, _ := list[0].(map[string]interface{})
-		fidF, _ := first["id"].(float64)
-		if fidF == 0 {
-			fidF, _ = first["fid"].(float64)
-		}
-		mediaId = int(fidF)
-		if mediaId <= 0 {
-			writeError(w, 500, "收藏夹ID无效")
-			return
+		if add {
+			mediaIds = []int{ids[0]}
+		} else {
+			mediaIds = ids
 		}
 	}
 
-	result, err := client.ToggleFavorite(aid, add, mediaId)
+	if len(mediaIds) == 0 {
+		if add {
+			writeError(w, 500, "未找到收藏夹")
+		} else {
+			writeError(w, 500, "未找到视频所在收藏夹")
+		}
+		return
+	}
+
+	result, err := client.ToggleFavorite(r.Context(), aid, add, mediaIds)
 	if err != nil {
 		logError("处理 /fav/toggle 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3133,15 +3276,16 @@ func handleFavToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUserFollowToggle(w http.ResponseWriter, r *http.Request) {
-	mid, ok := requireIntQuery(w, r, "mid")
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
 	if !ok {
 		return
 	}
 
-	action := r.URL.Query().Get("action")
+	action := q.Get("action")
 	follow := action != "0"
 
-	result, err := getClient().ToggleUserFollow(mid, follow)
+	result, err := getClient().ToggleUserFollow(r.Context(), mid, follow)
 	if err != nil {
 		logError("处理 /user/follow/toggle 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3166,31 +3310,33 @@ func handleUserFollowToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVideoPlayerInfo(w http.ResponseWriter, r *http.Request) {
-	aid, ok := requireIntQuery(w, r, "aid")
+	q := r.URL.Query()
+	aid, ok := requireIntQuery(w, q, "aid")
 	if !ok {
 		return
 	}
-	cid, ok := requireIntQuery(w, r, "cid")
+	cid, ok := requireIntQuery(w, q, "cid")
 	if !ok {
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 	handleAPI(w, "/video/player/info", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetPlayerV2(aid, cid, bvid)
+		return c.GetPlayerV2(r.Context(), aid, cid, bvid)
 	})
 }
 
 func handleVideoSubtitleList(w http.ResponseWriter, r *http.Request) {
-	aid, ok := requireIntQuery(w, r, "aid")
+	q := r.URL.Query()
+	aid, ok := requireIntQuery(w, q, "aid")
 	if !ok {
 		return
 	}
-	cid, ok := requireIntQuery(w, r, "cid")
+	cid, ok := requireIntQuery(w, q, "cid")
 	if !ok {
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
-	subs, err := fetchPlayerSubtitleList(getClient(), aid, cid, bvid)
+	bvid := q.Get("bvid")
+	subs, err := fetchPlayerSubtitleList(r.Context(), getClient(), aid, cid, bvid)
 	if err != nil {
 		logError("处理 /video/subtitle/list 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3206,27 +3352,28 @@ func handleVideoSubtitleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
-	aid, ok := requireIntQuery(w, r, "aid")
+	q := r.URL.Query()
+	aid, ok := requireIntQuery(w, q, "aid")
 	if !ok {
 		return
 	}
-	cid, ok := requireIntQuery(w, r, "cid")
+	cid, ok := requireIntQuery(w, q, "cid")
 	if !ok {
 		return
 	}
-	sid, ok := requireIntQuery(w, r, "sid")
+	sid, ok := requireIntQuery(w, q, "sid")
 	if !ok {
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 
-	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, ok := subtitleStyleParamsFromRequest(w, r)
+	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, ok := subtitleStyleParamsFromRequest(w, q)
 	if !ok {
 		return
 	}
 
 	client := getClient()
-	subs, err := fetchPlayerSubtitleList(client, aid, cid, bvid)
+	subs, err := fetchPlayerSubtitleList(r.Context(), client, aid, cid, bvid)
 	if err != nil {
 		logError("处理 /video/subtitle/ass 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3239,7 +3386,7 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := fetchSubtitleBody(client, subtitleURL)
+	body, err := fetchSubtitleBody(r.Context(), client, subtitleURL)
 	if err != nil {
 		status := 500
 		if err.Error() == "该字幕内容为空" {
@@ -3266,27 +3413,28 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVideoSubtitleASSFile(w http.ResponseWriter, r *http.Request) {
-	aid, ok := requireIntQuery(w, r, "aid")
+	q := r.URL.Query()
+	aid, ok := requireIntQuery(w, q, "aid")
 	if !ok {
 		return
 	}
-	cid, ok := requireIntQuery(w, r, "cid")
+	cid, ok := requireIntQuery(w, q, "cid")
 	if !ok {
 		return
 	}
-	sid, ok := requireIntQuery(w, r, "sid")
+	sid, ok := requireIntQuery(w, q, "sid")
 	if !ok {
 		return
 	}
-	bvid := r.URL.Query().Get("bvid")
+	bvid := q.Get("bvid")
 
-	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, ok := subtitleStyleParamsFromRequest(w, r)
+	fontSize, marginV, spacing, weight, colorPreset, outlineEnabled, outlineWidth, backgroundEnabled, backgroundOpacity, ok := subtitleStyleParamsFromRequest(w, q)
 	if !ok {
 		return
 	}
 
 	client := getClient()
-	subs, err := fetchPlayerSubtitleList(client, aid, cid, bvid)
+	subs, err := fetchPlayerSubtitleList(r.Context(), client, aid, cid, bvid)
 	if err != nil {
 		logError("处理 /video/subtitle/ass/file 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3299,7 +3447,7 @@ func handleVideoSubtitleASSFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := fetchSubtitleBody(client, subtitleURL)
+	body, err := fetchSubtitleBody(r.Context(), client, subtitleURL)
 	if err != nil {
 		status := 500
 		if err.Error() == "该字幕内容为空" {

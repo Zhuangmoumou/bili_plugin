@@ -9,10 +9,13 @@
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <functional>
+
+class QNetworkRequest;
 
 class BiliNetwork : public QObject {
   Q_OBJECT
@@ -30,10 +33,6 @@ public:
   void get(const QString &path, const QMap<QString, QString> &params,
            SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
-  // 带 Cookie 请求
-  void getWithAuth(const QString &path, const QMap<QString, QString> &params,
-                   SuccessCallback onSuccess, ErrorCallback onError = nullptr);
-
   // 下载图片
   void downloadImage(const QUrl &url, RawCallback onSuccess,
                      ErrorCallback onError = nullptr);
@@ -47,11 +46,6 @@ public:
   // 设置/获取 API 地址
   void setApiBase(const QString &base);
   QString apiBase() const;
-
-  // 登录 Cookie 管理
-  void setSessionCookie(const QString &sessdata);
-  QString sessionCookie() const;
-  bool isLoggedIn() const;
 
   // 网络状态
   bool isOnline() const;
@@ -79,13 +73,15 @@ private:
   void handleReply(QNetworkReply *reply, SuccessCallback onSuccess,
                    ErrorCallback onError);
 
+  // 设置 B 站请求公共头（UA / Referer / 重定向）
+  void applyCommonHeaders(QNetworkRequest &request);
+
   bool checkRateLimit();
   void trackReply(QNetworkReply *reply);
   void untrackReply(QNetworkReply *reply);
 
   QNetworkAccessManager *m_nam;
   QString m_apiBase;
-  QString m_sessdata;
   bool m_online;
   int m_requestTimeout;
 
@@ -100,8 +96,9 @@ private:
   static constexpr int MAX_REQUESTS_PER_SECOND = 10;
   static constexpr int MAX_CONCURRENT_REQUESTS = 20;
 
-  // Cookie 线程安全
-  mutable QMutex m_cookieMutex;
+  // 大响应 JSON 解析放工作线程；小于阈值的仍同步解析，免线程调度开销
+  static constexpr int JSON_ASYNC_THRESHOLD = 16 * 1024;
+  QThreadPool m_jsonPool;
 
   static BiliNetwork *s_instance;
   static QMutex s_instanceMutex;

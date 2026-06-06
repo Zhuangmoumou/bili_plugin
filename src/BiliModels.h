@@ -355,6 +355,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     int count() const;
+    QVector<VideoPartItem> items() const;
 
     Q_INVOKABLE void clear();
     void setItems(const QVector<VideoPartItem> &items);

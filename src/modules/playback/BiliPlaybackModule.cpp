@@ -30,7 +30,6 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
@@ -54,8 +53,14 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
                                  .arg(m_controller->m_currentVideo.cid)
                                  .arg(quality)
                                  .arg(4048);
+  const QString requestBvid = m_controller->m_currentVideo.bvid;
+  const qint64 requestCid = m_controller->m_currentVideo.cid;
   if (m_controller->m_playUrlLoadingKey == requestKey) {
     return;
+  }
+  if (!m_controller->m_playUrlLoadingKey.isEmpty()) {
+    m_controller->m_playUrlLoadingKey.clear();
+    m_controller->setIsLoading(false);
   }
   m_controller->setIsLoading(true);
   m_controller->m_playUrlLoadingKey = requestKey;
@@ -77,11 +82,18 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
 
   m_controller->m_network->get(
       "/video/playurl", params,
-      [self, requestedQuality, audioOnly](const QJsonObject &data) {
+      [self, requestKey, requestBvid, requestCid, requestedQuality, audioOnly](const QJsonObject &data) {
         if (!self)
+          return;
+        if (self->m_playUrlLoadingKey != requestKey)
           return;
 
         self->m_playUrlLoadingKey.clear();
+        if (self->m_currentVideo.bvid != requestBvid || self->m_currentVideo.cid != requestCid) {
+          self->setIsLoading(false);
+          return;
+        }
+
         QString videoUrl;
         QString audioUrl;
         int finalQuality = audioOnly ? 0 : requestedQuality;
@@ -146,9 +158,10 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
           emit self->playbackReady(self->m_playUrl);
         }
       },
-      [self](int code, const QString &msg) {
-        Q_UNUSED(code)
+      [self, requestKey](int code, const QString &msg) {
         if (!self)
+          return;
+        if (self->m_playUrlLoadingKey != requestKey)
           return;
 
         self->m_playUrlLoadingKey.clear();
@@ -157,6 +170,8 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
         self->m_dashAudioUrl.clear();
         emit self->playUrlChanged();
         self->setIsLoading(false);
+        if (code == QNetworkReply::OperationCanceledError)
+          return;
         emit self->toastMessage(QString("获取播放地址失败：%1").arg(msg));
       });
 }
@@ -175,8 +190,14 @@ void BiliPlaybackModule::fetchAcceptQualities(int quality) {
                                  .arg(m_controller->m_currentVideo.cid)
                                  .arg(quality)
                                  .arg(4048);
+  const QString requestBvid = m_controller->m_currentVideo.bvid;
+  const qint64 requestCid = m_controller->m_currentVideo.cid;
   if (m_controller->m_acceptQualitiesLoadingKey == requestKey) {
     return;
+  }
+  if (!m_controller->m_acceptQualitiesLoadingKey.isEmpty()) {
+    m_controller->m_acceptQualitiesLoadingKey.clear();
+    m_controller->setIsLoading(false);
   }
   m_controller->setIsLoading(true);
   m_controller->m_acceptQualitiesLoadingKey = requestKey;
@@ -192,16 +213,25 @@ void BiliPlaybackModule::fetchAcceptQualities(int quality) {
 
   m_controller->m_network->get(
       "/video/playurl", params,
-      [self](const QJsonObject &data) {
+      [self, requestKey, requestBvid, requestCid](const QJsonObject &data) {
         if (!self)
+          return;
+        if (self->m_acceptQualitiesLoadingKey != requestKey)
           return;
 
         self->m_acceptQualitiesLoadingKey.clear();
+        if (self->m_currentVideo.bvid != requestBvid || self->m_currentVideo.cid != requestCid) {
+          self->setIsLoading(false);
+          return;
+        }
+
         self->updateAcceptQualities(data);
         self->setIsLoading(false);
       },
-      [self](int, const QString &msg) {
+      [self, requestKey](int, const QString &msg) {
         if (!self)
+          return;
+        if (self->m_acceptQualitiesLoadingKey != requestKey)
           return;
         self->m_acceptQualitiesLoadingKey.clear();
         self->setIsLoading(false);
@@ -312,8 +342,6 @@ void BiliPlaybackModule::cleanupTempVideo() {
     QFile file(m_controller->m_tempVideoPath);
     if (file.exists()) {
       file.remove();
-      std::cout << "[BiliController] Cleaned up temp video: "
-                << m_controller->m_tempVideoPath.toStdString() << std::endl;
     }
     m_controller->m_tempVideoPath.clear();
   }
@@ -321,8 +349,6 @@ void BiliPlaybackModule::cleanupTempVideo() {
     QFile file(m_controller->m_tempAudioPath);
     if (file.exists()) {
       file.remove();
-      std::cout << "[BiliController] Cleaned up temp audio: "
-                << m_controller->m_tempAudioPath.toStdString() << std::endl;
     }
     m_controller->m_tempAudioPath.clear();
   }
@@ -333,17 +359,8 @@ void BiliPlaybackModule::cleanupTempVideo() {
 }
 
 bool BiliPlaybackModule::isExternalPlayerRunning() const {
-  if (m_controller->m_externalPlayerProcess && m_controller->m_externalPlayerProcess->state() != QProcess::NotRunning) {
-    return true;
-  }
-
-  QProcess pgrep;
-  pgrep.start("pgrep", QStringList() << "-f" << "/userdisk/mpv/bin/mpv");
-  if (!pgrep.waitForFinished(1500)) {
-    return false;
-  }
-
-  return pgrep.exitCode() == 0 && !QString::fromLocal8Bit(pgrep.readAllStandardOutput()).trimmed().isEmpty();
+  return m_controller->m_externalPlayerProcess &&
+         m_controller->m_externalPlayerProcess->state() != QProcess::NotRunning;
 }
 
 bool BiliPlaybackModule::externalPlayerRunning() const {
@@ -420,19 +437,8 @@ bool BiliPlaybackModule::startExternalPlayer(const QStringList &args) {
             process->deleteLater();
           });
 
-  process->start();
-  if (!process->waitForStarted(3000)) {
-    QString detail = process->errorString();
-    const QString stderrText = QString::fromLocal8Bit(process->readAllStandardError()).trimmed();
-    if (!stderrText.isEmpty()) {
-      detail = detail.isEmpty() ? stderrText : detail + " | " + stderrText;
-    }
-    emit m_controller->toastMessage(QString("启动外部播放器失败：%1").arg(detail.isEmpty() ? QStringLiteral("未知错误") : detail));
-    process->deleteLater();
-    return false;
-  }
-
   m_controller->m_externalPlayerProcess = process;
+  process->start();
   return true;
 }
 
@@ -540,17 +546,30 @@ void BiliPlaybackModule::fetchSubtitleList() {
   params["bvid"] = m_controller->m_currentVideo.bvid;
 
   QPointer<BiliController> self(m_controller);
+  const qint64 requestAid = m_controller->m_currentVideo.aid;
+  const qint64 requestCid = m_controller->m_currentVideo.cid;
+  const QString requestBvid = m_controller->m_currentVideo.bvid;
   m_controller->m_network->get(
       "/video/subtitle/list", params,
-      [self](const QJsonObject &data) {
+      [self, requestAid, requestCid, requestBvid](const QJsonObject &data) {
         if (!self)
           return;
+        if (self->m_currentVideo.aid != requestAid ||
+            self->m_currentVideo.cid != requestCid ||
+            self->m_currentVideo.bvid != requestBvid) {
+          return;
+        }
         self->m_subtitleItems = data.value("subtitles").toArray();
         emit self->subtitleListChanged();
       },
-      [self](int, const QString &msg) {
+      [self, requestAid, requestCid, requestBvid](int, const QString &msg) {
         if (!self)
           return;
+        if (self->m_currentVideo.aid != requestAid ||
+            self->m_currentVideo.cid != requestCid ||
+            self->m_currentVideo.bvid != requestBvid) {
+          return;
+        }
         self->m_subtitleItems = QJsonArray();
         emit self->subtitleListChanged();
         emit self->toastMessage(QString("获取字幕列表失败：%1").arg(msg));
@@ -666,6 +685,15 @@ void BiliPlaybackModule::setSubtitleBackgroundOpacity(double value) {
   settings.setValue("subtitleBackgroundOpacity", m_controller->m_subtitleBackgroundOpacity);
   settings.sync();
   emit m_controller->subtitleStyleChanged();
+}
+
+void BiliPlaybackModule::setVideoCardOffscreenPlaceholderEnabled(bool enabled) {
+  if (m_controller->m_videoCardOffscreenPlaceholderEnabled == enabled) return;
+  m_controller->m_videoCardOffscreenPlaceholderEnabled = enabled;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("videoCardOffscreenPlaceholderEnabled", m_controller->m_videoCardOffscreenPlaceholderEnabled);
+  settings.sync();
+  emit m_controller->preferenceSettingsChanged();
 }
 
 void BiliPlaybackModule::launchExternalPlayerCurrentSelection() {

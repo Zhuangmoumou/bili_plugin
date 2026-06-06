@@ -1,5 +1,6 @@
 #include "modules/season/BiliSeasonModule.h"
 
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
@@ -78,6 +79,50 @@ QString videoRequestKey(const VideoItem &video) {
   return !video.bvid.isEmpty() ? video.bvid : QString::number(video.aid);
 }
 
+struct ParsedSeasonVideos {
+  qint64 mid = 0;
+  qint64 seasonId = 0;
+  int page = 1;
+  QVector<VideoItem> items;
+  bool totalKnown = false;
+  int total = 0;
+  bool hasMore = false;
+};
+
+QVector<VideoItem> parseRelatedVideosPayload(const QJsonObject &data,
+                                             const QString &currentBvid) {
+  QVector<VideoItem> items;
+  QJsonArray list = data.value("list").toArray();
+  items.reserve(list.size());
+  for (const QJsonValue &value : list) {
+    if (!value.isObject())
+      continue;
+    VideoItem item = VideoListModel::parseVideoItem(value.toObject());
+    if (item.bvid.isEmpty() || item.bvid == currentBvid)
+      continue;
+    items.append(item);
+  }
+  return items;
+}
+
+ParsedSeasonVideos parseSeasonVideosPayload(const QJsonObject &data,
+                                            qint64 mid, qint64 seasonId,
+                                            int page, int pageSize,
+                                            const QString &ownerName) {
+  ParsedSeasonVideos result;
+  result.mid = mid;
+  result.seasonId = seasonId;
+  result.page = page;
+  result.items =
+      parseSeasonArchiveItems(data.value("archives").toArray(), mid, ownerName);
+  sortByNewest(result.items);
+
+  result.total = seasonArchiveTotal(data, &result.totalKnown);
+  result.hasMore =
+      seasonArchiveHasMore(data, page, pageSize, result.total, result.items.size());
+  return result;
+}
+
 }  // namespace
 
 BiliSeasonModule::BiliSeasonModule(BiliController *controller)
@@ -114,9 +159,10 @@ void BiliSeasonModule::fetchRelatedVideos() {
   controller->m_relatedVideoModel->setLoading(true);
 
   QPointer<BiliController> self(controller);
+  const QString currentBvid = controller->m_currentVideo.bvid;
   controller->m_network->get(
       "/video/related", params,
-      [self, requestKey](const QJsonObject &data) {
+      [self, requestKey, currentBvid](const QJsonObject &data) {
         if (!self || !self->m_relatedVideoModel) return;
         const QString currentKey = videoRequestKey(self->m_currentVideo);
         if (currentKey != requestKey) {
@@ -127,22 +173,22 @@ void BiliSeasonModule::fetchRelatedVideos() {
           return;
         }
 
-        QVector<VideoItem> items;
-        QJsonArray list = data.value("list").toArray();
-        items.reserve(list.size());
-        for (const QJsonValue &value : list) {
-          if (!value.isObject()) continue;
-          VideoItem item = VideoListModel::parseVideoItem(value.toObject());
-          if (item.bvid.isEmpty() || item.bvid == self->m_currentVideo.bvid) continue;
-          items.append(item);
-        }
+        biliRunInWorker(
+            self,
+            [data, currentBvid]() {
+              return parseRelatedVideosPayload(data, currentBvid);
+            },
+            [self, requestKey](QVector<VideoItem> items) {
+              if (!self || !self->m_relatedVideoModel) return;
+              if (videoRequestKey(self->m_currentVideo) != requestKey) return;
 
-        self->m_relatedVideoModel->clear();
-        self->m_relatedVideoModel->appendItems(items);
-        self->m_relatedVideoModel->setHasMore(false);
-        self->m_relatedVideoModel->setLoading(false);
-        self->m_relatedVideoBvid = requestKey;
-        self->m_relatedVideoLoadingBvid.clear();
+              self->m_relatedVideoModel->clear();
+              self->m_relatedVideoModel->appendItems(items);
+              self->m_relatedVideoModel->setHasMore(false);
+              self->m_relatedVideoModel->setLoading(false);
+              self->m_relatedVideoBvid = requestKey;
+              self->m_relatedVideoLoadingBvid.clear();
+            });
       },
       [self, requestKey](int, const QString &) {
         if (!self || !self->m_relatedVideoModel) return;
@@ -176,30 +222,36 @@ void BiliSeasonModule::fetchUpSeasonVideos(int page, int pageSize) {
   params["ps"] = QString::number(pageSize);
 
   QPointer<BiliController> self(controller);
+  const QString ownerName = controller->m_upUserName;
   controller->apiGet(
       "/user/season/videos", params,
-      [self, mid, seasonId, page, pageSize](const QJsonObject &data) {
+      [self, mid, seasonId, page, pageSize, ownerName](const QJsonObject &data) {
         if (!self || !self->m_upVideoModel) return;
         if (self->m_upUserMid != mid || self->m_upSelectedSeasonId != seasonId) return;
+        biliRunInWorker(
+            self,
+            [data, mid, seasonId, page, pageSize, ownerName]() {
+              return parseSeasonVideosPayload(data, mid, seasonId, page,
+                                              pageSize, ownerName);
+            },
+            [self](ParsedSeasonVideos result) {
+              if (!self || !self->m_upVideoModel) return;
+              if (self->m_upUserMid != result.mid ||
+                  self->m_upSelectedSeasonId != result.seasonId) {
+                return;
+              }
 
-        QVector<VideoItem> items = parseSeasonArchiveItems(data.value("archives").toArray(), mid,
-                                                           self->m_upUserName);
-        sortByNewest(items);
+              self->m_upSeasonVideoPage = result.page;
+              self->m_upVideoModel->appendItems(result.items);
+              if (result.totalKnown) self->setUpVideoTotal(result.total);
+              self->m_upSeasonVideoHasMore = result.hasMore;
+              self->m_upVideoModel->setHasMore(result.hasMore);
+              self->m_upVideoModel->setLoading(false);
 
-        self->m_upSeasonVideoPage = page;
-        self->m_upVideoModel->appendItems(items);
-
-        bool totalKnown = false;
-        int total = seasonArchiveTotal(data, &totalKnown);
-        if (totalKnown) self->setUpVideoTotal(total);
-        bool hasMore = seasonArchiveHasMore(data, page, pageSize, total, items.size());
-        self->m_upSeasonVideoHasMore = hasMore;
-        self->m_upVideoModel->setHasMore(hasMore);
-        self->m_upVideoModel->setLoading(false);
-
-        if (items.isEmpty() && page == 1) {
-          self->m_upVideoModel->setErrorMessage("该合集暂无视频");
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                self->m_upVideoModel->setErrorMessage("该合集暂无视频");
+              }
+            });
       },
       [self, mid, seasonId](int, const QString &msg) {
         if (!self || !self->m_upVideoModel) return;
@@ -257,25 +309,30 @@ void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, 
       [self, mid, seasonId, page, pageSize, ownerName](const QJsonObject &data) {
         if (!self || !self->m_seasonVideoModel) return;
         if (self->m_seasonVideoMid != mid || self->m_seasonVideoSeasonId != seasonId) return;
+        biliRunInWorker(
+            self,
+            [data, mid, seasonId, page, pageSize, ownerName]() {
+              return parseSeasonVideosPayload(data, mid, seasonId, page,
+                                              pageSize, ownerName);
+            },
+            [self](ParsedSeasonVideos result) {
+              if (!self || !self->m_seasonVideoModel) return;
+              if (self->m_seasonVideoMid != result.mid ||
+                  self->m_seasonVideoSeasonId != result.seasonId) {
+                return;
+              }
 
-        QVector<VideoItem> items = parseSeasonArchiveItems(data.value("archives").toArray(), mid,
-                                                           ownerName);
-        sortByNewest(items);
+              self->m_seasonVideoPage = result.page;
+              self->m_seasonVideoModel->appendItems(result.items);
+              if (result.totalKnown) self->setSeasonVideoTotal(result.total);
+              self->m_seasonVideoHasMore = result.hasMore;
+              self->m_seasonVideoModel->setHasMore(result.hasMore);
+              self->m_seasonVideoModel->setLoading(false);
 
-        self->m_seasonVideoPage = page;
-        self->m_seasonVideoModel->appendItems(items);
-
-        bool totalKnown = false;
-        int total = seasonArchiveTotal(data, &totalKnown);
-        if (totalKnown) self->setSeasonVideoTotal(total);
-        bool hasMore = seasonArchiveHasMore(data, page, pageSize, total, items.size());
-        self->m_seasonVideoHasMore = hasMore;
-        self->m_seasonVideoModel->setHasMore(hasMore);
-        self->m_seasonVideoModel->setLoading(false);
-
-        if (items.isEmpty() && page == 1) {
-          self->m_seasonVideoModel->setErrorMessage("该合集暂无视频");
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                self->m_seasonVideoModel->setErrorMessage("该合集暂无视频");
+              }
+            });
       },
       [self, mid, seasonId](int, const QString &msg) {
         if (!self || !self->m_seasonVideoModel) return;

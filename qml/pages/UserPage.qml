@@ -15,7 +15,7 @@ Rectangle {
     signal videoSelected(string bvid)
     signal watchLaterRequested()
 
-    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置, 5=字幕设置
+    // 0=个人中心, 1=收藏夹列表, 2=收藏夹详情, 3=最近观看, 4=设置, 5=字幕设置, 6=偏好设置
     property int favView: 0
     property string currentFavTitle: ""
     property int currentFavId: 0
@@ -31,7 +31,7 @@ Rectangle {
     readonly property bool loginImagesActive: visible && loginArea.visible
 
     function normalizedFavView(view) {
-        return view === 5 ? 4 : view
+        return (view === 5 || view === 6) ? 4 : view
     }
 
     function isManagedViewCurrent(viewId) {
@@ -79,7 +79,7 @@ Rectangle {
             favView = 0
             return
         }
-        if (favView === 5 && (!controller || !controller.loggedIn)) {
+        if ((favView === 5 || favView === 6) && (!controller || !controller.loggedIn)) {
             favView = 4
             return
         }
@@ -99,7 +99,7 @@ Rectangle {
             favView = 0
             return
         }
-        if (favView === 5) {
+        if (favView === 5 || favView === 6) {
             favView = 4
             return
         }
@@ -167,6 +167,7 @@ Rectangle {
             if (favView === 3) return "最近观看"
             if (favView === 4) return "设置"
             if (favView === 5) return "字幕设置"
+            if (favView === 6) return "偏好设置"
             return "个人中心"
         }
         showBack: true
@@ -1414,6 +1415,9 @@ Rectangle {
                             property bool _loadingMore: false
                             onAtXEndChanged: {
                                 if (!atXEnd || !controller || _loadingMore) return
+                                if (recentList.contentWidth <= recentList.width + 2) return
+                                if (recentList.model && recentList.model.loading) return
+                                if (recentList.model && recentList.model.hasMore === false) return
                                 _loadingMore = true
                                 Qt.callLater(function() {
                                     controller.history.fetchMoreRecentHistory()
@@ -1427,6 +1431,7 @@ Rectangle {
                                 // 与 HomePage 保持一致：直接使用 model.pic，避免重复 encode 带来额外开销/错误
                                 coverUrl: model.pic || ""
                                 imageActive: userPage.recentHistoryImagesActive
+                                preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                                 upName: model.ownerName || ""
                                 viewCount: ""
                                 durationText: model.durationText || ""
@@ -1436,6 +1441,21 @@ Rectangle {
                                     userPage.recentHistoryContentX = recentList.contentX
                                     userPage.recentHistoryForceStart = false
                                     userPage.videoSelected(bvid)
+                                }
+                            }
+
+                            Row {
+                                visible: recentList.count === 0 && controller && recentList.model && recentList.model.loading
+                                anchors.left: parent.left
+                                anchors.leftMargin: Theme.spacingSmall
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingMedium
+                                Repeater {
+                                    model: 3
+                                    Components.VideoCardCompact {
+                                        height: recentList.height
+                                        placeholder: true
+                                    }
                                 }
                             }
                         }
@@ -1471,6 +1491,7 @@ Rectangle {
             controller: userPage.controller
             viewMode: favView
             onRequestSubtitleSettings: userPage.favView = 5
+            onRequestPreferenceSettings: userPage.favView = 6
         }
 
         // ── 收藏夹详情 ──
@@ -1514,6 +1535,7 @@ Rectangle {
                                 videoTitle: model.title || ""
                                 coverUrl: model.pic || ""
                                 imageActive: userPage.favoriteItemImagesActive
+                                preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                                 upName: model.ownerName || ""
                                 viewCount: model.views || ""
                                 durationText: model.durationText || ""
@@ -1522,9 +1544,27 @@ Rectangle {
                                 onClicked: userPage.videoSelected(bvid)
                             }
 
+                            Row {
+                                visible: favItems.count === 0 && controller && favItems.model && favItems.model.loading
+                                anchors.left: parent.left
+                                anchors.leftMargin: Theme.spacingSmall
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingMedium
+                                Repeater {
+                                    model: 3
+                                    Components.VideoCardCompact {
+                                        height: favItems.height
+                                        placeholder: true
+                                    }
+                                }
+                            }
+
                             property bool _loadingMore: false
                             onAtXEndChanged: {
                                 if (!atXEnd || !controller || _loadingMore) return
+                                if (favItems.contentWidth <= favItems.width + 2) return
+                                if (favItems.model && favItems.model.loading) return
+                                if (favItems.model && favItems.model.hasMore === false) return
                                 _loadingMore = true
                                 Qt.callLater(function() {
                                     controller.favorite.fetchMoreFavoriteItems()

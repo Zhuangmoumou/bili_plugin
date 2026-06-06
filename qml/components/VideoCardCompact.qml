@@ -22,11 +22,16 @@ Item {
     property real subScale: 1.0
     property bool titleBold: true
     property bool imageActive: true
+    property bool placeholder: false
+    property bool preferOffscreenPlaceholder: false
+    readonly property bool offscreenPlaceholderActive: preferOffscreenPlaceholder && !placeholder && !isNearViewport()
+    readonly property bool effectivePlaceholder: placeholder || offscreenPlaceholderActive
     // 标题与UP信息之间的垂直间距（默认 2）
     property real infoSpacing: 2
     // 注意：该组件的文本在 Column 中布局，直接改子项 y 通常不会生效
     property real subYOffset: 0
     property string coverImageSource: ""
+    property string _loadedCoverUrl: ""
 
     signal clicked()
 
@@ -37,19 +42,48 @@ Item {
         return "image://bili/" + encodeURIComponent(s)
     }
 
+    function isNearViewport() {
+        var view = ListView.view
+        if (!view) return true
+        if (!visible) return false
+        if (view.orientation === ListView.Vertical) {
+            return y + height >= view.contentY && y <= view.contentY + view.height
+        }
+        return x + width >= view.contentX && x <= view.contentX + view.width
+    }
+
     function scheduleCoverLoad() {
         var requested = coverUrl
-        var shouldLoad = imageActive
-        coverImageSource = ""
-        if (!requested || !shouldLoad) return
+        var shouldLoad = imageActive && !effectivePlaceholder
+        if (!requested) {
+            coverImageSource = ""
+            _loadedCoverUrl = ""
+            return
+        }
+        if (_loadedCoverUrl.length > 0 && _loadedCoverUrl !== requested) {
+            coverImageSource = ""
+            _loadedCoverUrl = ""
+        }
+        if (!shouldLoad) return
         Qt.callLater(function() {
-            if (imageActive && coverUrl === requested) coverImageSource = normalizedCoverSource(requested)
+            if (imageActive && !effectivePlaceholder && coverUrl === requested) {
+                coverImageSource = normalizedCoverSource(requested)
+                _loadedCoverUrl = requested
+            }
         })
     }
 
     Component.onCompleted: scheduleCoverLoad()
     onCoverUrlChanged: scheduleCoverLoad()
     onImageActiveChanged: scheduleCoverLoad()
+    onEffectivePlaceholderChanged: {
+        scheduleCoverLoad()
+        if (effectivePlaceholder) {
+            Qt.callLater(function() {
+                if (card.effectivePlaceholder) effectivePlaceholderTextCanvas.requestPaint()
+            })
+        }
+    }
 
     Rectangle {
         id: cardBg
@@ -99,7 +133,7 @@ Item {
 
             // 时长
             Rectangle {
-                visible: durationText.length > 0
+                visible: !effectivePlaceholder && durationText.length > 0
                 anchors { right: parent.right; bottom: parent.bottom; margins: 3 }
                 width: durationLabel.width + 8
                 height: 14
@@ -119,7 +153,7 @@ Item {
 
             // 选集角标（多P视频）
             Rectangle {
-                visible: showCollection
+                visible: !effectivePlaceholder && showCollection
                 anchors { left: parent.left; bottom: parent.bottom; leftMargin: 4; bottomMargin: 4 }
                 width: collectionText.implicitWidth + 10
                 height: 14
@@ -142,7 +176,7 @@ Item {
 
             // 排名
             Rectangle {
-                visible: showRank && rankIndex > 0
+                visible: !effectivePlaceholder && showRank && rankIndex > 0
                 anchors { left: parent.left; top: parent.top; margins: 3 }
                 width: 16; height: 14
                 radius: 3
@@ -160,7 +194,48 @@ Item {
         }
 
         // 信息区
+        Canvas {
+            id: effectivePlaceholderTextCanvas
+            visible: effectivePlaceholder
+            anchors {
+                top: coverContainer.bottom
+                topMargin: 4
+                left: parent.left
+                right: parent.right
+                leftMargin: 5
+                rightMargin: 5
+                bottom: parent.bottom
+                bottomMargin: 3
+            }
+            Component.onCompleted: requestPaint()
+            onVisibleChanged: if (visible) requestPaint()
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+
+                function pill(x, y, w, h, color) {
+                    ctx.fillStyle = color
+                    ctx.beginPath()
+                    ctx.moveTo(x + h / 2, y)
+                    ctx.lineTo(x + w - h / 2, y)
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + h / 2)
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - h / 2, y + h)
+                    ctx.lineTo(x + h / 2, y + h)
+                    ctx.quadraticCurveTo(x, y + h, x, y + h / 2)
+                    ctx.quadraticCurveTo(x, y, x + h / 2, y)
+                    ctx.fill()
+                }
+
+                pill(0, 0, width * 0.92, 8, Theme.withAlpha(Theme.textTertiary, 0.16))
+                pill(0, 11, width * 0.78, 8, Theme.withAlpha(Theme.textTertiary, 0.12))
+                pill(0, 25, width * 0.56, 7, Theme.withAlpha(Theme.textTertiary, 0.10))
+            }
+        }
+
         Column {
+            visible: !effectivePlaceholder
             anchors {
                 top: coverContainer.bottom
                 topMargin: 4
@@ -203,6 +278,7 @@ Item {
         MouseArea {
             id: mouseArea
             anchors.fill: parent
+            enabled: !effectivePlaceholder
             onClicked: card.clicked()
         }
     }

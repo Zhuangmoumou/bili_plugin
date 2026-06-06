@@ -80,6 +80,12 @@ Rectangle {
     function commentImageSource(url) {
         if (!url) return ""
         if (url.indexOf("data:image/") === 0) return url
+        return "image://bili/original/" + encodeURIComponent(url)
+    }
+
+    function avatarImageSource(url) {
+        if (!url) return ""
+        if (url.indexOf("data:image/") === 0) return url
         return "image://bili/" + encodeURIComponent(url)
     }
 
@@ -322,6 +328,9 @@ Rectangle {
         model: controller && commentsPage.commentsModelAttached ? controller.comments.commentModel() : null
         spacing: 5
         clip: true
+        cacheBuffer: 140
+        displayMarginBeginning: 80
+        displayMarginEnd: 80
         visible: viewMode === 0
         onMovementStarted: commentsPage.deferCommentImages()
         onFlickStarted: commentsPage.deferCommentImages()
@@ -339,35 +348,78 @@ Rectangle {
         }
 
         delegate: Rectangle {
+            id: commentDelegate
             property bool pinned: (typeof isTop !== "undefined" && !!isTop)
                                   || (typeof is_top !== "undefined" && !!is_top)
                                   || (!!model && !!model.isTop)
                                   || (!!model && !!model.is_top)
-            property string avatarImageSource: ""
-            property string pictureImageSource: ""
+            property bool hydrated: false
+            property bool maybeHasPicture: !!(model.pictures && model.pictures.length > 0)
+            property string cachedAvatarSource: ""
+            property string cachedPictureUrl: ""
+            property string cachedPictureSource: ""
+            property int skeletonPaintToken: 0
+            readonly property bool offscreenPlaceholderActive: controller
+                                                            && controller.videoCardOffscreenPlaceholderEnabled
+                                                            && hydrated
+                                                            && commentsPage.viewMode === 0
+                                                            && commentList.visible
+                                                            && !isNearViewport()
+            readonly property bool effectiveHydrated: hydrated && !offscreenPlaceholderActive
+            property bool shouldHydrate: !hydrated
+                                         && commentsPage.viewMode === 0
+                                         && commentList.visible
+                                         && !commentsPage.commentImagesDeferred
+                                         && isNearViewport()
 
-            function loadDeferredImages() {
-                if (commentsPage.commentImagesDeferred) return
-                if (!avatarImageSource && model.avatar) {
-                    avatarImageSource = "image://bili/" + encodeURIComponent(model.avatar)
-                }
-                if (!pictureImageSource) {
-                    var pic = commentsPage.firstPicture(model.pictures)
-                    if (pic) pictureImageSource = commentsPage.commentImageSource(pic)
-                }
+            function isNearViewport() {
+                var preload = 80
+                var topEdge = commentList.contentY - preload
+                var bottomEdge = commentList.contentY + commentList.height + preload
+                return y + commentSkeleton.height + 12 >= topEdge && y <= bottomEdge
             }
 
-            Component.onCompleted: Qt.callLater(loadDeferredImages)
+            function hydrate() {
+                if (hydrated) return
+                cachedAvatarSource = model.avatar ? commentsPage.avatarImageSource(model.avatar) : ""
+                cachedPictureUrl = commentsPage.firstPicture(model.pictures)
+                cachedPictureSource = cachedPictureUrl ? commentsPage.commentImageSource(cachedPictureUrl) : ""
+                hydrated = true
+            }
 
-            Connections {
-                target: commentsPage
-                function onCommentImagesDeferredChanged() {
-                    if (!commentsPage.commentImagesDeferred) Qt.callLater(loadDeferredImages)
+            function scheduleHydrate() {
+                if (hydrated || hydrateTimer.running) return
+                hydrateTimer.restart()
+            }
+
+            function requestSkeletonPaint() {
+                skeletonPaintToken += 1
+            }
+
+            onShouldHydrateChanged: if (shouldHydrate) scheduleHydrate()
+            onYChanged: if (shouldHydrate) scheduleHydrate()
+            onHeightChanged: if (shouldHydrate) scheduleHydrate()
+            onEffectiveHydratedChanged: if (!effectiveHydrated) Qt.callLater(function() {
+                if (!commentDelegate.effectiveHydrated) commentDelegate.requestSkeletonPaint()
+            })
+            Component.onCompleted: {
+                Qt.callLater(scheduleHydrate)
+                Qt.callLater(requestSkeletonPaint)
+            }
+
+            Timer {
+                id: hydrateTimer
+                interval: 80
+                repeat: false
+                onTriggered: {
+                    if (commentDelegate.shouldHydrate) commentDelegate.hydrate()
                 }
             }
 
             width: commentList.width
-            height: commentBodyColumn.height + 12
+            height: commentDelegate.effectiveHydrated && realContentLoader.item
+                    ? realContentLoader.item.height + 12
+                    : commentSkeleton.height + 12
             radius: 12
             color: pinned ? Theme.withAlpha(_cardFillStrong, 0.98) : Theme.withAlpha(_cardFill, 0.98)
             border.color: pinned ? Theme.withAlpha(Theme.primary, 0.34) : Theme.withAlpha(_panelBorder, 0.9)
@@ -385,220 +437,539 @@ Rectangle {
                 z: 0
             }
 
-            Row {
-                anchors.fill: parent
+            Item {
+                id: commentSkeleton
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 anchors.margins: 6
-                spacing: 6
+                height: commentDelegate.maybeHasPicture ? 88 : 62
+                visible: !commentDelegate.effectiveHydrated
 
-                Rectangle {
-                    width: 22
-                    height: 22
-                    radius: 11
-                    color: Theme.bgTertiary
+                Row {
+                    anchors.fill: parent
+                    spacing: 6
 
-                    Image {
-                        id: commentAvatarImage
-                        anchors.fill: parent
-                        source: avatarImageSource
-                        sourceSize: Qt.size(44, 44)
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        smooth: false
-                        mipmap: false
-                        visible: false
+                    Canvas {
+                        id: avatarSkeletonCanvas
+                        width: 22
+                        height: 22
+                        anchors.top: parent.top
+                        property int paintToken: commentDelegate.skeletonPaintToken
+                        Component.onCompleted: requestPaint()
+                        onPaintTokenChanged: requestPaint()
+                        onVisibleChanged: if (visible) requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+
+                        function drawCircle(ctx, cx, cy, r, fill) {
+                            ctx.beginPath()
+                            ctx.arc(cx, cy, r, 0, Math.PI * 2, false)
+                            ctx.fillStyle = fill
+                            ctx.fill()
+                        }
+
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            drawCircle(ctx, width / 2, height / 2, 10.5, Theme.withAlpha(Theme.bgTertiary, 0.96))
+                            drawCircle(ctx, width / 2, 8, 3.4, Theme.withAlpha(Theme.textTertiary, 0.30))
+                            ctx.beginPath()
+                            ctx.arc(width / 2, 17, 6.2, Math.PI, Math.PI * 2, false)
+                            ctx.lineWidth = 2
+                            ctx.strokeStyle = Theme.withAlpha(Theme.textTertiary, 0.28)
+                            ctx.lineCap = "round"
+                            ctx.stroke()
+                        }
                     }
 
-                    OpacityMask {
-                        anchors.fill: commentAvatarImage
-                        source: commentAvatarImage
-                        maskSource: Rectangle {
-                            width: commentAvatarImage.width
-                            height: commentAvatarImage.height
-                            radius: Math.min(width, height) / 2
-                            visible: false
+                    Column {
+                        id: skeletonBody
+                        width: parent.width - 28
+                        spacing: 5
+
+                        Canvas {
+                            width: parent.width
+                            height: 14
+                            property int paintToken: commentDelegate.skeletonPaintToken
+                            Component.onCompleted: requestPaint()
+                            onPaintTokenChanged: requestPaint()
+                            onVisibleChanged: if (visible) requestPaint()
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.fillStyle = Theme.withAlpha(Theme.textTertiary, 0.26)
+                                ctx.beginPath()
+                                ctx.moveTo(4, 2); ctx.lineTo(58, 2); ctx.quadraticCurveTo(62, 2, 62, 6); ctx.lineTo(62, 6); ctx.quadraticCurveTo(62, 10, 58, 10); ctx.lineTo(4, 10); ctx.quadraticCurveTo(0, 10, 0, 6); ctx.lineTo(0, 6); ctx.quadraticCurveTo(0, 2, 4, 2)
+                                ctx.fill()
+                                ctx.fillStyle = Theme.withAlpha(Theme.textTertiary, 0.16)
+                                ctx.beginPath()
+                                ctx.moveTo(width - 44, 3); ctx.lineTo(width - 4, 3); ctx.quadraticCurveTo(width, 3, width, 7); ctx.quadraticCurveTo(width, 11, width - 4, 11); ctx.lineTo(width - 44, 11); ctx.quadraticCurveTo(width - 48, 11, width - 48, 7); ctx.quadraticCurveTo(width - 48, 3, width - 44, 3)
+                                ctx.fill()
+                            }
+                        }
+
+                        Canvas {
+                            width: parent.width
+                            height: 31
+                            property int paintToken: commentDelegate.skeletonPaintToken
+                            Component.onCompleted: requestPaint()
+                            onPaintTokenChanged: requestPaint()
+                            onVisibleChanged: if (visible) requestPaint()
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.fillStyle = Theme.withAlpha(Theme.textTertiary, 0.18)
+                                var lines = [width * 0.92, width * 0.78, width * 0.48]
+                                for (var i = 0; i < lines.length; ++i) {
+                                    var yPos = i * 10
+                                    var w = Math.max(32, lines[i])
+                                    ctx.beginPath()
+                                    ctx.moveTo(4, yPos + 1); ctx.lineTo(w - 4, yPos + 1); ctx.quadraticCurveTo(w, yPos + 1, w, yPos + 5); ctx.quadraticCurveTo(w, yPos + 9, w - 4, yPos + 9); ctx.lineTo(4, yPos + 9); ctx.quadraticCurveTo(0, yPos + 9, 0, yPos + 5); ctx.quadraticCurveTo(0, yPos + 1, 4, yPos + 1)
+                                    ctx.fill()
+                                }
+                            }
+                        }
+
+                        Row {
+                            width: parent.width
+                            height: commentDelegate.maybeHasPicture ? 36 : 10
+                            spacing: 6
+
+                            Canvas {
+                                visible: commentDelegate.maybeHasPicture
+                                width: 58
+                                height: 36
+                                property int paintToken: commentDelegate.skeletonPaintToken
+                                Component.onCompleted: requestPaint()
+                                onPaintTokenChanged: requestPaint()
+                                onVisibleChanged: if (visible) requestPaint()
+                                onWidthChanged: requestPaint()
+                                onHeightChanged: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.fillStyle = Theme.withAlpha(Theme.bgTertiary, 0.95)
+                                    ctx.strokeStyle = Theme.withAlpha(_panelBorder, 0.95)
+                                    ctx.lineWidth = 1
+                                    ctx.beginPath()
+                                    ctx.moveTo(8, 0); ctx.lineTo(width - 8, 0); ctx.quadraticCurveTo(width, 0, width, 8); ctx.lineTo(width, height - 8); ctx.quadraticCurveTo(width, height, width - 8, height); ctx.lineTo(8, height); ctx.quadraticCurveTo(0, height, 0, height - 8); ctx.lineTo(0, 8); ctx.quadraticCurveTo(0, 0, 8, 0)
+                                    ctx.fill(); ctx.stroke()
+                                    ctx.strokeStyle = Theme.withAlpha(Theme.textTertiary, 0.28)
+                                    ctx.beginPath()
+                                    ctx.moveTo(12, 24); ctx.lineTo(23, 15); ctx.lineTo(31, 22); ctx.lineTo(38, 17); ctx.lineTo(48, 25)
+                                    ctx.stroke()
+                                    ctx.beginPath()
+                                    ctx.arc(42, 11, 3, 0, Math.PI * 2, false)
+                                    ctx.stroke()
+                                }
+                            }
+
+                            Canvas {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - (commentDelegate.maybeHasPicture ? 64 : 0)
+                                height: 10
+                                property int paintToken: commentDelegate.skeletonPaintToken
+                                Component.onCompleted: requestPaint()
+                                onPaintTokenChanged: requestPaint()
+                                onVisibleChanged: if (visible) requestPaint()
+                                onWidthChanged: requestPaint()
+                                onHeightChanged: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    var w = Math.min(70, Math.max(28, width * 0.35))
+                                    ctx.fillStyle = Theme.withAlpha(Theme.textTertiary, 0.13)
+                                    ctx.beginPath()
+                                    ctx.moveTo(4, 1); ctx.lineTo(w - 4, 1); ctx.quadraticCurveTo(w, 1, w, 5); ctx.quadraticCurveTo(w, 9, w - 4, 9); ctx.lineTo(4, 9); ctx.quadraticCurveTo(0, 9, 0, 5); ctx.quadraticCurveTo(0, 1, 4, 1)
+                                    ctx.fill()
+                                }
+                            }
                         }
                     }
                 }
+            }
 
-                Column {
-                    id: commentBodyColumn
-                    width: parent.width - 28
-                    spacing: 4
+            Loader {
+                id: realContentLoader
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                anchors.topMargin: 6
+                asynchronous: true
+                active: commentDelegate.effectiveHydrated
+                sourceComponent: realCommentComponent
+            }
 
-                    Row {
-                        width: parent.width
-                        spacing: 4
+            Component {
+                id: realCommentComponent
 
-                        Text {
-                            width: Math.min(90, implicitWidth)
-                            text: model.userName || ""
-                            color: model.isVip ? Theme.accent : Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
-                            font.bold: true
-                            elide: Text.ElideRight
-                            renderType: commentsPage._textRenderType
-                            font.hintingPreference: commentsPage._hinting
-                            antialiasing: commentsPage._textAA
-                        }
-
-                        Rectangle {
-                            visible: commentsPage.isOwner(model.mid)
-                            width: ownerTagText.implicitWidth + 8
-                            height: 12
-                            radius: 6
-                            color: Theme.withAlpha(Theme.accent, 0.18)
-                            border.color: Theme.withAlpha(Theme.accent, 0.28)
-                            border.width: 1
-
-                            Text {
-                                id: ownerTagText
-                                anchors.centerIn: parent
-                                text: "UP"
-                                color: Theme.accent
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 7
-                                font.bold: true
-                            }
-                        }
-
-                        Rectangle {
-                            visible: (model.level || 0) > 0
-                            width: levelText.implicitWidth + 8
-                            height: 12
-                            radius: 6
-                            color: Theme.withAlpha(commentsPage.levelAccent(model.level || 0), 0.16)
-                            border.color: Theme.withAlpha(commentsPage.levelAccent(model.level || 0), 0.30)
-                            border.width: 1
-
-                            Text {
-                                id: levelText
-                                anchors.centerIn: parent
-                                text: "Lv" + (model.level || 0)
-                                color: commentsPage.levelAccent(model.level || 0)
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 7
-                                font.bold: true
-                            }
-                        }
-
-                        Rectangle {
-                            visible: pinned
-                            width: topTagText.implicitWidth + 10
-                            height: 13
-                            radius: 6
-                            color: Qt.rgba(0.23, 0.51, 0.96, 0.18)
-                            border.color: Qt.rgba(0.38, 0.70, 1.0, 0.36)
-                            border.width: 1
-
-                            Text {
-                                id: topTagText
-                                anchors.centerIn: parent
-                                text: "TOP"
-                                color: "#93c5fd"
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 7
-                                font.bold: true
-                            }
-                        }
-
-                        Item {
-                            width: Math.max(0, parent.width - 170)
-                            height: 1
-                        }
-
-                        Text {
-                            width: 50
-                            horizontalAlignment: Text.AlignRight
-                            text: model.ctimeText || ""
-                            color: _mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontTiny
-                            renderType: commentsPage._textRenderType
-                            font.hintingPreference: commentsPage._hinting
-                            antialiasing: commentsPage._textAA
-                        }
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: model.content || ""
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: commentsPage._commentBodyFontSize
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 3
-                        elide: Text.ElideRight
-                        lineHeight: 1.22
-                        renderType: commentsPage._textRenderType
-                        font.hintingPreference: commentsPage._hinting
-                        antialiasing: commentsPage._textAA
-                    }
+                Item {
+                    width: realContentLoader.width
+                    height: realRow.height
 
                     Row {
+                        id: realRow
                         width: parent.width
                         spacing: 6
 
                         Rectangle {
-                            visible: !!commentsPage.firstPicture(model.pictures)
-                            width: 58
-                            height: 36
-                            radius: 8
+                            width: 22
+                            height: 22
+                            radius: 11
                             color: Theme.bgTertiary
-                            border.color: Theme.withAlpha(_panelBorder, 0.95)
-                            border.width: 1
-                            clip: true
+
+                            Canvas {
+                                anchors.fill: parent
+                                visible: commentAvatarImage.status !== Image.Ready
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.beginPath()
+                                    ctx.arc(width / 2, height / 2, 10.5, 0, Math.PI * 2, false)
+                                    ctx.fillStyle = Theme.withAlpha(Theme.textTertiary, 0.16)
+                                    ctx.fill()
+                                    ctx.beginPath()
+                                    ctx.arc(width / 2, 8, 3.2, 0, Math.PI * 2, false)
+                                    ctx.fillStyle = Theme.withAlpha(Theme.textTertiary, 0.26)
+                                    ctx.fill()
+                                    ctx.beginPath()
+                                    ctx.arc(width / 2, 17, 6, Math.PI, Math.PI * 2, false)
+                                    ctx.lineWidth = 2
+                                    ctx.strokeStyle = Theme.withAlpha(Theme.textTertiary, 0.24)
+                                    ctx.lineCap = "round"
+                                    ctx.stroke()
+                                }
+                            }
 
                             Image {
+                                id: commentAvatarImage
                                 anchors.fill: parent
-                                source: pictureImageSource
-                                sourceSize: Qt.size(116, 72)
+                                source: commentDelegate.cachedAvatarSource
+                                sourceSize: Qt.size(44, 44)
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
-                                smooth: false
-                                mipmap: false
+                                smooth: true
+                                mipmap: true
+                                visible: false
                             }
 
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: commentsPage.openCommentImage(commentsPage.firstPicture(model.pictures))
+                            OpacityMask {
+                                anchors.fill: commentAvatarImage
+                                source: commentAvatarImage
+                                opacity: commentAvatarImage.status === Image.Ready ? 1 : 0
+                                maskSource: Rectangle {
+                                    width: commentAvatarImage.width
+                                    height: commentAvatarImage.height
+                                    radius: Math.min(width, height) / 2
+                                    visible: false
+                                }
                             }
                         }
 
-                        Item {
-                            width: Math.max(0, parent.width - (commentsPage.firstPicture(model.pictures) ? 64 : 0) - actionButtons.width)
-                            height: 1
-                        }
-
-                        Row {
-                            id: actionButtons
-                            anchors.verticalCenter: parent.verticalCenter
+                        Column {
+                            id: commentBodyColumn
+                            width: parent.width - 28
                             spacing: 4
 
-                            Components.IconButton {
-                                icon: "👍"
-                                value: commentsPage.compactCount(model.likes || 0)
-                                width: 30
+                            Row {
+                                width: parent.width
+                                spacing: 4
+
+                                Text {
+                                    width: Math.min(90, implicitWidth)
+                                    text: model.userName || ""
+                                    color: model.isVip ? Theme.accent : Theme.textPrimary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSmall
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    renderType: commentsPage._textRenderType
+                                    font.hintingPreference: commentsPage._hinting
+                                    antialiasing: commentsPage._textAA
+                                }
+
+                                Rectangle {
+                                    visible: commentsPage.isOwner(model.mid)
+                                    width: ownerTagText.implicitWidth + 8
+                                    height: 12
+                                    radius: 6
+                                    color: Theme.withAlpha(Theme.accent, 0.18)
+                                    border.color: Theme.withAlpha(Theme.accent, 0.28)
+                                    border.width: 1
+
+                                    Text {
+                                        id: ownerTagText
+                                        anchors.centerIn: parent
+                                        text: "UP"
+                                        color: Theme.accent
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 7
+                                        font.bold: true
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: (model.level || 0) > 0
+                                    width: levelText.implicitWidth + 8
+                                    height: 12
+                                    radius: 6
+                                    color: Theme.withAlpha(commentsPage.levelAccent(model.level || 0), 0.16)
+                                    border.color: Theme.withAlpha(commentsPage.levelAccent(model.level || 0), 0.30)
+                                    border.width: 1
+
+                                    Text {
+                                        id: levelText
+                                        anchors.centerIn: parent
+                                        text: "Lv" + (model.level || 0)
+                                        color: commentsPage.levelAccent(model.level || 0)
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 7
+                                        font.bold: true
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: commentDelegate.pinned
+                                    width: topTagText.implicitWidth + 10
+                                    height: 13
+                                    radius: 6
+                                    color: Qt.rgba(0.23, 0.51, 0.96, 0.18)
+                                    border.color: Qt.rgba(0.38, 0.70, 1.0, 0.36)
+                                    border.width: 1
+
+                                    Text {
+                                        id: topTagText
+                                        anchors.centerIn: parent
+                                        text: "TOP"
+                                        color: "#93c5fd"
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 7
+                                        font.bold: true
+                                    }
+                                }
+
+                                Item {
+                                    width: Math.max(0, parent.width - 170)
+                                    height: 1
+                                }
+
+                                Text {
+                                    width: 50
+                                    horizontalAlignment: Text.AlignRight
+                                    text: model.ctimeText || ""
+                                    color: _mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontTiny
+                                    renderType: commentsPage._textRenderType
+                                    font.hintingPreference: commentsPage._hinting
+                                    antialiasing: commentsPage._textAA
+                                }
                             }
 
-                            Components.IconButton {
-                                icon: "💬"
-                                value: commentsPage.compactCount(model.rcount || 0)
-                                width: 32
-                                active: false
-                                onClicked: {
-                                    commentsPage.openCommentDetail({
-                                        rpid: model.rpid || 0,
-                                        userName: model.userName || "",
-                                        avatar: model.avatar || "",
-                                        level: model.level || 0,
-                                        content: model.content || "",
-                                        pictures: model.pictures || [],
-                                        likes: model.likes || 0,
-                                        ctimeText: model.ctimeText || "",
-                                        isVip: model.isVip || false,
-                                        pinned: pinned
-                                    })
+                            Text {
+                                width: parent.width
+                                text: model.content || ""
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: commentsPage._commentBodyFontSize
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                                lineHeight: 1.22
+                                renderType: commentsPage._textRenderType
+                                font.hintingPreference: commentsPage._hinting
+                                antialiasing: commentsPage._textAA
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: 6
+
+                                Rectangle {
+                                    visible: !!commentDelegate.cachedPictureUrl
+                                    width: 58
+                                    height: 36
+                                    radius: 8
+                                    color: Theme.bgTertiary
+                                    border.color: Theme.withAlpha(_panelBorder, 0.95)
+                                    border.width: 1
+                                    clip: true
+
+                                    Canvas {
+                                        anchors.fill: parent
+                                        visible: commentPictureImage.status !== Image.Ready
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.clearRect(0, 0, width, height)
+                                            ctx.fillStyle = Theme.withAlpha(Theme.bgTertiary, 0.95)
+                                            ctx.fillRect(0, 0, width, height)
+                                            ctx.strokeStyle = Theme.withAlpha(Theme.textTertiary, 0.28)
+                                            ctx.lineWidth = 1.2
+                                            ctx.beginPath()
+                                            ctx.moveTo(11, 24); ctx.lineTo(23, 15); ctx.lineTo(31, 22); ctx.lineTo(39, 17); ctx.lineTo(49, 25)
+                                            ctx.stroke()
+                                            ctx.beginPath()
+                                            ctx.arc(42, 11, 3, 0, Math.PI * 2, false)
+                                            ctx.stroke()
+                                        }
+                                    }
+
+                                    Image {
+                                        id: commentPictureImage
+                                        anchors.fill: parent
+                                        source: commentDelegate.cachedPictureSource
+                                        sourceSize: Qt.size(116, 72)
+                                        fillMode: Image.PreserveAspectCrop
+                                        asynchronous: true
+                                        smooth: false
+                                        mipmap: false
+                                        opacity: status === Image.Ready ? 1 : 0
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: commentsPage.openCommentImage(commentDelegate.cachedPictureUrl)
+                                    }
+                                }
+
+                                Item {
+                                    width: Math.max(0, parent.width - (commentDelegate.cachedPictureUrl ? 64 : 0) - actionButtons.width)
+                                    height: 1
+                                }
+
+                                Row {
+                                    id: actionButtons
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 4
+
+                                    Rectangle {
+                                        width: 30
+                                        height: Theme.touchMinSize
+                                        radius: Theme.radiusMedium
+                                        color: likeArea.pressed ? Theme.withAlpha(Theme.primary, 0.15) : "transparent"
+
+                                        Row {
+                                            anchors.centerIn: parent
+                                            spacing: 3
+
+                                            Canvas {
+                                                width: 11
+                                                height: 11
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                onPaint: {
+                                                    var ctx = getContext("2d")
+                                                    ctx.clearRect(0, 0, width, height)
+                                                    ctx.strokeStyle = Theme.textTertiary
+                                                    ctx.lineWidth = 1.4
+                                                    ctx.lineCap = "round"
+                                                    ctx.lineJoin = "round"
+                                                    ctx.beginPath()
+                                                    ctx.moveTo(2, 5.3)
+                                                    ctx.lineTo(4.2, 5.3)
+                                                    ctx.lineTo(5.6, 2.4)
+                                                    ctx.quadraticCurveTo(6.2, 1.4, 7.0, 2.0)
+                                                    ctx.lineTo(6.6, 5.0)
+                                                    ctx.lineTo(9.4, 5.0)
+                                                    ctx.lineTo(8.4, 9.1)
+                                                    ctx.lineTo(4.0, 9.1)
+                                                    ctx.lineTo(2.0, 8.2)
+                                                    ctx.closePath()
+                                                    ctx.stroke()
+                                                }
+                                            }
+
+                                            Text {
+                                                text: commentsPage.compactCount(model.likes || 0)
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontTiny
+                                                color: Theme.textSecondary
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: text.length > 0
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: likeArea
+                                            anchors.fill: parent
+                                            anchors.margins: -2
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 32
+                                        height: Theme.touchMinSize
+                                        radius: Theme.radiusMedium
+                                        color: replyArea.pressed ? Theme.withAlpha(Theme.primary, 0.15) : "transparent"
+
+                                        Row {
+                                            anchors.centerIn: parent
+                                            spacing: 3
+
+                                            Canvas {
+                                                width: 11
+                                                height: 11
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                onPaint: {
+                                                    var ctx = getContext("2d")
+                                                    ctx.clearRect(0, 0, width, height)
+                                                    ctx.strokeStyle = Theme.textTertiary
+                                                    ctx.lineWidth = 1.3
+                                                    ctx.lineCap = "round"
+                                                    ctx.lineJoin = "round"
+                                                    ctx.beginPath()
+                                                    ctx.moveTo(2.5, 2.0)
+                                                    ctx.lineTo(8.5, 2.0)
+                                                    ctx.quadraticCurveTo(9.8, 2.0, 9.8, 3.3)
+                                                    ctx.lineTo(9.8, 6.7)
+                                                    ctx.quadraticCurveTo(9.8, 8.0, 8.5, 8.0)
+                                                    ctx.lineTo(5.2, 8.0)
+                                                    ctx.lineTo(3.2, 9.7)
+                                                    ctx.lineTo(3.6, 8.0)
+                                                    ctx.lineTo(2.5, 8.0)
+                                                    ctx.quadraticCurveTo(1.2, 8.0, 1.2, 6.7)
+                                                    ctx.lineTo(1.2, 3.3)
+                                                    ctx.quadraticCurveTo(1.2, 2.0, 2.5, 2.0)
+                                                    ctx.stroke()
+                                                }
+                                            }
+
+                                            Text {
+                                                text: commentsPage.compactCount(model.rcount || 0)
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontTiny
+                                                color: Theme.textSecondary
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: text.length > 0
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: replyArea
+                                            anchors.fill: parent
+                                            anchors.margins: -2
+                                            onClicked: {
+                                                commentsPage.openCommentDetail({
+                                                    rpid: model.rpid || 0,
+                                                    userName: model.userName || "",
+                                                    avatar: model.avatar || "",
+                                                    level: model.level || 0,
+                                                    content: model.content || "",
+                                                    pictures: model.pictures || [],
+                                                    likes: model.likes || 0,
+                                                    ctimeText: model.ctimeText || "",
+                                                    isVip: model.isVip || false,
+                                                    pinned: commentDelegate.pinned
+                                                })
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -606,7 +977,6 @@ Rectangle {
                 }
             }
         }
-
         footer: Rectangle {
             width: commentList.width
             height: 30
@@ -713,7 +1083,7 @@ Rectangle {
                                 id: detailAvatarImage
                                 anchors.fill: parent
                                 source: selectedComment && selectedComment.avatar
-                                        ? "image://bili/" + encodeURIComponent(selectedComment.avatar) : ""
+                                        ? commentsPage.avatarImageSource(selectedComment.avatar) : ""
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
                                 smooth: true
@@ -904,7 +1274,7 @@ Rectangle {
                 function loadReplyImages() {
                     if (commentsPage.commentImagesDeferred) return
                     if (!replyAvatarSource && model.avatar) {
-                        replyAvatarSource = "image://bili/" + encodeURIComponent(model.avatar)
+                        replyAvatarSource = commentsPage.avatarImageSource(model.avatar)
                     }
                     if (!replyPictureSource) {
                         var pic = commentsPage.firstPicture(model.pictures)

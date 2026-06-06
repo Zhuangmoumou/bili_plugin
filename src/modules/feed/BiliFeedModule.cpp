@@ -1,4 +1,5 @@
 #include "modules/feed/BiliFeedModule.h"
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
@@ -30,11 +31,76 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
+
+namespace {
+
+struct ParsedVideoList {
+  int page = 1;
+  QVector<VideoItem> items;
+  bool hasMore = false;
+};
+
+ParsedVideoList parsePopularPayload(const QJsonObject &data, int page) {
+  ParsedVideoList result;
+  result.page = page;
+
+  QJsonArray list = data.value("list").toArray();
+  if (list.isEmpty()) {
+    list = data.value("item").toArray();
+  }
+  if (list.isEmpty()) {
+    list = data.value("items").toArray();
+  }
+
+  result.items.reserve(list.size());
+  for (const QJsonValue &v : list) {
+    if (v.isObject()) {
+      result.items.append(VideoListModel::parseVideoItem(v.toObject()));
+    }
+  }
+
+  const bool noMore = data.value("no_more").toBool(false);
+  result.hasMore = noMore ? false : !result.items.isEmpty();
+  return result;
+}
+
+QVector<VideoItem> parseRankingPayload(const QJsonObject &data) {
+  QJsonArray list = data.value("list").toArray();
+  QVector<VideoItem> items;
+  items.reserve(list.size());
+  for (const QJsonValue &v : list) {
+    if (v.isObject()) {
+      items.append(VideoListModel::parseVideoItem(v.toObject()));
+    }
+  }
+  return items;
+}
+
+QVector<HotSearchItem> parseHotSearchPayload(const QJsonObject &data) {
+  QJsonObject trending = data.value("trending").toObject();
+  QJsonArray list = trending.value("list").toArray();
+
+  QVector<HotSearchItem> items;
+  items.reserve(qMin(list.size(), 50));
+  int pos = 1;
+  for (const QJsonValue &v : list) {
+    if (pos > 50)
+      break;
+    QJsonObject obj = v.toObject();
+    HotSearchItem item;
+    item.keyword = obj.value("keyword").toString().left(100);
+    item.icon = obj.value("icon").toString();
+    item.position = pos++;
+    items.append(item);
+  }
+  return items;
+}
+
+} // namespace
 
 BiliFeedModule::BiliFeedModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
@@ -46,8 +112,6 @@ QObject *BiliFeedModule::hotSearchModel() { return m_controller->hotSearchListMo
 // ====== API: 热门视频 ======
 
 void BiliFeedModule::fetchPopular(int page, int pageSize) {
-  std::cout << "[BiliCtrl] fetchPopular: page=" << page << std::endl;
-
   if (m_controller->popularListModel()->loading())
     return;
 
@@ -64,7 +128,6 @@ void BiliFeedModule::fetchPopular(int page, int pageSize) {
   m_controller->setIsLoading(true);
 
   QString apiPath = "/recommend";
-  std::cout << "[BiliCtrl] fetchPopular use " << apiPath.toStdString() << std::endl;
 
   QMap<QString, QString> paramsRecommend;
   // fresh_type: 3 表示换一换推荐，4 用于后续刷新
@@ -73,37 +136,23 @@ void BiliFeedModule::fetchPopular(int page, int pageSize) {
   QPointer<BiliController> self(m_controller);
   VideoListModel *popularModel = m_controller->popularListModel();
 
-  auto onSuccess = [self, popularModel, page](const QJsonObject &data) {
+  auto onSuccess = [this, self, popularModel, page](const QJsonObject &data) {
     if (!self || !popularModel)
       return;
+    biliRunInWorker(
+        self, [data, page]() { return parsePopularPayload(data, page); },
+        [this, self, popularModel](ParsedVideoList result) {
+          if (!self || !popularModel || m_popularPage != result.page)
+            return;
+          popularModel->appendItems(result.items);
+          popularModel->setHasMore(result.hasMore);
+          popularModel->setLoading(false);
+          self->setIsLoading(false);
 
-    QJsonArray list = data.value("list").toArray();
-    if (list.isEmpty()) {
-      list = data.value("item").toArray();
-    }
-    if (list.isEmpty()) {
-      list = data.value("items").toArray();
-    }
-
-    bool noMore = data.value("no_more").toBool(false);
-
-    QVector<VideoItem> items;
-    items.reserve(list.size());
-    for (const QJsonValue &v : list) {
-      if (v.isObject()) {
-        items.append(VideoListModel::parseVideoItem(v.toObject()));
-      }
-    }
-
-    popularModel->appendItems(items);
-    // 推荐流可能没有 no_more 字段，按是否有数据判断
-    popularModel->setHasMore(noMore ? false : !items.isEmpty());
-    popularModel->setLoading(false);
-    self->setIsLoading(false);
-
-    if (items.isEmpty() && page == 1) {
-      popularModel->setErrorMessage("暂无推荐视频");
-    }
+          if (result.items.isEmpty() && result.page == 1) {
+            popularModel->setErrorMessage("暂无推荐视频");
+          }
+        });
   };
 
   auto onErrorFinal = [self, popularModel](int code, const QString &msg) {
@@ -156,20 +205,16 @@ void BiliFeedModule::fetchRanking(int rid) {
       [self, rankingModel](const QJsonObject &data) {
         if (!self || !rankingModel)
           return;
-
-        QJsonArray list = data.value("list").toArray();
-        QVector<VideoItem> items;
-        items.reserve(list.size());
-        for (const QJsonValue &v : list) {
-          if (v.isObject()) {
-            items.append(VideoListModel::parseVideoItem(v.toObject()));
-          }
-        }
-
-        rankingModel->appendItems(items);
-        rankingModel->setHasMore(false);
-        rankingModel->setLoading(false);
-        self->setIsLoading(false);
+        biliRunInWorker(
+            self, [data]() { return parseRankingPayload(data); },
+            [self, rankingModel](QVector<VideoItem> items) {
+              if (!self || !rankingModel)
+                return;
+              rankingModel->appendItems(items);
+              rankingModel->setHasMore(false);
+              rankingModel->setLoading(false);
+              self->setIsLoading(false);
+            });
       },
       [self, rankingModel](int code, const QString &msg) {
         Q_UNUSED(code)
@@ -202,26 +247,14 @@ void BiliFeedModule::fetchHotSearch() {
       [self, hotSearchModel](const QJsonObject &data) {
         if (!self || !hotSearchModel)
           return;
-
-        QJsonObject trending = data.value("trending").toObject();
-        QJsonArray list = trending.value("list").toArray();
-
-        QVector<HotSearchItem> items;
-        items.reserve(qMin(list.size(), 50)); // 最多 50 个
-        int pos = 1;
-        for (const QJsonValue &v : list) {
-          if (pos > 50)
-            break; // 硬限制
-          QJsonObject obj = v.toObject();
-          HotSearchItem item;
-          item.keyword = obj.value("keyword").toString().left(100); // 限制长度
-          item.icon = obj.value("icon").toString();
-          item.position = pos++;
-          items.append(item);
-        }
-
-        hotSearchModel->setItems(items);
-        hotSearchModel->setLoading(false);
+        biliRunInWorker(
+            self, [data]() { return parseHotSearchPayload(data); },
+            [self, hotSearchModel](QVector<HotSearchItem> items) {
+              if (!self || !hotSearchModel)
+                return;
+              hotSearchModel->setItems(items);
+              hotSearchModel->setLoading(false);
+            });
       },
       [self, hotSearchModel](int code, const QString &msg) {
         Q_UNUSED(code)
@@ -232,4 +265,3 @@ void BiliFeedModule::fetchHotSearch() {
         emit self->toastMessage(QString("热搜加载失败：%1").arg(msg));
       });
 }
-

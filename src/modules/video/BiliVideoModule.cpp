@@ -30,7 +30,6 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
@@ -40,6 +39,149 @@ BiliVideoModule::BiliVideoModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
 
 QObject *BiliVideoModule::videoPartModel() { return m_controller->m_videoPartModel; }
+
+void BiliVideoModule::captureCurrentVideoDetail() {
+  if (!m_controller)
+    return;
+  const QString bvid = m_controller->m_currentVideo.bvid;
+  if (bvid.isEmpty() || m_controller->m_currentVideo.title.isEmpty())
+    return;
+
+  BiliController::VideoDetailSnapshot snapshot;
+  snapshot.video = m_controller->m_currentVideo;
+  snapshot.playbackProgressCid = m_controller->m_playbackProgressCid;
+  snapshot.playbackProgressSeconds = m_controller->m_playbackProgressSeconds;
+  snapshot.seasonId = m_controller->m_videoSeasonId;
+  snapshot.seasonTitle = m_controller->m_videoSeasonTitle;
+  snapshot.seasonCover = m_controller->m_videoSeasonCover;
+  snapshot.seasonMid = m_controller->m_videoSeasonMid;
+  snapshot.seasonTotal = m_controller->m_videoSeasonTotal;
+  snapshot.parts = m_controller->m_videoPartModel ? m_controller->m_videoPartModel->items()
+                                                  : QVector<VideoPartItem>();
+  snapshot.acceptQualities = m_controller->m_acceptQualities;
+  snapshot.isFavorited = m_controller->m_isFavorited;
+  snapshot.isCoined = m_controller->m_isCoined;
+  snapshot.isLiked = m_controller->m_isLiked;
+  snapshot.isWatchLater = m_controller->m_isWatchLater;
+  snapshot.subtitleItems = m_controller->m_subtitleItems;
+  snapshot.selectedSubtitleId = m_controller->m_selectedSubtitleId;
+  snapshot.selectedSubtitleLabel = m_controller->m_selectedSubtitleLabel;
+  snapshot.valid = true;
+
+  m_controller->m_videoDetailSnapshots.insert(bvid, snapshot);
+}
+
+bool BiliVideoModule::restoreCachedVideoDetail(const QString &bvid) {
+  if (!m_controller || bvid.isEmpty())
+    return false;
+
+  const auto it = m_controller->m_videoDetailSnapshots.constFind(bvid);
+  if (it == m_controller->m_videoDetailSnapshots.constEnd() || !it->valid)
+    return false;
+
+  if (!m_controller->m_videoDetailLoadingBvid.isEmpty()) {
+    m_controller->m_videoDetailLoadingBvid.clear();
+    m_controller->setIsLoading(false);
+  }
+  if (!m_controller->m_acceptQualitiesLoadingKey.isEmpty()) {
+    m_controller->m_acceptQualitiesLoadingKey.clear();
+    m_controller->setIsLoading(false);
+  }
+
+  const BiliController::VideoDetailSnapshot snapshot = it.value();
+  m_controller->m_currentVideo = snapshot.video;
+  m_controller->m_playbackProgressCid = snapshot.playbackProgressCid;
+  m_controller->m_playbackProgressSeconds = snapshot.playbackProgressSeconds;
+  m_controller->m_videoSeasonId = snapshot.seasonId;
+  m_controller->m_videoSeasonTitle = snapshot.seasonTitle;
+  m_controller->m_videoSeasonCover = snapshot.seasonCover;
+  m_controller->m_videoSeasonMid = snapshot.seasonMid;
+  m_controller->m_videoSeasonTotal = snapshot.seasonTotal;
+  if (m_controller->m_videoPartModel) {
+    if (snapshot.parts.isEmpty()) {
+      m_controller->m_videoPartModel->clear();
+    } else {
+      m_controller->m_videoPartModel->setItems(snapshot.parts);
+    }
+  }
+  m_controller->m_acceptQualities = snapshot.acceptQualities;
+  m_controller->m_isFavorited = snapshot.isFavorited;
+  m_controller->m_isCoined = snapshot.isCoined;
+  m_controller->m_isLiked = snapshot.isLiked;
+  m_controller->m_isWatchLater = snapshot.isWatchLater;
+  m_controller->m_subtitleItems = snapshot.subtitleItems;
+  m_controller->m_selectedSubtitleId = snapshot.selectedSubtitleId;
+  m_controller->m_selectedSubtitleLabel = snapshot.selectedSubtitleLabel;
+
+  emit m_controller->videoDetailChanged();
+  emit m_controller->videoStatsChanged();
+  emit m_controller->playbackProgressChanged();
+  emit m_controller->acceptQualitiesChanged();
+  emit m_controller->favoriteStatusChanged();
+  emit m_controller->coinStatusChanged();
+  emit m_controller->likeStatusChanged();
+  emit m_controller->watchLaterStatusChanged();
+  emit m_controller->subtitleListChanged();
+  emit m_controller->selectedSubtitleChanged();
+  return true;
+}
+
+void BiliVideoModule::dropCachedVideoDetail(const QString &bvid) {
+  if (!m_controller || bvid.isEmpty())
+    return;
+
+  m_controller->m_videoDetailSnapshots.remove(bvid);
+  if (m_controller->m_videoDetailLoadingBvid == bvid) {
+    m_controller->m_videoDetailLoadingBvid.clear();
+    m_controller->setIsLoading(false);
+  }
+  if (!m_controller->m_acceptQualitiesLoadingKey.isEmpty() &&
+      m_controller->m_acceptQualitiesLoadingKey.startsWith(bvid + QLatin1Char(':'))) {
+    m_controller->m_acceptQualitiesLoadingKey.clear();
+    m_controller->setIsLoading(false);
+  }
+  if (m_controller->m_currentVideo.bvid != bvid)
+    return;
+
+  m_controller->m_currentVideo = VideoItem();
+  m_controller->m_playbackProgressCid = 0;
+  m_controller->m_playbackProgressSeconds = 0;
+  m_controller->m_videoSeasonId = 0;
+  m_controller->m_videoSeasonTitle.clear();
+  m_controller->m_videoSeasonCover.clear();
+  m_controller->m_videoSeasonMid = 0;
+  m_controller->m_videoSeasonTotal = 0;
+  if (m_controller->m_videoPartModel) {
+    m_controller->m_videoPartModel->clear();
+  }
+  if (m_controller->m_relatedVideoModel) {
+    m_controller->m_relatedVideoModel->clear();
+    m_controller->m_relatedVideoModel->setHasMore(false);
+    m_controller->m_relatedVideoModel->setLoading(false);
+    m_controller->m_relatedVideoModel->setErrorMessage("");
+  }
+  m_controller->m_relatedVideoBvid.clear();
+  m_controller->m_relatedVideoLoadingBvid.clear();
+  m_controller->m_isFavorited = false;
+  m_controller->m_isCoined = false;
+  m_controller->m_isLiked = false;
+  m_controller->m_isWatchLater = false;
+  m_controller->m_acceptQualities.clear();
+  m_controller->m_subtitleItems = QJsonArray();
+  m_controller->m_selectedSubtitleId = 0;
+  m_controller->m_selectedSubtitleLabel.clear();
+
+  emit m_controller->videoDetailChanged();
+  emit m_controller->videoStatsChanged();
+  emit m_controller->playbackProgressChanged();
+  emit m_controller->acceptQualitiesChanged();
+  emit m_controller->favoriteStatusChanged();
+  emit m_controller->coinStatusChanged();
+  emit m_controller->likeStatusChanged();
+  emit m_controller->watchLaterStatusChanged();
+  emit m_controller->subtitleListChanged();
+  emit m_controller->selectedSubtitleChanged();
+}
 
 // ====== API: 视频详情 ======
 
@@ -237,8 +379,14 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
     m_controller->m_relatedVideoLoadingBvid.clear();
   }
 
+  const QString requestedBvid = bvid;
+  if (!m_controller->m_videoDetailLoadingBvid.isEmpty() &&
+      m_controller->m_videoDetailLoadingBvid != requestedBvid) {
+    m_controller->m_videoDetailLoadingBvid.clear();
+    m_controller->setIsLoading(false);
+  }
   m_controller->setIsLoading(true);
-  m_controller->m_videoDetailLoadingBvid = bvid;
+  m_controller->m_videoDetailLoadingBvid = requestedBvid;
 
   QMap<QString, QString> params;
   params["bvid"] = bvid;
@@ -247,8 +395,10 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
 
   m_controller->m_network->get(
       "/video/info", params,
-      [self, sameVideoRefresh, prevCid](const QJsonObject &data) {
+      [self, requestedBvid, sameVideoRefresh, prevCid](const QJsonObject &data) {
         if (!self)
+          return;
+        if (self->m_videoDetailLoadingBvid != requestedBvid)
           return;
 
         self->m_videoDetailLoadingBvid.clear();
@@ -326,20 +476,26 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
           }
         }
 
+        if (self->m_videoModule) {
+          self->m_videoModule->captureCurrentVideoDetail();
+        }
+
         emit self->videoDetailChanged();
         emit self->videoStatsChanged();
         emit self->playbackProgressChanged();
         self->setIsLoading(false);
       },
-      [self](int code, const QString &msg) {
-        Q_UNUSED(code)
+      [self, requestedBvid](int code, const QString &msg) {
         if (!self)
+          return;
+        if (self->m_videoDetailLoadingBvid != requestedBvid)
           return;
 
         self->m_videoDetailLoadingBvid.clear();
         self->setIsLoading(false);
         self->m_videoPartModel->clear();
+        if (code == QNetworkReply::OperationCanceledError)
+          return;
         emit self->toastMessage(QString("获取视频信息失败：%1").arg(msg));
       });
 }
-

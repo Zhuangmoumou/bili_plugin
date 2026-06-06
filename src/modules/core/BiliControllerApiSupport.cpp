@@ -29,7 +29,7 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
+#include <memory>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
@@ -214,6 +214,8 @@ void BiliController::startDownloadTask(const QString &videoUrl,
   emit downloadStateChanged();
 
   QPointer<BiliController> self(this);
+  auto lastProgressEmit = std::make_shared<qint64>(0);
+  auto lastProgressPercent = std::make_shared<int>(-1);
   auto finishSuccess = [self, finalQuality, playAfter, successToastPrefix, subtitleUrl, subtitlePath](const QString &path) {
     if (!self)
       return;
@@ -294,9 +296,19 @@ void BiliController::startDownloadTask(const QString &videoUrl,
         self->setIsLoading(false);
         emit self->toastMessage(errorToastPrefix + msg);
       },
-      [self](qint64 received, qint64 total) {
+      [self, lastProgressEmit, lastProgressPercent](qint64 received, qint64 total) {
         if (!self)
           return;
+
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const int percent = total > 0 ? static_cast<int>((received * 100) / total) : -1;
+        // 限制 UI 更新频率：最多约 5 次/秒；百分比变化时立即刷新
+        if (*lastProgressEmit > 0 && now - *lastProgressEmit < 200 &&
+            (percent < 0 || percent == *lastProgressPercent)) {
+          return;
+        }
+        *lastProgressEmit = now;
+        *lastProgressPercent = percent;
 
         double progress = total > 0 ? static_cast<double>(received) / total : 0;
         self->m_downloadProgress = progress;
@@ -314,7 +326,7 @@ void BiliController::startDownloadTask(const QString &videoUrl,
         self->m_downloadStatus =
             QString("正在下载... %1 (%2%)")
                 .arg(sizeStr)
-                .arg(static_cast<int>(progress * 100));
+                .arg(percent >= 0 ? percent : static_cast<int>(progress * 100));
         emit self->downloadStateChanged();
       });
 }

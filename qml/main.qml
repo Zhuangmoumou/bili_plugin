@@ -25,6 +25,7 @@ Rectangle {
     property int detailSessionId: 0
     property int nextDetailSessionId: 1
     property var reportedDetailSessions: ({})
+    property var detailCacheBvids: ({})
     property string lastPage: "home"
     property var upUserMid: 0
     property var seasonMid: 0
@@ -65,6 +66,7 @@ Rectangle {
 
     function capturePageProps(page) {
         if (page === "detail") {
+            captureCurrentDetailSnapshot()
             return { bvid: detailBvid, sessionId: detailSessionId }
         }
         if (page === "up") {
@@ -120,6 +122,38 @@ Rectangle {
         reportedDetailSessions = nextReported
     }
 
+    function captureCurrentDetailSnapshot() {
+        if (currentPage !== "detail") return
+        if (!controller || !controller.video || !controller.video.captureCurrentVideoDetail) return
+        controller.video.captureCurrentVideoDetail()
+    }
+
+    function collectActiveDetailBvids() {
+        var keep = ({})
+        if (currentPage === "detail" && detailBvid && detailBvid.length > 0) {
+            keep[detailBvid] = true
+        }
+        for (var i = 0; i < pageStack.length; ++i) {
+            var entry = pageStack[i]
+            if (entry && entry.page === "detail" && entry.props && entry.props.bvid) {
+                keep[entry.props.bvid] = true
+            }
+        }
+        return keep
+    }
+
+    function syncDetailCacheWithPageStack() {
+        if (!controller || !controller.video) return
+        var keep = collectActiveDetailBvids()
+        var known = detailCacheBvids || ({})
+        for (var bvid in known) {
+            if (!keep[bvid] && controller.video.dropCachedVideoDetail) {
+                controller.video.dropCachedVideoDetail(bvid)
+            }
+        }
+        detailCacheBvids = keep
+    }
+
     function navigateTo(page, props) {
         if (_animating) return;
         var newStack = pageStack.slice(0); // Create a copy
@@ -134,11 +168,13 @@ Rectangle {
         _animating = true;
         currentPage = page;
         pruneReportedDetailSessions()
+        syncDetailCacheWithPageStack()
         pageTransition.restart();
     }
 
     function goBack() {
         if (_animating) return;
+        captureCurrentDetailSnapshot()
 
         console.log("[goBack] currentPage=", currentPage,
                     "stack=", JSON.stringify(pageStack),
@@ -160,6 +196,7 @@ Rectangle {
             currentPage = prev;
             pageStack = newStack; // Assign the new array
             pruneReportedDetailSessions()
+            syncDetailCacheWithPageStack()
 
             // 从详情页返回时恢复对应页面滚动位置
             if (fromPage === "detail") {
@@ -183,6 +220,7 @@ Rectangle {
                 currentPage = "home";
                 lastPage = fromPage2;
                 pruneReportedDetailSessions()
+                syncDetailCacheWithPageStack()
                 pageTransitionBack.restart();
                 return;
             }

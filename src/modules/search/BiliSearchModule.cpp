@@ -1,4 +1,5 @@
 #include "modules/search/BiliSearchModule.h"
+#include "BiliAsyncUtils.hpp"
 #include "BiliController.h"
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
@@ -30,11 +31,60 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
-#include <iostream>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
+
+namespace {
+
+struct ParsedSearchResults {
+  QString keyword;
+  int page = 1;
+  QVector<VideoItem> items;
+};
+
+QVector<HotSearchItem> parseSearchHotPayload(const QJsonObject &data) {
+  QJsonObject trending = data.value("trending").toObject();
+  QJsonArray list = trending.value("list").toArray();
+
+  QVector<HotSearchItem> items;
+  items.reserve(qMin(list.size(), 50));
+  int pos = 1;
+  for (const QJsonValue &v : list) {
+    if (pos > 50)
+      break;
+    QJsonObject obj = v.toObject();
+    HotSearchItem item;
+    item.keyword = obj.value("keyword").toString().left(100);
+    item.icon = obj.value("icon").toString();
+    item.position = pos++;
+    items.append(item);
+  }
+  return items;
+}
+
+ParsedSearchResults parseSearchPayload(const QJsonObject &data,
+                                       const QString &keyword, int page) {
+  ParsedSearchResults result;
+  result.keyword = keyword;
+  result.page = page;
+
+  QJsonArray list = data.value("result").toArray();
+  if (list.isEmpty()) {
+    list = data.value("list").toArray();
+  }
+
+  result.items.reserve(list.size());
+  for (const QJsonValue &v : list) {
+    if (v.isObject()) {
+      result.items.append(VideoListModel::parseVideoItem(v.toObject()));
+    }
+  }
+  return result;
+}
+
+} // namespace
 
 BiliSearchModule::BiliSearchModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
@@ -70,26 +120,14 @@ void BiliSearchModule::fetchHotSearch() {
       [self](const QJsonObject &data) {
         if (!self)
           return;
-
-        QJsonObject trending = data.value("trending").toObject();
-        QJsonArray list = trending.value("list").toArray();
-
-        QVector<HotSearchItem> items;
-        items.reserve(qMin(list.size(), 50));
-        int pos = 1;
-        for (const QJsonValue &v : list) {
-          if (pos > 50)
-            break;
-          QJsonObject obj = v.toObject();
-          HotSearchItem item;
-          item.keyword = obj.value("keyword").toString().left(100);
-          item.icon = obj.value("icon").toString();
-          item.position = pos++;
-          items.append(item);
-        }
-
-        self->hotSearchListModel()->setItems(items);
-        self->hotSearchListModel()->setLoading(false);
+        biliRunInWorker(
+            self, [data]() { return parseSearchHotPayload(data); },
+            [self](QVector<HotSearchItem> items) {
+              if (!self)
+                return;
+              self->hotSearchListModel()->setItems(items);
+              self->hotSearchListModel()->setLoading(false);
+            });
       },
       [self](int code, const QString &msg) {
         Q_UNUSED(code)
@@ -144,35 +182,35 @@ void BiliSearchModule::search(const QString &keyword, int page) {
 
   QPointer<BiliController> self(m_controller);
   SearchResultModel *searchModel = m_controller->searchListModel();
+  const QString requestKeyword = m_searchKeyword;
+  const int requestPage = m_searchPage;
 
   m_controller->network()->get(
       "/search", params,
-      [this, self, searchModel](const QJsonObject &data) {
+      [this, self, searchModel, requestKeyword, requestPage](const QJsonObject &data) {
         if (!self || !searchModel)
           return;
+        biliRunInWorker(
+            self,
+            [data, requestKeyword, requestPage]() {
+              return parseSearchPayload(data, requestKeyword, requestPage);
+            },
+            [this, self, searchModel](ParsedSearchResults result) {
+              if (!self || !searchModel || m_searchKeyword != result.keyword ||
+                  m_searchPage != result.page) {
+                return;
+              }
 
-        QJsonArray list = data.value("result").toArray();
-        if (list.isEmpty()) {
-          list = data.value("list").toArray();
-        }
+              searchModel->appendItems(result.items);
+              searchModel->setHasMore(!result.items.isEmpty());
+              searchModel->setLoading(false);
+              self->setIsLoading(false);
 
-        QVector<VideoItem> items;
-        items.reserve(list.size());
-        for (const QJsonValue &v : list) {
-          if (v.isObject()) {
-            items.append(VideoListModel::parseVideoItem(v.toObject()));
-          }
-        }
-
-        searchModel->appendItems(items);
-        searchModel->setHasMore(!items.isEmpty());
-        searchModel->setLoading(false);
-        self->setIsLoading(false);
-
-        if (items.isEmpty() && m_searchPage == 1) {
-          searchModel->setErrorMessage(
-              QString("未找到%1相关视频").arg(m_searchKeyword));
-        }
+              if (result.items.isEmpty() && result.page == 1) {
+                searchModel->setErrorMessage(
+                    QString("未找到%1相关视频").arg(result.keyword));
+              }
+            });
       },
       [self, searchModel](int code, const QString &msg) {
         Q_UNUSED(code)

@@ -20,7 +20,6 @@
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
-#include <iostream>
 
 static const int SMS_LOGIN_PORT = 8666;
 static const char *SMS_PULL_PATH = "/pull";
@@ -343,9 +342,8 @@ void BiliLoginModule::checkLoginStatus() {
           emit self->qrcodeLoginSuccess();
           emit self->toastMessage("登录成功！");
         }
-
-        if (self->m_feedModule) self->m_feedModule->fetchPopular(1, 10);
-        self->fetchUserInfo(self->m_userId);
+        // 不再登录成功后自动刷新推荐和用户详情，避免启动/登录阶段连发多请求。
+        // 需要详情时由页面显式调用 refreshUserInfo()/fetchUserInfo()。
       },
       [self](int code, const QString &msg) {
         if (!self)
@@ -359,11 +357,11 @@ void BiliLoginModule::checkLoginStatus() {
           self->clearLocalLoginState();
           emit self->toastMessage("登录已过期，请重新登录");
         } else {
-          qDebug() << "[BiliController] checkLoginStatus failed (network), "
-                      "clearing local session:"
+          qDebug() << "[BiliController] checkLoginStatus failed (network), keeping local session:"
                    << msg;
-          self->clearLocalLoginState();
-          emit self->toastMessage("无法验证登录状态，请重新登录");
+          if (self->m_loggedIn) {
+            emit self->toastMessage("登录状态验证失败，请稍后重试");
+          }
         }
       });
 }
@@ -477,7 +475,6 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
           return;
         if (code == -101 || code == -401 || code == 401) {
           self->clearLocalLoginState();
-          if (self->m_feedModule) self->m_feedModule->fetchPopular(1, 10);
           emit self->toastMessage("登录已过期，请重新登录");
           return;
         }
@@ -488,8 +485,6 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
 void BiliLoginModule::logout() {
   BiliController *controller = m_controller;
   if (!controller) return;
-
-  std::cout << "[BiliCtrl] Logout" << std::endl;
 
   stopSmsLogin();
 

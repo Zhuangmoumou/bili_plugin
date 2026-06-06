@@ -9,10 +9,11 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
-    // 4=设置列表, 5=字幕设置
+    // 4=设置列表, 5=字幕设置, 6=偏好设置
     property int viewMode: 4
 
     signal requestSubtitleSettings()
+    signal requestPreferenceSettings()
 
     property bool restartConfirmVisible: false
 
@@ -26,6 +27,7 @@ Rectangle {
             anchors.fill: parent
             anchors.margins: Theme.spacingSmall
             model: ListModel {
+                ListElement { title: "偏好设置"; action: "preference" }
                 ListElement { title: "字幕设置"; action: "subtitle" }
                 ListElement { title: "重启 Go 服务端"; action: "restart" }
             }
@@ -55,8 +57,95 @@ Rectangle {
                     onClicked: {
                         if (model.action === "subtitle") {
                             settingsPage.requestSubtitleSettings()
+                        } else if (model.action === "preference") {
+                            settingsPage.requestPreferenceSettings()
                         } else {
                             settingsPage.restartConfirmVisible = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 偏好设置 ──
+    Item {
+        id: preferenceSettingsView
+        anchors.fill: parent
+        visible: viewMode === 6
+
+        Flickable {
+            anchors.fill: parent
+            anchors.margins: Theme.spacingSmall
+            contentHeight: preferenceSettingsColumn.height
+            clip: true
+            boundsBehavior: Flickable.DragOverBounds
+
+            Column {
+                id: preferenceSettingsColumn
+                width: parent.width
+                spacing: Theme.spacingSmall
+
+                Rectangle {
+                    width: parent.width
+                    height: 52
+                    radius: Theme.radiusMedium
+                    color: Theme.bgSecondary
+                    border.color: Theme.withAlpha(Theme.primary, 0.12)
+                    border.width: 1
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 8
+
+                        Column {
+                            width: parent.width - 112
+                            spacing: 3
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                text: "离屏占位"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: "已加载卡片滚出视野后退回 Canvas 占位"
+                                color: Theme.textTertiary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 9
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Rectangle {
+                            width: 44; height: 24; radius: 6
+                            color: controller && controller.videoCardOffscreenPlaceholderEnabled ? Theme.withAlpha(Theme.primary, 0.25) : Theme.bgTertiary
+                            border.width: 1
+                            border.color: controller && controller.videoCardOffscreenPlaceholderEnabled ? Theme.primary : Theme.withAlpha(Theme.primary, 0.16)
+                            anchors.verticalCenter: parent.verticalCenter
+                            Text { anchors.centerIn: parent; text: "开"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.playback.setVideoCardOffscreenPlaceholderEnabled(true) }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 44; height: 24; radius: 6
+                            color: controller && !controller.videoCardOffscreenPlaceholderEnabled ? Theme.withAlpha(Theme.primary, 0.25) : Theme.bgTertiary
+                            border.width: 1
+                            border.color: controller && !controller.videoCardOffscreenPlaceholderEnabled ? Theme.primary : Theme.withAlpha(Theme.primary, 0.16)
+                            anchors.verticalCenter: parent.verticalCenter
+                            Text { anchors.centerIn: parent; text: "关"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: { if (controller) controller.playback.setVideoCardOffscreenPlaceholderEnabled(false) }
+                            }
                         }
                     }
                 }

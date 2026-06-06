@@ -17,6 +17,7 @@ Rectangle {
     property int seasonTotal: 0
     property string currentBvid: ""
     property string loadedKey: ""
+    property bool seasonLoadingMore: false
 
     signal backClicked()
     signal videoSelected(string bvid)
@@ -80,6 +81,9 @@ Rectangle {
         orientation: ListView.Horizontal
         spacing: 6
         clip: true
+        cacheBuffer: 640
+        displayMarginBeginning: 160
+        displayMarginEnd: 160
         leftMargin: 8
         rightMargin: 8
         model: controller ? controller.season.seasonVideoModel() : null
@@ -88,8 +92,10 @@ Rectangle {
             if (!controller) return
             if (!atXEnd) return
             if (seasonVideoList.contentWidth <= seasonVideoList.width + 2) return
+            if (seasonPage.seasonLoadingMore) return
             if (seasonVideoList.model && seasonVideoList.model.loading) return
             if (seasonVideoList.model && seasonVideoList.model.hasMore === false) return
+            seasonPage.seasonLoadingMore = true
             controller.season.fetchMoreSeasonVideos()
         }
 
@@ -102,6 +108,8 @@ Rectangle {
                 anchors.fill: parent
                 videoTitle: model.title || ""
                 coverUrl: model.pic || ""
+                imageActive: seasonPage.visible
+                preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
                 upName: model.ownerName || ""
                 viewCount: model.views || ""
                 durationText: model.durationText || ""
@@ -148,6 +156,34 @@ Rectangle {
                     font.bold: true
                 }
             }
+        }
+
+        Row {
+            visible: seasonVideoList.count === 0 && controller && controller.isLoading
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6
+            Repeater {
+                model: 3
+                Components.VideoCardCompact {
+                    height: seasonVideoList.height
+                    placeholder: true
+                    fontFamily: Theme.fontFamily
+                    titleScale: 0.9
+                    subScale: 0.85
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: controller ? controller.season.seasonVideoModel() : null
+        function onLoadingChanged() {
+            if (!target || !target.loading) seasonPage.seasonLoadingMore = false
+        }
+        function onCountChanged() {
+            seasonPage.seasonLoadingMore = false
         }
     }
 
