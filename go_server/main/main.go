@@ -1,15 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -40,16 +41,126 @@ const (
 	colorBlue    = "\x1b[34m"
 	colorMagenta = "\x1b[35m"
 	colorCyan    = "\x1b[36m"
+
+	asyncLogDefaultQueueSize = 1024
+	asyncLogMaxQueueSize     = 65536
+	asyncLogBufferSize       = 64 * 1024
+	asyncLogFlushSize        = 32 * 1024
+	asyncLogFlushInterval    = 200 * time.Millisecond
+	asyncLogShutdownTimeout  = 2 * time.Second
 )
 
 var (
 	debugEnabled     = os.Getenv("DEBUG") == "true"
 	accessLogEnabled = debugEnabled || os.Getenv("ACCESS_LOG") == "true"
+	asyncLogCh       = make(chan string, asyncLogQueueSize())
+	asyncLogFlushCh  = make(chan chan struct{})
+	asyncLogDropped  atomic.Uint64
 	wbiValueReplacer = strings.NewReplacer("!", "", "'", "", "(", "", ")", "", "*", "")
 )
 
+func init() {
+	go asyncLogWriter()
+}
+
 func getTimestamp() string {
 	return time.Now().Format("2006-01-02 15:04:05")
+}
+
+func asyncLogQueueSize() int {
+	raw := strings.TrimSpace(os.Getenv("LOG_QUEUE_SIZE"))
+	if raw == "" {
+		return asyncLogDefaultQueueSize
+	}
+
+	size, err := strconv.Atoi(raw)
+	if err != nil || size <= 0 {
+		return asyncLogDefaultQueueSize
+	}
+	if size > asyncLogMaxQueueSize {
+		return asyncLogMaxQueueSize
+	}
+	return size
+}
+
+func asyncLogWriter() {
+	writer := bufio.NewWriterSize(os.Stdout, asyncLogBufferSize)
+	ticker := time.NewTicker(asyncLogFlushInterval)
+	defer ticker.Stop()
+
+	writeDropped := func() {
+		if dropped := asyncLogDropped.Swap(0); dropped > 0 {
+			_, _ = fmt.Fprintf(writer, "%s[WARN]%s %s%s%s 日志队列已满，丢弃 %d 条日志\n",
+				colorYellow, colorReset, colorDim, getTimestamp(), colorReset, dropped)
+		}
+	}
+
+	writeLine := func(line string) {
+		writeDropped()
+		_, _ = writer.WriteString(line)
+		if writer.Buffered() >= asyncLogFlushSize {
+			_ = writer.Flush()
+		}
+	}
+
+	flush := func() {
+		writeDropped()
+		_ = writer.Flush()
+	}
+
+	for {
+		select {
+		case line := <-asyncLogCh:
+			writeLine(line)
+		case done := <-asyncLogFlushCh:
+			for {
+				select {
+				case line := <-asyncLogCh:
+					writeLine(line)
+				default:
+					flush()
+					close(done)
+					done = nil
+				}
+				if done == nil {
+					break
+				}
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+func enqueueLogLine(line string) {
+	select {
+	case asyncLogCh <- line:
+	default:
+		asyncLogDropped.Add(1)
+	}
+}
+
+func asyncLogFlush(timeout time.Duration) bool {
+	done := make(chan struct{})
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case asyncLogFlushCh <- done:
+	case <-timer.C:
+		return false
+	}
+
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func logPlain(message string) {
+	enqueueLogLine(message + "\n")
 }
 
 func logInfo(message string, args ...interface{}) {
@@ -57,22 +168,22 @@ func logInfo(message string, args ...interface{}) {
 		return
 	}
 	msg := fmt.Sprintf(message, args...)
-	fmt.Printf("%s[INFO]%s %s%s%s %s\n", colorCyan, colorReset, colorDim, getTimestamp(), colorReset, msg)
+	enqueueLogLine(fmt.Sprintf("%s[INFO]%s %s%s%s %s\n", colorCyan, colorReset, colorDim, getTimestamp(), colorReset, msg))
 }
 
 func logSuccess(message string, args ...interface{}) {
 	msg := fmt.Sprintf(message, args...)
-	fmt.Printf("%s[SUCCESS]%s %s%s%s %s\n", colorGreen, colorReset, colorDim, getTimestamp(), colorReset, msg)
+	enqueueLogLine(fmt.Sprintf("%s[SUCCESS]%s %s%s%s %s\n", colorGreen, colorReset, colorDim, getTimestamp(), colorReset, msg))
 }
 
 func logWarn(message string, args ...interface{}) {
 	msg := fmt.Sprintf(message, args...)
-	fmt.Printf("%s[WARN]%s %s%s%s %s\n", colorYellow, colorReset, colorDim, getTimestamp(), colorReset, msg)
+	enqueueLogLine(fmt.Sprintf("%s[WARN]%s %s%s%s %s\n", colorYellow, colorReset, colorDim, getTimestamp(), colorReset, msg))
 }
 
 func logError(message string, args ...interface{}) {
 	msg := fmt.Sprintf(message, args...)
-	fmt.Printf("%s[ERROR]%s %s%s%s %s\n", colorRed, colorReset, colorDim, getTimestamp(), colorReset, msg)
+	enqueueLogLine(fmt.Sprintf("%s[ERROR]%s %s%s%s %s\n", colorRed, colorReset, colorDim, getTimestamp(), colorReset, msg))
 }
 
 func logDebug(message string, args ...interface{}) {
@@ -80,7 +191,7 @@ func logDebug(message string, args ...interface{}) {
 		return
 	}
 	msg := fmt.Sprintf(message, args...)
-	fmt.Printf("%s[DEBUG]%s %s%s%s %s\n", colorMagenta, colorReset, colorDim, getTimestamp(), colorReset, msg)
+	enqueueLogLine(fmt.Sprintf("%s[DEBUG]%s %s%s%s %s\n", colorMagenta, colorReset, colorDim, getTimestamp(), colorReset, msg))
 }
 
 func logRequest(method, path string, params map[string]string) {
@@ -89,9 +200,9 @@ func logRequest(method, path string, params map[string]string) {
 		b, _ := json.Marshal(params)
 		paramStr = string(b)
 	}
-	fmt.Printf("%s[REQUEST]%s %s%s%s %s%s%s %s %s%s%s\n",
+	enqueueLogLine(fmt.Sprintf("%s[REQUEST]%s %s%s%s %s%s%s %s %s%s%s\n",
 		colorBlue, colorReset, colorDim, getTimestamp(), colorReset,
-		colorBright, method, colorReset, path, colorDim, paramStr, colorReset)
+		colorBright, method, colorReset, path, colorDim, paramStr, colorReset))
 }
 
 func logResponse(path string, code int, duration time.Duration) {
@@ -102,9 +213,9 @@ func logResponse(path string, code int, duration time.Duration) {
 	if code != 0 {
 		color = colorRed
 	}
-	fmt.Printf("%s[RESPONSE]%s %s%s%s %s %scode=%d%s %s(%dms)%s\n",
+	enqueueLogLine(fmt.Sprintf("%s[RESPONSE]%s %s%s%s %s %scode=%d%s %s(%dms)%s\n",
 		color, colorReset, colorDim, getTimestamp(), colorReset,
-		path, color, code, colorReset, colorDim, duration.Milliseconds(), colorReset)
+		path, color, code, colorReset, colorDim, duration.Milliseconds(), colorReset))
 }
 
 // ==================== 配置常量 ====================
@@ -2475,7 +2586,7 @@ func fetchPlayerSubtitleList(ctx context.Context, client *BilibiliClient, aid, c
 		if msg == "" {
 			msg = "获取字幕列表失败"
 		}
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	data, _ := resp["data"].(map[string]interface{})
@@ -3512,30 +3623,30 @@ func setupRoutes(mux *http.ServeMux) {
 // ==================== 主函数 ====================
 
 func printBanner(debug bool) {
-	fmt.Println()
-	fmt.Println(strings.Repeat("=", 60))
+	logPlain("")
+	logPlain(strings.Repeat("=", 60))
 	logInfo("🚀 Bilibili API Server 启动中...")
 	if debug {
 		logInfo("调试模式: 开启 (DEBUG=true)")
 	} else {
 		logInfo("调试模式: 关闭 (设置 DEBUG=true 开启)")
 	}
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println()
+	logPlain(strings.Repeat("=", 60))
+	logPlain("")
 }
 
 func printEndpoints(host, port string) {
-	fmt.Println()
-	fmt.Println(strings.Repeat("=", 60))
+	logPlain("")
+	logPlain(strings.Repeat("=", 60))
 	logSuccess("✅ 服务器运行于 http://%s:%s", host, port)
 	logInfo("可用接口列表:")
 	for _, e := range startupEndpoints {
-		fmt.Println("  " + e)
+		logPlain("  " + e)
 	}
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println()
+	logPlain(strings.Repeat("=", 60))
+	logPlain("")
 	logInfo("服务器已就绪，等待请求...")
-	fmt.Println()
+	logPlain("")
 }
 
 func main() {
@@ -3582,10 +3693,12 @@ func main() {
 	// 退出：用 Shutdown 替代 os.Exit，让正在处理的请求有机会完成
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	shutdownDone := make(chan struct{})
 
 	go func() {
+		defer close(shutdownDone)
 		sig := <-sigChan
-		fmt.Println()
+		logPlain("")
 		logWarn("收到 %s 信号，正在关闭...", sig.String())
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -3603,7 +3716,15 @@ func main() {
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logError("❌ 启动失败: %s", err.Error())
-		log.Fatal(err)
+		_ = asyncLogFlush(asyncLogShutdownTimeout)
+		os.Exit(1)
+	} else if err == http.ErrServerClosed {
+		select {
+		case <-shutdownDone:
+		case <-time.After(11 * time.Second):
+			logWarn("等待关闭流程完成超时")
+		}
 	}
 	logInfo("服务器主循环已退出")
+	_ = asyncLogFlush(asyncLogShutdownTimeout)
 }
