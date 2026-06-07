@@ -120,7 +120,7 @@ Rectangle {
         _restoringCachedDetail = false
         if (restored) {
             _pendingRefreshBvid = ""
-            delayedDetailRefreshTimer.stop()
+            _refreshDispatchQueued = false
             _needRestorePartAfterRefresh = false
         }
         return restored
@@ -602,76 +602,99 @@ Rectangle {
                         }
                     }
 
-                    // UP 主行
-                    Rectangle {
-                        id: upChip
+                    // UP 主行（合作视频可横向显示多个 UP）
+                    Flickable {
+                        id: upStaffFlick
+                        width: parent.width
                         height: 18
-                        radius: 9
-                        color: upArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.3) : Qt.rgba(0.23, 0.51, 0.96, 0.14)
-                        border.color: Qt.rgba(0.23, 0.51, 0.96, 0.32)
-                        border.width: 1
-                        width: Math.min(upRow.implicitWidth + 10, parent.width)
-
-                        scale: upArea.pressed ? 0.92 : 1.0
-                        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                        Behavior on color { ColorAnimation { duration: 120 } }
+                        contentWidth: upStaffRow.width
+                        contentHeight: height
+                        flickableDirection: Flickable.HorizontalFlick
+                        boundsBehavior: Flickable.StopAtBounds
+                        clip: true
 
                         Row {
-                            id: upRow
-                            anchors.left: parent.left
-                            anchors.leftMargin: 4
-                            anchors.verticalCenter: parent.verticalCenter
+                            id: upStaffRow
+                            height: parent.height
                             spacing: 5
 
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-                                color: "#1e293b"
-                                anchors.verticalCenter: parent.verticalCenter
+                            Repeater {
+                                model: controller ? controller.videoStaff : []
 
-                                Image {
-                                    id: ownerAvatarImage
-                                    anchors.fill: parent
-                                    smooth: true
-                                    mipmap: true
-                                    source: controller && controller.videoOwnerFace && detailPage.heroImagesActive
-                                    ? "image://bili/" + encodeURIComponent(controller.videoOwnerFace) : ""
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                    visible: false
-                                }
+                                delegate: Rectangle {
+                                    id: upChip
+                                    property var staffItem: modelData
+                                    property int staffMid: Number(staffItem.mid || 0)
+                                    height: upStaffFlick.height
+                                    width: Math.min(upRow.implicitWidth + 10, upStaffFlick.width)
+                                    radius: height / 2
+                                    color: upArea.pressed ? Qt.rgba(0.23, 0.51, 0.96, 0.3) : Qt.rgba(0.23, 0.51, 0.96, 0.14)
+                                    border.color: Qt.rgba(0.23, 0.51, 0.96, 0.32)
+                                    border.width: 1
 
-                                OpacityMask {
-                                    anchors.fill: ownerAvatarImage
-                                    source: ownerAvatarImage
-                                    maskSource: Rectangle {
-                                        width: ownerAvatarImage.width
-                                        height: ownerAvatarImage.height
-                                        radius: Math.min(width, height) / 2
-                                        visible: false
+                                    scale: upArea.pressed ? 0.92 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                                    Row {
+                                        id: upRow
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 4
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 5
+
+                                        Rectangle {
+                                            width: 14
+                                            height: 14
+                                            radius: 7
+                                            color: "#1e293b"
+                                            anchors.verticalCenter: parent.verticalCenter
+
+                                            Image {
+                                                id: staffAvatarImage
+                                                anchors.fill: parent
+                                                smooth: true
+                                                mipmap: true
+                                                source: staffItem.face && detailPage.heroImagesActive
+                                                        ? "image://bili/" + encodeURIComponent(staffItem.face) : ""
+                                                fillMode: Image.PreserveAspectCrop
+                                                asynchronous: true
+                                                visible: false
+                                            }
+
+                                            OpacityMask {
+                                                anchors.fill: staffAvatarImage
+                                                source: staffAvatarImage
+                                                maskSource: Rectangle {
+                                                    width: staffAvatarImage.width
+                                                    height: staffAvatarImage.height
+                                                    radius: Math.min(width, height) / 2
+                                                    visible: false
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            text: staffItem.name || "UP主"
+                                            color: primaryLight
+                                            font.family: fontFamily
+                                            font.pixelSize: 9
+                                            font.bold: true
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            elide: Text.ElideRight
+                                            width: Math.min(implicitWidth, 84)
+                                        }
                                     }
-                                }
-                            }
 
-                            Text {
-                                text: controller ? controller.videoOwner : ""
-                                color: primaryLight
-                                font.family: fontFamily
-                                font.pixelSize: 9
-                                font.bold: true
-                                anchors.verticalCenter: parent.verticalCenter
-                                elide: Text.ElideRight
-                                width: Math.min(implicitWidth, 130)
-                            }
-                        }
-
-                        MouseArea {
-                            id: upArea
-                            anchors.fill: parent
-                            onClicked: {
-                                if (controller && controller.videoOwnerMid > 0) {
-                                    detailPage.upRequested(controller.videoOwnerMid, controller.videoAid)
+                                    MouseArea {
+                                        id: upArea
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (staffMid > 0) {
+                                                detailPage.upRequested(staffMid, controller ? controller.videoAid : 0)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2292,12 +2315,16 @@ Rectangle {
     // ═══════════════════════════════════════════════════════════
     property double _lastRefreshMs: 0
     property string _pendingRefreshBvid: ""
+    property bool _enterAnimationDone: false
+    property bool _refreshDispatchQueued: false
 
-    Timer {
-        id: delayedDetailRefreshTimer
-        interval: 300
-        repeat: false
-        onTriggered: detailPage.runPendingRefresh()
+    function schedulePendingRefresh() {
+        if (_refreshDispatchQueued) return
+        _refreshDispatchQueued = true
+        Qt.callLater(function() {
+            detailPage._refreshDispatchQueued = false
+            detailPage.runPendingRefresh()
+        })
     }
 
     Timer {
@@ -2316,7 +2343,7 @@ Rectangle {
             _pendingRefreshBvid = ""
             return
         }
-        if (!visible) return
+        if (!visible || !_enterAnimationDone) return
         var requestBvid = _pendingRefreshBvid
         _pendingRefreshBvid = ""
         controller.video.fetchVideoDetail(requestBvid)
@@ -2325,11 +2352,13 @@ Rectangle {
     function refreshDetail(force) {
         if (!controller || bvid.length === 0) return;
         var nowMs = Date.now();
-        var hasPendingRefresh = _pendingRefreshBvid.length > 0 || delayedDetailRefreshTimer.running
+        var hasPendingRefresh = _pendingRefreshBvid.length > 0
         if (!force && !hasPendingRefresh && (nowMs - _lastRefreshMs) < 400) return;
         _lastRefreshMs = nowMs;
         _pendingRefreshBvid = bvid;
-        delayedDetailRefreshTimer.restart();
+        if (visible && _enterAnimationDone) {
+            schedulePendingRefresh()
+        }
     }
 
     Component.onCompleted: {
@@ -2341,13 +2370,14 @@ Rectangle {
         }
         updateQualities()
 
+        _enterAnimationDone = false
         if (controller && bvid.length > 0 && !detailContentReady) {
             if (!restoreCachedDetailIfAvailable()) {
                 refreshDetail(true)
             }
         }
 
-        enterAnimation.start()
+        enterAnimation.restart()
     }
 
     onVisibleChanged: {
@@ -2359,10 +2389,14 @@ Rectangle {
             }
             if (_completed && controller && controller.videoBvid !== detailPage.bvid) {
                 skeletonPaintToken += 1
+                _enterAnimationDone = false
+                enterAnimation.restart()
                 if (!restoreCachedDetailIfAvailable()) {
                     _needRestorePartAfterRefresh = true
                     refreshDetail(false)
                 }
+            } else if (_completed && _pendingRefreshBvid.length > 0 && _enterAnimationDone) {
+                schedulePendingRefresh()
             }
         } else {
             if (videoPartList) savedPartListX = videoPartList.contentX
@@ -2429,6 +2463,10 @@ Rectangle {
 
     ParallelAnimation {
         id: enterAnimation
+        onFinished: {
+            detailPage._enterAnimationDone = true
+            detailPage.schedulePendingRefresh()
+        }
 
         NumberAnimation {
             target: mainColumn

@@ -13,6 +13,8 @@
 #include "modules/video/BiliVideoModule.h"
 #include "modules/viewer/BiliViewerModule.h"
 
+#include <QVariantMap>
+
 #include <QDateTime>
 #include <QSettings>
 #include <QStringListModel>
@@ -127,6 +129,29 @@ QString BiliController::videoOwnerFace() const {
 }
 qint64 BiliController::videoOwnerMid() const {
   return m_currentVideo.ownerMid;
+}
+QVariantList BiliController::videoStaff() const {
+  QVariantList list;
+  auto appendStaff = [&list](qint64 mid, const QString &name, const QString &face,
+                             const QString &title) {
+    if (mid <= 0 || name.isEmpty()) return;
+    QVariantMap item;
+    item["mid"] = mid;
+    item["name"] = name;
+    item["face"] = face;
+    item["title"] = title;
+    list.append(item);
+  };
+
+  if (!m_currentVideo.staff.isEmpty()) {
+    for (const VideoStaffItem &staff : m_currentVideo.staff) {
+      appendStaff(staff.mid, staff.name, staff.face, staff.title);
+    }
+  } else {
+    appendStaff(m_currentVideo.ownerMid, m_currentVideo.ownerName,
+                m_currentVideo.ownerFace, QString());
+  }
+  return list;
 }
 QString BiliController::videoViews() const {
   return VideoListModel::formatCount(m_currentVideo.views);

@@ -13,6 +13,8 @@ public:
   Q_INVOKABLE void fetchUpInfo(qint64 mid);
   Q_INVOKABLE void fetchUpVideos(qint64 mid, int page = 1, int pageSize = 20);
   Q_INVOKABLE void fetchUpVideosAroundAid(qint64 mid, qint64 aid, int pageSize = 20);
+  Q_INVOKABLE bool canFetchPreviousUpVideos() const;
+  Q_INVOKABLE void fetchPreviousUpVideos();
   Q_INVOKABLE void fetchMoreUpVideos();
   Q_INVOKABLE void fetchUpSeasons(qint64 mid);
   Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false, int total = 0);

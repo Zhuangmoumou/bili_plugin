@@ -134,6 +134,16 @@ void VideoListModel::appendItems(const QVector<VideoItem> &items)
     emit countChanged();
 }
 
+void VideoListModel::prependItems(const QVector<VideoItem> &items)
+{
+    if (items.isEmpty()) return;
+
+    beginInsertRows(QModelIndex(), 0, items.count() - 1);
+    m_items = items + m_items;
+    endInsertRows();
+    emit countChanged();
+}
+
 void VideoListModel::setLoading(bool loading)
 {
     if (m_loading != loading) {
@@ -248,6 +258,30 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     if (item.ownerName.isEmpty()) item.ownerName = obj.value("author").toString();
     item.ownerFace = owner.value("face").toString();
     item.ownerMid = owner.value("mid").toVariant().toLongLong();
+
+    QSet<qint64> staffMids;
+    QJsonArray staffArray = obj.value("staff").toArray();
+    item.staff.reserve(staffArray.size() + 1);
+    for (const QJsonValue &staffValue : staffArray) {
+        if (!staffValue.isObject()) continue;
+        QJsonObject staffObj = staffValue.toObject();
+        VideoStaffItem staff;
+        staff.mid = staffObj.value("mid").toVariant().toLongLong();
+        staff.name = staffObj.value("name").toString();
+        staff.face = staffObj.value("face").toString();
+        staff.title = staffObj.value("title").toString();
+        if (staff.title.isEmpty()) staff.title = staffObj.value("role").toString();
+        if (staff.mid <= 0 || staff.name.isEmpty() || staffMids.contains(staff.mid)) continue;
+        staffMids.insert(staff.mid);
+        item.staff.append(staff);
+    }
+    if (!item.staff.isEmpty() && item.ownerMid > 0 && !staffMids.contains(item.ownerMid)) {
+        VideoStaffItem ownerStaff;
+        ownerStaff.mid = item.ownerMid;
+        ownerStaff.name = item.ownerName;
+        ownerStaff.face = item.ownerFace;
+        item.staff.prepend(ownerStaff);
+    }
 
     QJsonObject stat = obj.value("stat").toObject();
     item.views = stat.value("view").toVariant().toLongLong();

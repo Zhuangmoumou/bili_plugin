@@ -1420,7 +1420,7 @@ func (c *BilibiliClient) ToggleUserFollow(ctx context.Context, mid int, follow b
 // GetUserVideosApp 使用 APP 游标接口获取投稿。
 // 注意：该接口实际使用 aid 作为游标参数（不是时间戳）。
 // cursorAid=0 表示首次；cursorAid>0 表示从“上一页最后一个视频的 aid”继续向后翻页。
-func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAid int64, ps int, includeCursor bool) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAid int64, ps int, includeCursor bool, sortOrder string) (json.RawMessage, error) {
 	if ps <= 0 {
 		ps = 20
 	}
@@ -1435,6 +1435,11 @@ func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAi
 		"pn":       "1",
 		"ps":       strconv.Itoa(ps),
 		"order":    "pubdate",
+		"build":    "8430300",
+		"version":  "8.43.0",
+		"c_locale": "zh_CN",
+		"s_locale": "zh_CN",
+		"channel":  "master",
 		"platform": "android",
 		"mobi_app": "android",
 		"device":   "android",
@@ -1445,6 +1450,9 @@ func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAi
 	}
 	if includeCursor {
 		params["include_cursor"] = "true"
+	}
+	if sortOrder != "" {
+		params["sort"] = sortOrder
 	}
 	params = appSign(params)
 	raw, err := c.request(ctx, "https://app.biliapi.com/x/v2/space/archive/cursor", params, "GET")
@@ -1510,8 +1518,8 @@ func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAi
 	return raw, nil
 }
 
-func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max, targetAid int64, includeCursor bool) (json.RawMessage, error) {
-	logInfo("获取用户投稿 mid=%d pn=%d ps=%d max=%d targetAid=%d includeCursor=%t", mid, pn, ps, max, targetAid, includeCursor)
+func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max, targetAid int64, includeCursor bool, sortOrder string) (json.RawMessage, error) {
+	logInfo("获取用户投稿 mid=%d pn=%d ps=%d max=%d targetAid=%d includeCursor=%t sort=%s", mid, pn, ps, max, targetAid, includeCursor, sortOrder)
 
 	// 经验：网页端 x/space/wbi/arc/search 更容易触发 -412 / 风控页，
 	// 且 pn 翻页在 UP 有新稿件插入时更容易出现重复/缺失。
@@ -1526,7 +1534,7 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 		pn = 1
 	}
 	if targetAid > 0 {
-		return c.GetUserVideosApp(ctx, mid, targetAid, ps, includeCursor)
+		return c.GetUserVideosApp(ctx, mid, targetAid, ps, includeCursor, sortOrder)
 	}
 
 	cursor := max
@@ -1537,7 +1545,7 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 	// 该接口的 cursor 实际为 aid：即“上一页最后一个视频的 aid”（通常在 item[].param 字段）。
 	if cursor <= 0 && pn > 1 {
 		for i := 1; i < pn; i++ {
-			raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps, false)
+			raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps, false, "")
 			if err != nil {
 				return nil, err
 			}
@@ -1583,7 +1591,7 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 	}
 
 	// 取目标页
-	raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps, false)
+	raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps, false, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1729,6 +1737,41 @@ func (c *BilibiliClient) GetUserSeasonVideos(ctx context.Context, mid, seasonID,
 		return nil, err
 	}
 	return validateSeasonArchivesMeta(raw, mid, seasonID), nil
+}
+
+// 获取 UP 主系列内的视频列表。
+func (c *BilibiliClient) GetUserSeriesVideos(ctx context.Context, mid, seriesID, pn, ps int, sortOrder string) (json.RawMessage, error) {
+	if ps <= 0 {
+		ps = 30
+	}
+	if ps > 100 {
+		ps = 100
+	}
+	if pn < 1 {
+		pn = 1
+	}
+	if sortOrder == "" {
+		sortOrder = "desc"
+	}
+	logInfo("获取 UP 系列视频 mid=%d series=%d pn=%d ps=%d sort=%s", mid, seriesID, pn, ps, sortOrder)
+	params := map[string]string{
+		"vmid":      strconv.Itoa(mid),
+		"series_id": strconv.Itoa(seriesID),
+		"pn":        strconv.Itoa(pn),
+		"ps":        strconv.Itoa(ps),
+		"sort":      sortOrder,
+		"build":     "8430300",
+		"version":   "8.43.0",
+		"c_locale":  "zh_CN",
+		"s_locale":  "zh_CN",
+		"channel":   "master",
+		"platform":  "android",
+		"mobi_app":  "android",
+		"device":    "android",
+		"ts":        strconv.FormatInt(time.Now().Unix(), 10),
+	}
+	params = appSign(params)
+	return c.request(ctx, "https://app.biliapi.com/x/v2/space/series", params, "GET")
 }
 
 func (c *BilibiliClient) GetLoginInfo(ctx context.Context) (json.RawMessage, error) {
@@ -2892,9 +2935,10 @@ func handleUserVideos(w http.ResponseWriter, r *http.Request) {
 	maxVal := getInt64Query(q, "max", "cursor")
 	targetAid := getInt64Query(q, "aid")
 	includeCursor := strings.EqualFold(q.Get("include_cursor"), "true") || q.Get("include_cursor") == "1"
+	sortOrder := q.Get("sort")
 
 	handleAPI(w, "/user/videos", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetUserVideos(r.Context(), mid, pn, ps, maxVal, targetAid, includeCursor)
+		return c.GetUserVideos(r.Context(), mid, pn, ps, maxVal, targetAid, includeCursor, sortOrder)
 	})
 }
 
@@ -2930,6 +2974,26 @@ func handleUserSeasonVideos(w http.ResponseWriter, r *http.Request) {
 	sortReverse := strings.EqualFold(q.Get("sort_reverse"), "true")
 	handleAPI(w, "/user/season/videos", func(c *BilibiliClient) (json.RawMessage, error) {
 		return c.GetUserSeasonVideos(r.Context(), mid, seasonID, pn, ps, sortReverse)
+	})
+}
+
+func handleUserSeriesVideos(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
+	if !ok {
+		return
+	}
+	seriesID, ok := requireIntQuery(w, q, "series_id")
+	if !ok {
+		return
+	}
+	pn, ps, ok := getPageParams(w, q, 30)
+	if !ok {
+		return
+	}
+	sortOrder := q.Get("sort")
+	handleAPI(w, "/user/series/videos", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetUserSeriesVideos(r.Context(), mid, seriesID, pn, ps, sortOrder)
 	})
 }
 
@@ -3722,6 +3786,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/user/videos", handleUserVideos)
 	mux.HandleFunc("/user/seasons", handleUserSeasons)
 	mux.HandleFunc("/user/season/videos", handleUserSeasonVideos)
+	mux.HandleFunc("/user/series/videos", handleUserSeriesVideos)
 	mux.HandleFunc("/login/info", handleLoginInfo)
 	mux.HandleFunc("/login/import", handleLoginImport)
 	mux.HandleFunc("/logout", handleLogout)

@@ -64,6 +64,7 @@ class BiliController : public QObject {
   Q_PROPERTY(
       QString videoOwnerFace READ videoOwnerFace NOTIFY videoDetailChanged)
   Q_PROPERTY(qint64 videoOwnerMid READ videoOwnerMid NOTIFY videoDetailChanged)
+  Q_PROPERTY(QVariantList videoStaff READ videoStaff NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoViews READ videoViews NOTIFY videoDetailChanged)
   Q_PROPERTY(QString videoLikes READ videoLikes NOTIFY videoStatsChanged)
   Q_PROPERTY(QString videoCoins READ videoCoins NOTIFY videoStatsChanged)
@@ -165,6 +166,7 @@ public:
   QString videoOwner() const;
   QString videoOwnerFace() const;
   qint64 videoOwnerMid() const;
+  QVariantList videoStaff() const;
   QString videoViews() const;
   QString videoLikes() const;
   QString videoCoins() const;
@@ -480,6 +482,8 @@ private:
   bool m_upVideoHasMore = true;
   // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。
   qint64 m_upVideoCursorNext = 0;
+  qint64 m_upVideoCursorPrev = 0;
+  bool m_upVideoHasPrevious = false;
   // UP 主合集筛选状态
   qint64 m_upSelectedSeasonId = 0;
   QString m_upSelectedSeasonName;

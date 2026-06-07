@@ -12,6 +12,7 @@ public:
 
   Q_INVOKABLE void fetchRelatedVideos();
   Q_INVOKABLE void fetchUpSeasonVideos(int page = 1, int pageSize = 30);
+  Q_INVOKABLE void fetchUpSeriesVideos(int page = 1, int pageSize = 30);
   Q_INVOKABLE void fetchMoreUpSeasonVideos();
   Q_INVOKABLE void fetchSeasonVideos(qint64 mid, qint64 seasonId, int page = 1, int pageSize = 30);
   Q_INVOKABLE void fetchMoreSeasonVideos();

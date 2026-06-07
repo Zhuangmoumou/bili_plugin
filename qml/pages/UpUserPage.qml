@@ -68,6 +68,11 @@ Rectangle {
         if (idx < 0 || idx >= upVideoList.count) return
         upVideoList.forceLayout()
         upVideoList.positionViewAtIndex(idx, ListView.Center)
+        Qt.callLater(function() {
+            if (idx <= 1 && upVideoList.maybeFetchPrevious) {
+                upVideoList.maybeFetchPrevious(true)
+            }
+        })
     }
 
     function tryScrollToLastWatched() {
@@ -270,6 +275,10 @@ Rectangle {
         onContentHeightChanged: upPage.clampScrollState()
         boundsBehavior: Flickable.StopAtBounds
         clip: true
+        visible: opacity > 0
+        opacity: upPage.upContentReady ? 1 : 0
+        enabled: upPage.upContentReady
+        Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
 
         Column {
             id: contentColumn
@@ -745,6 +754,24 @@ Rectangle {
                     leftMargin: 4
                     rightMargin: 4
                     property bool _loadingMore: false
+                    property bool _loadingPrevious: false
+                    property int _previousCountBeforeLoad: 0
+
+                    function maybeFetchPrevious(force) {
+                        if (!controller || !controller.up) return
+                        if (!force && !atXBeginning) return
+                        if (upVideoList.contentWidth <= upVideoList.width + 2) return
+                        if (upVideoList._loadingPrevious || upVideoList._loadingMore) return
+                        if (upVideoList.model && upVideoList.model.loading) return
+                        if (!controller.up.canFetchPreviousUpVideos || !controller.up.canFetchPreviousUpVideos()) return
+                        upVideoList._loadingPrevious = true
+                        upVideoList._previousCountBeforeLoad = upVideoList.count
+                        controller.up.fetchPreviousUpVideos()
+                    }
+
+                    onAtXBeginningChanged: if (atXBeginning) maybeFetchPrevious()
+                    onMovementEnded: maybeFetchPrevious()
+                    onDraggingChanged: if (!dragging) maybeFetchPrevious()
 
                     // 注意：当列表内容不足以撑满宽度时，atXEnd 会一直为 true，
                     // 可能导致无限触发“加载更多”并表现为“循环同一列表”。
@@ -804,10 +831,17 @@ Rectangle {
                     function onLoadingChanged() {
                         if (!target || target.loading) return
                         upVideoList._loadingMore = false
+                        upVideoList._loadingPrevious = false
                         upPage.clampScrollState()
                         upPage.tryScrollToLastWatched()
                     }
                     function onCountChanged() {
+                        if (upVideoList._loadingPrevious) {
+                            var added = Math.max(0, upVideoList.count - upVideoList._previousCountBeforeLoad)
+                            if (added > 0) {
+                                upVideoList.contentX += added * (105 + upVideoList.spacing)
+                            }
+                        }
                         upVideoList._loadingMore = false
                         upPage.tryScrollToLastWatched()
                     }
@@ -905,10 +939,10 @@ Rectangle {
                             ctx.quadraticCurveTo(x, y, x + h / 2, y)
                             ctx.fill()
                         }
-                        pill(0, 12, width * 0.72, 12, Theme.withAlpha(Theme.textSecondary, 0.22))
-                        pill(width * 0.76, 12, width * 0.22, 12, Theme.withAlpha(Theme.primary, 0.16))
-                        pill(0, 38, 40, 18, Theme.withAlpha(Theme.primary, 0.20))
-                        pill(48, 38, 58, 18, Theme.withAlpha(Theme.textSecondary, 0.16))
+                        pill(0, 4, width * 0.72, 12, Theme.withAlpha(Theme.textSecondary, 0.22))
+                        pill(width * 0.76, 4, width * 0.22, 12, Theme.withAlpha(Theme.primary, 0.16))
+                        pill(0, 30, 40, 18, Theme.withAlpha(Theme.primary, 0.20))
+                        pill(48, 30, 58, 18, Theme.withAlpha(Theme.textSecondary, 0.16))
                     }
                 }
             }
@@ -1000,91 +1034,6 @@ Rectangle {
                         fontFamily: Theme.fontFamily
                         titleScale: 0.9
                         subScale: 0.85
-                    }
-                }
-            }
-        }
-    }
-
-    // 加载中（同 HomePage：可取消）
-    Rectangle {
-        visible: controller && controller.isLoading && upPage.upContentReady && (!upVideoList || upVideoList.count === 0)
-        anchors.centerIn: parent
-        width: loadingRow.width + 16
-        height: 22
-        radius: 11
-        color: Theme.withAlpha(Theme.bgSecondary, 0.95)
-        border.color: Theme.borderLight
-        border.width: 1
-        z: 200
-
-        Row {
-            id: loadingRow
-            anchors.centerIn: parent
-            spacing: 3
-
-            Repeater {
-                model: 3
-                Item {
-                    width: 6
-                    height: 12
-
-                    Rectangle {
-                        width: 5
-                        height: 5
-                        radius: 2.5
-                        color: Theme.primary
-                        anchors.centerIn: parent
-
-                        SequentialAnimation on opacity {
-                            running: upPage.visible && controller && controller.isLoading
-                            loops: Animation.Infinite
-                            PauseAnimation { duration: index * 120 }
-                            NumberAnimation { to: 0.3; duration: 250 }
-                            NumberAnimation { to: 1.0; duration: 250 }
-                        }
-                    }
-                }
-            }
-
-            Item {
-                width: childrenRect.width
-                height: 12
-
-                Text {
-                    text: "加载中"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 9
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-
-            Rectangle {
-                height: 16
-                width: cancelTextItem.implicitWidth + 10
-                radius: 8
-                color: cancelArea.pressed
-                       ? Theme.withAlpha(Theme.primary, 0.18)
-                       : Theme.withAlpha(Theme.primary, 0.08)
-                border.color: Theme.withAlpha(Theme.primary, 0.25)
-                border.width: 1
-                anchors.verticalCenter: parent.verticalCenter
-
-                Text {
-                    id: cancelTextItem
-                    anchors.centerIn: parent
-                    text: "取消"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 8
-                }
-
-                MouseArea {
-                    id: cancelArea
-                    anchors.fill: parent
-                    onClicked: {
-                        if (controller) controller.cancelAll();
                     }
                 }
             }
