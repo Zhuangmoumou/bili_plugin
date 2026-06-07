@@ -123,6 +123,7 @@ class BiliController : public QObject {
   Q_PROPERTY(QString upUserSign READ upUserSign NOTIFY upUserChanged)
   Q_PROPERTY(bool upIsFollowing READ upIsFollowing NOTIFY upFollowChanged)
   Q_PROPERTY(int upVideoTotal READ upVideoTotal NOTIFY upVideoTotalChanged)
+  Q_PROPERTY(int upLastWatchedRank READ upLastWatchedRank NOTIFY upLastWatchedChanged)
   // UP 主合集筛选状态：当前选中的 season_id（0 表示“视频”全部投稿）
   Q_PROPERTY(qint64 upSelectedSeasonId READ upSelectedSeasonId NOTIFY upSelectedSeasonChanged)
   Q_PROPERTY(QString upSelectedSeasonName READ upSelectedSeasonName NOTIFY upSelectedSeasonChanged)
@@ -217,6 +218,7 @@ public:
   QString upUserSign() const { return m_upUserSign; }
   bool upIsFollowing() const { return m_upIsFollowing; }
   int upVideoTotal() const { return m_upVideoTotal; }
+  int upLastWatchedRank() const { return m_upLastWatchedRank; }
   qint64 upSelectedSeasonId() const { return m_upSelectedSeasonId; }
   QString upSelectedSeasonName() const { return m_upSelectedSeasonName; }
   bool isFavorited() const { return m_isFavorited; }
@@ -297,6 +299,7 @@ signals:
   void upUserChanged();
   void upFollowChanged();
   void upVideoTotalChanged();
+  void upLastWatchedChanged();
   void upSelectedSeasonChanged();
   void seasonVideoTotalChanged();
 
@@ -411,6 +414,10 @@ private:
   QString m_userFace;
   QString m_qrcodeUrl;
   QString m_qrcodeKey;
+  qint64 m_loginInfoUpdatedAtMs = 0;
+  qint64 m_userInfoUpdatedAtMs = 0;
+  bool m_loginInfoRefreshPending = false;
+  bool m_userInfoRefreshPending = false;
   // ====== 短信登录（bili-login 服务） ======
   // bili-login 二进制进程（可为空：startDetached 场景）
   QPointer<QProcess> m_smsLoginProcess;
@@ -468,6 +475,7 @@ private:
   bool m_upIsFollowing = false;
   bool m_upFollowLoading = false;
   int m_upVideoTotal = 0;
+  int m_upLastWatchedRank = 0;
   int m_upVideoPage = 1;
   bool m_upVideoHasMore = true;
   // APP 游标翻页：记录下一页游标（max/next）。用于修复“加载更多只拿到第一页”和新稿件插入导致的丢失。

@@ -30,6 +30,10 @@ Rectangle {
     readonly property bool recentHistoryImagesActive: visible && isManagedViewCurrent(3)
     readonly property bool loginImagesActive: visible && loginArea.visible
 
+    function bumpFont(size) {
+        return size + 1
+    }
+
     function normalizedFavView(view) {
         return (view === 5 || view === 6) ? 4 : view
     }
@@ -112,8 +116,10 @@ Rectangle {
 
     onVisibleChanged: {
         if (visible && controller && controller.loggedIn) {
-            controller.auth.refreshUserInfo();
             Qt.callLater(function() {
+                if (visible && controller && controller.loggedIn) {
+                    controller.auth.refreshUserInfoIfStale()
+                }
                 if (favView === 3 && recentLoader.item && recentLoader.item.restorePosition) {
                     recentLoader.item.restorePosition()
                 }
@@ -266,7 +272,7 @@ Rectangle {
                                 text: "点击登录"
                                 color: loginNameArea.pressed ? Theme.primaryDark : Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontMedium
+                                font.pixelSize: userPage.bumpFont(Theme.fontMedium)
                                 font.bold: true
                             }
 
@@ -275,7 +281,7 @@ Rectangle {
                                 text: "登录后可查看收藏夹、稍后再看和观看历史"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontBody
+                                font.pixelSize: userPage.bumpFont(Theme.fontBody)
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -298,20 +304,20 @@ Rectangle {
                     Column {
                         width: parent.colW
                         spacing: 4
-                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontMedium; font.bold: true; horizontalAlignment: Text.AlignHCenter }
-                        Text { width: parent.width; text: "粉丝"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: userPage.bumpFont(Theme.fontMedium); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "粉丝"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: userPage.bumpFont(Theme.fontSmall); horizontalAlignment: Text.AlignHCenter }
                     }
                     Column {
                         width: parent.colW
                         spacing: 4
-                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontMedium; font.bold: true; horizontalAlignment: Text.AlignHCenter }
-                        Text { width: parent.width; text: "关注"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: userPage.bumpFont(Theme.fontMedium); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "关注"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: userPage.bumpFont(Theme.fontSmall); horizontalAlignment: Text.AlignHCenter }
                     }
                     Column {
                         width: parent.colW
                         spacing: 4
-                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontMedium; font.bold: true; horizontalAlignment: Text.AlignHCenter }
-                        Text { width: parent.width; text: "硬币"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "--"; color: Theme.textTertiary; font.family: Theme.fontFamily; font.pixelSize: userPage.bumpFont(Theme.fontMedium); font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                        Text { width: parent.width; text: "硬币"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: userPage.bumpFont(Theme.fontSmall); horizontalAlignment: Text.AlignHCenter }
                     }
                 }
 
@@ -402,7 +408,7 @@ Rectangle {
                                 text: modelData.label
                                 color: modelData.action === "settings" ? Theme.textPrimary : Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
                         }
@@ -504,7 +510,7 @@ Rectangle {
                             text: "点击获取\n二维码"
                             color: "#555555"
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
+                            font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                             horizontalAlignment: Text.AlignHCenter
                         }
                     }
@@ -543,7 +549,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "B"
                         color: Theme.textOnPrimary
-                        font.pixelSize: Theme.fontNormal
+                        font.pixelSize: userPage.bumpFont(Theme.fontNormal)
                         font.bold: true
                     }
                 }
@@ -559,7 +565,7 @@ Rectangle {
                     text: "使用 B 站 APP"
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontMedium
+                    font.pixelSize: userPage.bumpFont(Theme.fontMedium)
                     font.bold: true
                 }
 
@@ -578,7 +584,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: "1"
                                 color: Theme.primary
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 font.bold: true
                             }
                         }
@@ -586,7 +592,7 @@ Rectangle {
                             text: "打开 B 站 APP"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
+                            font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -603,7 +609,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: "2"
                                 color: Theme.primary
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 font.bold: true
                             }
                         }
@@ -611,7 +617,7 @@ Rectangle {
                             text: "点击左上角扫一扫"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
+                            font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -628,7 +634,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: "3"
                                 color: Theme.primary
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 font.bold: true
                             }
                         }
@@ -636,7 +642,7 @@ Rectangle {
                             text: "扫描左侧二维码"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
+                            font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -655,7 +661,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: "4"
                                 color: Theme.primary
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 font.bold: true
                             }
                         }
@@ -664,7 +670,7 @@ Rectangle {
                             text: "或进行短信登录"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSmall
+                            font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -687,7 +693,7 @@ Rectangle {
                         text: "刷新二维码"
                         color: Theme.textOnPrimary
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
+                        font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                         font.bold: true
                     }
 
@@ -793,7 +799,7 @@ Rectangle {
                                 text: controller ? controller.userName : ""
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontMedium
+                                font.pixelSize: userPage.bumpFont(Theme.fontMedium)
                                 font.bold: true
                             }
 
@@ -810,7 +816,7 @@ Rectangle {
                                     text: "已登录"
                                     color: Theme.success
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontBody
+                                    font.pixelSize: userPage.bumpFont(Theme.fontBody)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
@@ -830,7 +836,7 @@ Rectangle {
                                         text: "LV" + (controller ? controller.userLevel : 0)
                                         color: Theme.textOnPrimary
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSmall
+                                        font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                         font.bold: true
                                     }
                                 }
@@ -862,8 +868,7 @@ Rectangle {
                                         text: controller ? (String(controller.userExp) + "/" + String(controller.userExpNext)) : "0/0"
                                         color: Theme.textSecondary
                                         font.family: Theme.fontFamily
-                                        //font.pixelSize: Theme.fontTiny
-                                        font.pixelSize: 8
+                                        font.pixelSize: userPage.bumpFont(Theme.fontTiny)
                                         font.bold: true
                                     }
                                 }
@@ -881,7 +886,7 @@ Rectangle {
                                     text: controller && controller.userVipLabel !== "" ? controller.userVipLabel : "大会员"
                                     color: controller && controller.userIsVip ? Theme.textOnPrimary : Theme.textSecondary
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSmall
+                                    font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 }
                             }
                         }
@@ -892,7 +897,7 @@ Rectangle {
                         text: controller && controller.userSign !== "" ? controller.userSign : "这个人很懒，什么都没写~"
                         color: Theme.textSecondary
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: userPage.bumpFont(Theme.fontBody)
                         wrapMode: Text.WordWrap
                         width: parent.width
                     }
@@ -915,7 +920,7 @@ Rectangle {
                                 text: controller ? String(controller.userFans) : "0"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontMedium
+                                font.pixelSize: userPage.bumpFont(Theme.fontMedium)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 elide: Text.ElideRight
@@ -925,7 +930,7 @@ Rectangle {
                                 text: "粉丝"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 horizontalAlignment: Text.AlignHCenter
                             }
                         }
@@ -940,7 +945,7 @@ Rectangle {
                                 text: controller ? String(controller.userFollowing) : "0"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontMedium
+                                font.pixelSize: userPage.bumpFont(Theme.fontMedium)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 elide: Text.ElideRight
@@ -950,7 +955,7 @@ Rectangle {
                                 text: "关注"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 horizontalAlignment: Text.AlignHCenter
                             }
                         }
@@ -965,7 +970,7 @@ Rectangle {
                                 text: controller ? String(controller.userCoins) : "0"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontMedium
+                                font.pixelSize: userPage.bumpFont(Theme.fontMedium)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 elide: Text.ElideRight
@@ -975,7 +980,7 @@ Rectangle {
                                 text: "硬币"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 horizontalAlignment: Text.AlignHCenter
                             }
                         }
@@ -1038,7 +1043,7 @@ Rectangle {
                                 text: "收藏夹"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
                         }
@@ -1096,7 +1101,7 @@ Rectangle {
                                 text: "最近观看"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
                         }
@@ -1152,7 +1157,7 @@ Rectangle {
                                 text: "稍后再看"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
                         }
@@ -1207,7 +1212,7 @@ Rectangle {
                                 text: "设置"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
                         }
@@ -1229,7 +1234,7 @@ Rectangle {
                             text: "退出登录"
                             color: Theme.withAlpha(Theme.error, 0.8)
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontBody
+                            font.pixelSize: userPage.bumpFont(Theme.fontBody)
                         }
 
                         MouseArea {
@@ -1304,7 +1309,7 @@ Rectangle {
                                 text: model.title || ""
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontBody
+                                font.pixelSize: userPage.bumpFont(Theme.fontBody)
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
@@ -1313,7 +1318,7 @@ Rectangle {
                                 text: "共" + (model.mediaCount || 0) + "个视频"
                                 color: Theme.textSecondary
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
+                                font.pixelSize: userPage.bumpFont(Theme.fontSmall)
                             }
                         }
                     }

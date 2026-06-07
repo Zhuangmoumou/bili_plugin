@@ -42,6 +42,9 @@ QVariant VideoListModel::data(const QModelIndex &index, int role) const
     case RcmdReasonRole: return item.rcmdReason;
     case DurationTextRole: return formatDuration(item.duration);
     case PartCountRole: return item.partCount;
+    case AidRole: return item.aid;
+    case IsLastWatchedArcRole: return item.isLastWatchedArc;
+    case LastWatchedRankRole: return item.lastWatchedRank;
     default: return QVariant();
     }
 }
@@ -63,7 +66,10 @@ QHash<int, QByteArray> VideoListModel::roleNames() const
         {DescRole, "desc"},
         {RcmdReasonRole, "rcmdReason"},
         {DurationTextRole, "durationText"},
-        {PartCountRole, "partCount"}
+        {PartCountRole, "partCount"},
+        {AidRole, "aid"},
+        {IsLastWatchedArcRole, "isLastWatchedArc"},
+        {LastWatchedRankRole, "lastWatchedRank"}
     };
 }
 
@@ -80,6 +86,41 @@ void VideoListModel::clear()
     endResetModel();
     emit countChanged();
     emit errorMessageChanged();
+}
+
+int VideoListModel::indexOfBvid(const QString &bvid) const
+{
+    if (bvid.isEmpty()) return -1;
+    for (int i = 0; i < m_items.count(); ++i) {
+        if (m_items.at(i).bvid == bvid) return i;
+    }
+    return -1;
+}
+
+int VideoListModel::indexOfAid(qint64 aid) const
+{
+    if (aid <= 0) return -1;
+    for (int i = 0; i < m_items.count(); ++i) {
+        if (m_items.at(i).aid == aid) return i;
+    }
+    return -1;
+}
+
+int VideoListModel::indexOfLastWatched() const
+{
+    for (int i = 0; i < m_items.count(); ++i) {
+        if (m_items.at(i).isLastWatchedArc) return i;
+    }
+    return -1;
+}
+
+int VideoListModel::indexOfLastWatchedRank(int rank) const
+{
+    if (rank <= 0) return -1;
+    for (int i = 0; i < m_items.count(); ++i) {
+        if (m_items.at(i).lastWatchedRank == rank) return i;
+    }
+    return -1;
 }
 
 void VideoListModel::appendItems(const QVector<VideoItem> &items)
@@ -182,6 +223,10 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
 
     item.cid = obj.value("cid").toVariant().toLongLong();
     item.pubdate = obj.value("pubdate").toVariant().toLongLong();
+
+    QJsonObject cursorAttr = obj.value("cursor_attr").toObject();
+    item.isLastWatchedArc = cursorAttr.value("is_last_watched_arc").toVariant().toBool();
+    item.lastWatchedRank = cursorAttr.value("rank").toVariant().toInt();
 
     // 分P数量（列表接口通常为 videos 字段，可能是字符串）
     int videos = obj.value("videos").toVariant().toInt();

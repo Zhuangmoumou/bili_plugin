@@ -304,6 +304,10 @@ void BiliController::clearLocalLoginState() {
   m_userIsVip = false;
   m_qrcodeUrl = "";
   m_qrcodeKey = "";
+  m_loginInfoUpdatedAtMs = 0;
+  m_userInfoUpdatedAtMs = 0;
+  m_loginInfoRefreshPending = false;
+  m_userInfoRefreshPending = false;
   emit qrcodeChanged();
   if (m_isFavorited) {
     m_isFavorited = false;

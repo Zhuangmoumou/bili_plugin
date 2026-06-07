@@ -28,6 +28,7 @@ Rectangle {
     property var detailCacheBvids: ({})
     property string lastPage: "home"
     property var upUserMid: 0
+    property var upFromViewAid: 0
     property var seasonMid: 0
     property var seasonId: 0
     property string seasonTitle: ""
@@ -70,7 +71,7 @@ Rectangle {
             return { bvid: detailBvid, sessionId: detailSessionId }
         }
         if (page === "up") {
-            return { mid: upUserMid }
+            return { mid: upUserMid, fromViewAid: upFromViewAid }
         }
         if (page === "season") {
             return {
@@ -91,8 +92,9 @@ Rectangle {
             detailSessionId = props.sessionId || nextDetailSessionId++
             detailBvid = props.bvid
         }
-        if (page === "up" && props.mid) {
-            upUserMid = props.mid
+        if (page === "up") {
+            upUserMid = props.mid || 0
+            upFromViewAid = props.fromViewAid || 0
         }
         if (page === "season") {
             seasonMid = props.mid || 0
@@ -370,7 +372,7 @@ Rectangle {
                     }
                     onCommentsRequested: root.navigateTo("comments")
                     onUpRequested: {
-                        if (mid > 0) root.navigateTo("up", { mid: mid });
+                        if (mid > 0) root.navigateTo("up", { mid: mid, fromViewAid: aid });
                     }
                     onSeasonRequested: {
                         if (props && props.seasonId > 0) root.navigateTo("season", props)
@@ -483,7 +485,9 @@ Rectangle {
             sourceComponent: Component {
                 Pages.UpUserPage {
                     controller: root.rootController
+                    rootRef: root
                     upMid: root.upUserMid
+                    upFromViewAid: root.upFromViewAid
                     onBackClicked: root.goBack()
                     onVideoSelected: {
                         if (!bvid || bvid.length < 2) return;

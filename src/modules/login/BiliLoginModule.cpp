@@ -5,6 +5,7 @@
 #include "modules/feed/BiliFeedModule.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -23,6 +24,13 @@
 
 static const int SMS_LOGIN_PORT = 8666;
 static const char *SMS_PULL_PATH = "/pull";
+static const qint64 LOGIN_INFO_CACHE_TTL_MS = 60 * 1000;
+
+static qint64 nowMs() { return QDateTime::currentMSecsSinceEpoch(); }
+
+static bool isFresh(qint64 updatedAtMs, qint64 now) {
+  return updatedAtMs > 0 && now - updatedAtMs >= 0 && now - updatedAtMs < LOGIN_INFO_CACHE_TTL_MS;
+}
 
 BiliLoginModule::BiliLoginModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
@@ -40,6 +48,21 @@ void BiliLoginModule::refreshUserInfo() {
   if (!controller || !controller->m_loggedIn || controller->m_userId <= 0) return;
   refreshLoginInfo();
   fetchUserInfo(controller->m_userId);
+}
+
+void BiliLoginModule::refreshUserInfoIfStale() {
+  BiliController *controller = m_controller;
+  if (!controller || !controller->m_loggedIn || controller->m_userId <= 0) return;
+
+  const qint64 now = nowMs();
+  if (!controller->m_loginInfoRefreshPending &&
+      !isFresh(controller->m_loginInfoUpdatedAtMs, now)) {
+    refreshLoginInfo();
+  }
+  if (!controller->m_userInfoRefreshPending &&
+      !isFresh(controller->m_userInfoUpdatedAtMs, now)) {
+    fetchUserInfo(controller->m_userId);
+  }
 }
 
 void BiliLoginModule::generateQrcode() {
@@ -298,6 +321,9 @@ void BiliLoginModule::checkLoginStatus() {
   BiliController *controller = m_controller;
   if (!controller) return;
 
+  if (controller->m_loginInfoRefreshPending) return;
+  controller->m_loginInfoRefreshPending = true;
+
   QPointer<BiliController> self(controller);
 
   controller->m_network->get(
@@ -310,6 +336,7 @@ void BiliLoginModule::checkLoginStatus() {
                  << QJsonDocument(data).toJson();
 
         qint64 mid = data.value("mid").toVariant().toLongLong();
+        self->m_loginInfoRefreshPending = false;
         if (mid <= 0) {
           self->clearLocalLoginState();
           emit self->toastMessage("未登录，请先扫码登录");
@@ -336,6 +363,7 @@ void BiliLoginModule::checkLoginStatus() {
         self->m_userIsVip = data.value("vipStatus").toInt(0) == 1;
         QJsonObject vipLabel = data.value("vip_label").toObject();
         self->m_userVipLabel = vipLabel.value("text").toString();
+        self->m_loginInfoUpdatedAtMs = nowMs();
 
         emit self->loginStateChanged();
         if (interactiveLogin) {
@@ -348,6 +376,7 @@ void BiliLoginModule::checkLoginStatus() {
       [self](int code, const QString &msg) {
         if (!self)
           return;
+        self->m_loginInfoRefreshPending = false;
 
         qDebug() << "[BiliController] checkLoginStatus error, code:" << code
                  << "msg:" << msg;
@@ -369,6 +398,8 @@ void BiliLoginModule::checkLoginStatus() {
 void BiliLoginModule::refreshLoginInfo() {
   BiliController *controller = m_controller;
   if (!controller || !controller->m_loggedIn) return;
+  if (controller->m_loginInfoRefreshPending) return;
+  controller->m_loginInfoRefreshPending = true;
 
   QPointer<BiliController> self(controller);
 
@@ -378,6 +409,7 @@ void BiliLoginModule::refreshLoginInfo() {
         if (!self) return;
 
         qint64 mid = data.value("mid").toVariant().toLongLong();
+        self->m_loginInfoRefreshPending = false;
         if (mid <= 0) {
           self->clearLocalLoginState();
           emit self->toastMessage("登录已过期，请重新登录");
@@ -402,11 +434,13 @@ void BiliLoginModule::refreshLoginInfo() {
         self->m_userIsVip = data.value("vipStatus").toInt(0) == 1;
         QJsonObject vipLabel = data.value("vip_label").toObject();
         self->m_userVipLabel = vipLabel.value("text").toString();
+        self->m_loginInfoUpdatedAtMs = nowMs();
 
         emit self->loginStateChanged();
       },
       [self](int code, const QString &msg) {
         if (!self) return;
+        self->m_loginInfoRefreshPending = false;
         if (code == 401 || code == -101 || code == -401) {
           self->clearLocalLoginState();
           emit self->toastMessage("登录已过期，请重新登录");
@@ -421,6 +455,8 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
   if (!controller) return;
   if (mid <= 0)
     return;
+  if (controller->m_userInfoRefreshPending) return;
+  controller->m_userInfoRefreshPending = true;
 
   QPointer<BiliController> self(controller);
   QMap<QString, QString> params;
@@ -429,8 +465,10 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
   controller->m_network->get(
       "/user/info", params,
       [self, mid](const QJsonObject &data) {
-        if (!self)
+        if (!self) {
           return;
+        }
+        self->m_userInfoRefreshPending = false;
         if (!self->m_loggedIn || self->m_userId != mid)
           return;
 
@@ -464,6 +502,7 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
         self->m_userFans = fans;
         self->m_userFollowing = following;
         self->m_userSign = dataObj.value("sign").toString();
+        self->m_userInfoUpdatedAtMs = nowMs();
 
         emit self->loginStateChanged();
         qDebug() << "[BiliController] User info updated:"
@@ -473,6 +512,7 @@ void BiliLoginModule::fetchUserInfo(qint64 mid) {
       [self](int code, const QString &msg) {
         if (!self)
           return;
+        self->m_userInfoRefreshPending = false;
         if (code == -101 || code == -401 || code == 401) {
           self->clearLocalLoginState();
           emit self->toastMessage("登录已过期，请重新登录");

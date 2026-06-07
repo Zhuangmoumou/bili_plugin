@@ -16,6 +16,7 @@ Item {
     // 由外部显式控制是否显示选集角标
     property bool showCollection: false
     property bool showRank: false
+    property bool isLastWatched: false
     property string fontFamily: "Microsoft YaHei"
     property real fontScale: 1.0
     property real titleScale: 1.0
@@ -90,8 +91,8 @@ Item {
         anchors.fill: parent
         radius: 6
         color: Theme.bgSecondary
-        border.color: mouseArea.pressed ? Theme.primary : "transparent"
-        border.width: 1
+        border.color: card.isLastWatched ? Theme.accent : (mouseArea.pressed ? Theme.primary : "transparent")
+        border.width: card.isLastWatched ? 2 : 1
 
         Behavior on border.color { ColorAnimation { duration: 80 } }
 
@@ -171,6 +172,29 @@ Item {
                     font.pixelSize: 8
                     font.bold: true
                     anchors.centerIn: parent
+                }
+            }
+
+            // 上次观看标记
+            Rectangle {
+                visible: !effectivePlaceholder && card.isLastWatched
+                anchors { left: parent.left; top: parent.top; margins: 3 }
+                width: lastWatchedLabel.implicitWidth + 8
+                height: 14
+                radius: 7
+                color: Theme.withAlpha(Theme.accent, 0.92)
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.textOnPrimary, 0.28)
+                z: 3
+
+                Text {
+                    id: lastWatchedLabel
+                    anchors.centerIn: parent
+                    text: "上次"
+                    color: Theme.textOnPrimary
+                    font.family: card.fontFamily
+                    font.pixelSize: 8
+                    font.bold: true
                 }
             }
 
@@ -268,7 +292,7 @@ Item {
                 // 处于 Column 布局中，y 可能会被布局覆盖，保留该属性以兼容需要时的手动布局
                 y: subYOffset
                 text: upName + (viewCount ? " · " + viewCount : "")
-                color: Theme.textTertiary
+                color: "#7A7A7A"
                 font.family: card.fontFamily
                 font.pixelSize: 8 * card.fontScale * card.subScale
                 elide: Text.ElideRight

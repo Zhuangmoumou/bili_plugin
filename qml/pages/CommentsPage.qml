@@ -26,6 +26,8 @@ Rectangle {
     readonly property color _mutedText: "#7f8a9a"
     readonly property int _headerHeight: 30
     readonly property int _metaStripHeight: 22
+    readonly property int _commentPictureWidth: 96
+    readonly property int _commentPictureHeight: 51
 
     property var controller: null
     property int viewMode: 0 // 0=主评论列表,1=子评论详情
@@ -81,6 +83,12 @@ Rectangle {
         if (!url) return ""
         if (url.indexOf("data:image/") === 0) return url
         return "image://bili/original/" + encodeURIComponent(url)
+    }
+
+    function commentThumbSource(url) {
+        if (!url) return ""
+        if (url.indexOf("data:image/") === 0) return url
+        return "image://bili/" + encodeURIComponent(url)
     }
 
     function avatarImageSource(url) {
@@ -361,11 +369,11 @@ Rectangle {
             property int skeletonPaintToken: 0
             readonly property bool offscreenPlaceholderActive: controller
                                                             && controller.videoCardOffscreenPlaceholderEnabled
-                                                            && hydrated
+                                                            && !hydrated
                                                             && commentsPage.viewMode === 0
                                                             && commentList.visible
                                                             && !isNearViewport()
-            readonly property bool effectiveHydrated: hydrated && !offscreenPlaceholderActive
+            readonly property bool effectiveHydrated: hydrated
             property bool shouldHydrate: !hydrated
                                          && commentsPage.viewMode === 0
                                          && commentList.visible
@@ -383,7 +391,7 @@ Rectangle {
                 if (hydrated) return
                 cachedAvatarSource = model.avatar ? commentsPage.avatarImageSource(model.avatar) : ""
                 cachedPictureUrl = commentsPage.firstPicture(model.pictures)
-                cachedPictureSource = cachedPictureUrl ? commentsPage.commentImageSource(cachedPictureUrl) : ""
+                cachedPictureSource = cachedPictureUrl ? commentsPage.commentThumbSource(cachedPictureUrl) : ""
                 hydrated = true
             }
 
@@ -443,7 +451,7 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 6
-                height: commentDelegate.maybeHasPicture ? 88 : 62
+                height: commentDelegate.maybeHasPicture ? 112 : 62
                 visible: !commentDelegate.effectiveHydrated
 
                 Row {
@@ -537,13 +545,13 @@ Rectangle {
 
                         Row {
                             width: parent.width
-                            height: commentDelegate.maybeHasPicture ? 36 : 10
+                            height: commentDelegate.maybeHasPicture ? commentsPage._commentPictureHeight : 10
                             spacing: 6
 
                             Canvas {
                                 visible: commentDelegate.maybeHasPicture
-                                width: 58
-                                height: 36
+                                width: commentsPage._commentPictureWidth
+                                height: commentsPage._commentPictureHeight
                                 property int paintToken: commentDelegate.skeletonPaintToken
                                 Component.onCompleted: requestPaint()
                                 onPaintTokenChanged: requestPaint()
@@ -571,7 +579,7 @@ Rectangle {
 
                             Canvas {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - (commentDelegate.maybeHasPicture ? 64 : 0)
+                                width: parent.width - (commentDelegate.maybeHasPicture ? commentsPage._commentPictureWidth + 6 : 0)
                                 height: 10
                                 property int paintToken: commentDelegate.skeletonPaintToken
                                 Component.onCompleted: requestPaint()
@@ -794,8 +802,8 @@ Rectangle {
 
                                 Rectangle {
                                     visible: !!commentDelegate.cachedPictureUrl
-                                    width: 58
-                                    height: 36
+                                    width: commentsPage._commentPictureWidth
+                                    height: commentsPage._commentPictureHeight
                                     radius: 8
                                     color: Theme.bgTertiary
                                     border.color: Theme.withAlpha(_panelBorder, 0.95)
@@ -825,7 +833,7 @@ Rectangle {
                                         id: commentPictureImage
                                         anchors.fill: parent
                                         source: commentDelegate.cachedPictureSource
-                                        sourceSize: Qt.size(116, 72)
+                                        sourceSize: Qt.size(commentsPage._commentPictureWidth * 2, commentsPage._commentPictureHeight * 2)
                                         fillMode: Image.PreserveAspectCrop
                                         asynchronous: true
                                         smooth: false
@@ -840,7 +848,7 @@ Rectangle {
                                 }
 
                                 Item {
-                                    width: Math.max(0, parent.width - (commentDelegate.cachedPictureUrl ? 64 : 0) - actionButtons.width)
+                                    width: Math.max(0, parent.width - (commentDelegate.cachedPictureUrl ? commentsPage._commentPictureWidth + 6 : 0) - actionButtons.width)
                                     height: 1
                                 }
 
@@ -1205,8 +1213,8 @@ Rectangle {
 
                             Rectangle {
                                 visible: selectedComment && !!commentsPage.firstPicture(selectedComment.pictures)
-                                width: 64
-                                height: 40
+                                width: commentsPage._commentPictureWidth
+                                height: commentsPage._commentPictureHeight
                                 radius: 8
                                 color: Theme.bgTertiary
                                 border.color: Theme.withAlpha(_panelBorder, 0.95)
@@ -1215,7 +1223,7 @@ Rectangle {
 
                                 Image {
                                     anchors.fill: parent
-                                    source: commentsPage.commentImageSource(commentsPage.firstPicture(selectedComment.pictures))
+                                    source: commentsPage.commentThumbSource(commentsPage.firstPicture(selectedComment.pictures))
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     mipmap: true
@@ -1278,7 +1286,7 @@ Rectangle {
                     }
                     if (!replyPictureSource) {
                         var pic = commentsPage.firstPicture(model.pictures)
-                        if (pic) replyPictureSource = commentsPage.commentImageSource(pic)
+                        if (pic) replyPictureSource = commentsPage.commentThumbSource(pic)
                     }
                 }
 
@@ -1404,8 +1412,8 @@ Rectangle {
 
                             Rectangle {
                                 visible: !!commentsPage.firstPicture(model.pictures)
-                                width: 56
-                                height: 34
+                                width: commentsPage._commentPictureWidth
+                                height: commentsPage._commentPictureHeight
                                 radius: 8
                                 color: Theme.bgTertiary
                                 border.color: Theme.withAlpha(_panelBorder, 0.95)

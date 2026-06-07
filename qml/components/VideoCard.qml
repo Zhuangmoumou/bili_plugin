@@ -188,7 +188,7 @@ Rectangle {
 
                     Text {
                         text: upName
-                        color: Theme.textTertiary
+                        color: "#7A7A7A"
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontTiny
                         elide: Text.ElideRight

@@ -11,9 +11,20 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
+    property var rootRef: null
     property var upMid: 0
+    property var upFromViewAid: 0
     property bool upVideosRequested: false
     property bool upSeasonsRequested: false
+    property bool upInfoRequested: false
+    property bool upInfoReady: false
+    property bool requestScheduled: false
+    property int skeletonPaintToken: 0
+    property bool locatingLastWatched: false
+    property int locatingLastWatchedFetches: 0
+    property bool locatingLastWatchedAroundRequested: false
+    property int locatedLastWatchedIndex: -1
+    readonly property bool upContentReady: upInfoReady && controller && controller.upUserMid === Number(upMid) && controller.upUserName.length > 0
 
     signal backClicked()
     signal videoSelected(string bvid)
@@ -36,15 +47,105 @@ Rectangle {
     }
 
     function resetListState() {
+        locatingLastWatched = false
+        locatingLastWatchedFetches = 0
+        locatingLastWatchedAroundRequested = false
+        locatedLastWatchedIndex = -1
         Qt.callLater(function() {
             upVideoList.contentX = 0
             clampScrollState()
         })
     }
 
-    function refresh() {
+    function scrollToVideoSection() {
+        Qt.callLater(function() {
+            mainFlick.contentY = Math.max(0, contentColumn.y + videoSection.y - Theme.spacingSmall)
+            clampScrollState()
+        })
+    }
+
+    function positionLastWatchedIndex(idx) {
+        if (idx < 0 || idx >= upVideoList.count) return
+        upVideoList.forceLayout()
+        upVideoList.positionViewAtIndex(idx, ListView.Center)
+    }
+
+    function tryScrollToLastWatched() {
+        if (!locatingLastWatched || !controller || !controller.up) return
+        var model = controller.up.upVideoModel()
+        if (!model) return
+
+        var targetAid = Number(upFromViewAid || 0)
+        var idx = -1
+        if (targetAid > 0 && model.indexOfAid) {
+            idx = model.indexOfAid(targetAid)
+        }
+        if (targetAid <= 0 && model.indexOfLastWatched) {
+            idx = model.indexOfLastWatched()
+            if (idx < 0 && controller.upLastWatchedRank > 0 && model.indexOfLastWatchedRank) {
+                idx = model.indexOfLastWatchedRank(controller.upLastWatchedRank)
+            }
+            if (idx < 0 && controller.upLastWatchedRank > 0 && model.count >= controller.upLastWatchedRank) {
+                idx = controller.upLastWatchedRank - 1
+            }
+        }
+        if (idx >= 0) {
+            locatedLastWatchedIndex = idx
+            scrollToVideoSection()
+            Qt.callLater(function() {
+                Qt.callLater(function() {
+                    upPage.positionLastWatchedIndex(idx)
+                })
+            })
+            locatingLastWatched = false
+            return
+        }
+        if (model.loading) return
+        if (targetAid > 0) {
+            if (!locatingLastWatchedAroundRequested && controller.up.fetchUpVideosAroundAid) {
+                locatingLastWatchedAroundRequested = true
+                locatingLastWatchedFetches += 1
+                controller.up.fetchUpVideosAroundAid(Number(upMid), targetAid, 20)
+            } else {
+                locatingLastWatched = false
+            }
+            return
+        }
+        if (model.hasMore && locatingLastWatchedFetches < 12) {
+            locatingLastWatchedFetches += 1
+            controller.up.fetchMoreUpVideos()
+        } else {
+            locatingLastWatched = false
+        }
+    }
+
+    function locateLastWatched() {
+        if (!controller || !controller.up) return
+        locatingLastWatched = true
+        locatingLastWatchedFetches = 0
+        locatingLastWatchedAroundRequested = false
+        if (controller.upSelectedSeasonId !== 0) {
+            controller.up.selectUpSeason(0, "", false, 0)
+        }
+        Qt.callLater(tryScrollToLastWatched)
+    }
+
+    function scheduleInitialFetch() {
         var midVal = Number(upMid)
-        if (!controller || !midVal || midVal <= 0) return
+        if (!visible || !controller || !midVal || midVal <= 0) return
+        if (rootRef && rootRef.currentPage !== "up") return
+        if (upInfoRequested || requestScheduled) return
+        requestScheduled = true
+        initialFetchTimer.restart()
+    }
+
+    function performInitialFetch() {
+        var midVal = Number(upMid)
+        requestScheduled = false
+        if (!visible || !controller || !midVal || midVal <= 0) return
+        if (rootRef && rootRef.currentPage !== "up") return
+        if (upInfoRequested) return
+        upInfoRequested = true
         controller.up.fetchUpInfo(midVal)
     }
 
@@ -59,19 +160,71 @@ Rectangle {
     }
 
     onUpMidChanged: {
+        initialFetchTimer.stop()
+        var midVal = Number(upMid)
         upVideosRequested = false
         upSeasonsRequested = false
-        var midVal = Number(upMid)
+        upInfoRequested = false
+        upInfoReady = false
+        requestScheduled = false
+        locatingLastWatched = false
+        locatingLastWatchedFetches = 0
+        locatingLastWatchedAroundRequested = false
+        locatedLastWatchedIndex = -1
+        skeletonPaintToken += 1
+        if (controller && controller.up) {
+            var videoModel = controller.up.upVideoModel()
+            if (videoModel && videoModel.clear) videoModel.clear()
+            var seasonModel = controller.up.upSeasonModel()
+            if (seasonModel && seasonModel.clear) seasonModel.clear()
+        }
         if (controller && controller.upUserMid === midVal && controller.upSelectedSeasonId !== 0) {
             controller.up.selectUpSeason(0, "", false, 0)
             upVideosRequested = true
         }
         resetScrollState()
-        refresh()
+        scheduleInitialFetch()
+    }
+
+    onUpFromViewAidChanged: {
+        locatingLastWatched = false
+        locatingLastWatchedFetches = 0
+        locatingLastWatchedAroundRequested = false
+        locatedLastWatchedIndex = -1
     }
 
     onVisibleChanged: {
-        if (visible) refresh()
+        if (visible) {
+            var midVal = Number(upMid)
+            if (controller && controller.upUserMid !== midVal && controller.up) {
+                upInfoReady = false
+                var videoModel = controller.up.upVideoModel()
+                if (videoModel && videoModel.clear) videoModel.clear()
+                var seasonModel = controller.up.upSeasonModel()
+                if (seasonModel && seasonModel.clear) seasonModel.clear()
+            }
+            resetScrollState()
+            scheduleInitialFetch()
+        }
+    }
+
+    Timer {
+        id: initialFetchTimer
+        interval: Theme.animNormal + 16
+        repeat: false
+        onTriggered: upPage.performInitialFetch()
+    }
+
+    Component.onCompleted: {
+        var midVal = Number(upMid)
+        if (controller && controller.upUserMid !== midVal && controller.up) {
+            var videoModel = controller.up.upVideoModel()
+            if (videoModel && videoModel.clear) videoModel.clear()
+            var seasonModel = controller.up.upSeasonModel()
+            if (seasonModel && seasonModel.clear) seasonModel.clear()
+            upInfoReady = false
+        }
+        scheduleInitialFetch()
     }
 
     Connections {
@@ -79,6 +232,7 @@ Rectangle {
         function onUpUserChanged() {
             var midVal = Number(upMid)
             if (!controller || !midVal || controller.upUserMid !== midVal) return
+            upInfoReady = true
             if (!upVideosRequested) {
                 upVideosRequested = true
                 Qt.callLater(function() {
@@ -112,7 +266,7 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        contentHeight: Math.max(height, contentColumn.implicitHeight + Theme.spacingLarge * 2)
+        contentHeight: Math.max(height, contentColumn.childrenRect.height + Theme.spacingLarge * 2)
         onContentHeightChanged: upPage.clampScrollState()
         boundsBehavior: Flickable.StopAtBounds
         clip: true
@@ -120,6 +274,7 @@ Rectangle {
         Column {
             id: contentColumn
             width: parent.width
+            height: childrenRect.height
             spacing: Theme.spacingLarge
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
@@ -288,6 +443,7 @@ Rectangle {
             // 粉丝/关注
             Row {
                 width: parent.width - Theme.spacingLarge * 2
+                height: 28
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Theme.spacingSmall
 
@@ -341,19 +497,23 @@ Rectangle {
             }
 
             // 投稿视频 / 合集筛选
-            Column {
+            Item {
+                id: videoSection
                 width: parent.width
-                spacing: Theme.spacingSmall
+                height: videoHeader.height + Theme.spacingSmall + filterStrip.height + Theme.spacingNormal + upVideoList.height
 
                 // 标题行：当前筛选名 + 视频数量提示
                 Item {
+                    id: videoHeader
                     width: parent.width
-                    height: titleHeaderText.implicitHeight
+                    height: 24
+                    anchors.top: parent.top
 
                     Row {
                         anchors.left: parent.left
                         anchors.leftMargin: Theme.spacingLarge
                         anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - Theme.spacingLarge * 2 - lastWatchedButton.width - 6
                         spacing: Theme.spacingSmall
 
                         // 装饰条
@@ -369,15 +529,13 @@ Rectangle {
                             id: titleHeaderText
                             text: controller && controller.upSelectedSeasonId !== 0
                                   ? (controller.upSelectedSeasonName || "合集")
-                                  : "投稿视频"
+                                  : "视频列表"
                             color: Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontMedium
                             font.bold: true
                             elide: Text.ElideRight
-                            // 限制最大宽度，避免过长合集名挤掉计数
-                            // 这里 listCountText 宽度可变，取一个保守上限
-                            width: Math.min(implicitWidth, upPage.width - 90)
+                            width: Math.min(implicitWidth, upPage.width - 176)
                         }
 
                         Text {
@@ -390,13 +548,47 @@ Rectangle {
                             font.pixelSize: Theme.fontSmall
                         }
                     }
+
+                    Rectangle {
+                        id: lastWatchedButton
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.spacingLarge
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 58
+                        height: 20
+                        radius: 10
+                        color: lastWatchedArea.pressed ? Theme.withAlpha(Theme.primary, 0.22)
+                                                        : Theme.withAlpha(Theme.primary, 0.10)
+                        border.color: Theme.withAlpha(Theme.primary, 0.32)
+                        border.width: 1
+                        opacity: controller && controller.loggedIn ? 1 : 0.55
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "上次观看"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: lastWatchedArea
+                            anchors.fill: parent
+                            onClicked: upPage.locateLastWatched()
+                        }
+                    }
                 }
+
+                Item { width: parent.width; height: 2 }
 
                 // 合集筛选条：水平滚动 chip 列表
                 Item {
                     id: filterStrip
                     width: parent.width
                     height: 24
+                    anchors.top: videoHeader.bottom
+                    anchors.topMargin: Theme.spacingSmall
 
                     Flickable {
                         id: filterFlick
@@ -541,6 +733,8 @@ Rectangle {
                     id: upVideoList
                     width: parent.width
                     height: 135
+                    anchors.top: filterStrip.bottom
+                    anchors.topMargin: Theme.spacingNormal
                     orientation: ListView.Horizontal
                     spacing: 6
                     clip: true
@@ -576,6 +770,9 @@ Rectangle {
                         viewCount: model.views || ""
                         durationText: model.durationText || ""
                         bvid: model.bvid || ""
+                        isLastWatched: (Number(upPage.upFromViewAid || 0) > 0 && Number(model.aid || 0) === Number(upPage.upFromViewAid))
+                                       || model.isLastWatchedArc === true
+                                       || index === upPage.locatedLastWatchedIndex
                         showCollection: model.partCount > 1
                         fontFamily: Theme.fontFamily
                         titleScale: 0.9
@@ -608,9 +805,11 @@ Rectangle {
                         if (!target || target.loading) return
                         upVideoList._loadingMore = false
                         upPage.clampScrollState()
+                        upPage.tryScrollToLastWatched()
                     }
                     function onCountChanged() {
                         upVideoList._loadingMore = false
+                        upPage.tryScrollToLastWatched()
                     }
                 }
 
@@ -626,9 +825,190 @@ Rectangle {
         }
     }
 
+    Item {
+        id: upSkeletonLayer
+        anchors.top: titleBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        visible: opacity > 0
+        opacity: upPage.upContentReady ? 0 : 1
+        z: 20
+        clip: true
+        Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+
+        Column {
+            width: parent.width
+            spacing: Theme.spacingLarge
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Theme.spacingLarge
+
+            Row {
+                width: parent.width - Theme.spacingLarge * 2
+                height: 64
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Theme.spacingLarge
+
+                Canvas {
+                    width: 64
+                    height: 64
+                    property int paintToken: upPage.skeletonPaintToken
+                    Component.onCompleted: requestPaint()
+                    onPaintTokenChanged: requestPaint()
+                    onVisibleChanged: if (visible) requestPaint()
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.fillStyle = Theme.bgTertiary
+                        ctx.beginPath()
+                        ctx.arc(width / 2, height / 2, 31, 0, Math.PI * 2, false)
+                        ctx.fill()
+                        ctx.strokeStyle = Theme.withAlpha(Theme.primary, 0.38)
+                        ctx.lineWidth = 2
+                        ctx.stroke()
+                        ctx.strokeStyle = Theme.withAlpha(Theme.textSecondary, 0.22)
+                        ctx.lineWidth = 2
+                        ctx.beginPath()
+                        ctx.arc(32, 25, 8, 0, Math.PI * 2, false)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.arc(32, 47, 15, Math.PI * 1.05, Math.PI * 1.95, false)
+                        ctx.stroke()
+                    }
+                }
+
+                Canvas {
+                    width: parent.width - 96
+                    height: 58
+                    anchors.verticalCenter: parent.verticalCenter
+                    property int paintToken: upPage.skeletonPaintToken
+                    Component.onCompleted: requestPaint()
+                    onPaintTokenChanged: requestPaint()
+                    onVisibleChanged: if (visible) requestPaint()
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        function pill(x, y, w, h, color) {
+                            ctx.fillStyle = color
+                            ctx.beginPath()
+                            ctx.moveTo(x + h / 2, y)
+                            ctx.lineTo(x + w - h / 2, y)
+                            ctx.quadraticCurveTo(x + w, y, x + w, y + h / 2)
+                            ctx.quadraticCurveTo(x + w, y + h, x + w - h / 2, y + h)
+                            ctx.lineTo(x + h / 2, y + h)
+                            ctx.quadraticCurveTo(x, y + h, x, y + h / 2)
+                            ctx.quadraticCurveTo(x, y, x + h / 2, y)
+                            ctx.fill()
+                        }
+                        pill(0, 12, width * 0.72, 12, Theme.withAlpha(Theme.textSecondary, 0.22))
+                        pill(width * 0.76, 12, width * 0.22, 12, Theme.withAlpha(Theme.primary, 0.16))
+                        pill(0, 38, 40, 18, Theme.withAlpha(Theme.primary, 0.20))
+                        pill(48, 38, 58, 18, Theme.withAlpha(Theme.textSecondary, 0.16))
+                    }
+                }
+            }
+
+            Canvas {
+                width: parent.width - Theme.spacingLarge * 2
+                height: 44
+                anchors.horizontalCenter: parent.horizontalCenter
+                property int paintToken: upPage.skeletonPaintToken
+                Component.onCompleted: requestPaint()
+                onPaintTokenChanged: requestPaint()
+                onVisibleChanged: if (visible) requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    function pill(x, y, w, h, color) {
+                        ctx.fillStyle = color
+                        ctx.beginPath()
+                        ctx.moveTo(x + h / 2, y)
+                        ctx.lineTo(x + w - h / 2, y)
+                        ctx.quadraticCurveTo(x + w, y, x + w, y + h / 2)
+                        ctx.quadraticCurveTo(x + w, y + h, x + w - h / 2, y + h)
+                        ctx.lineTo(x + h / 2, y + h)
+                        ctx.quadraticCurveTo(x, y + h, x, y + h / 2)
+                        ctx.quadraticCurveTo(x, y, x + h / 2, y)
+                        ctx.fill()
+                    }
+                    ctx.fillStyle = Theme.bgSecondary
+                    ctx.beginPath()
+                    ctx.moveTo(10, 0)
+                    ctx.lineTo(width - 10, 0)
+                    ctx.quadraticCurveTo(width, 0, width, 10)
+                    ctx.lineTo(width, height - 10)
+                    ctx.quadraticCurveTo(width, height, width - 10, height)
+                    ctx.lineTo(10, height)
+                    ctx.quadraticCurveTo(0, height, 0, height - 10)
+                    ctx.lineTo(0, 10)
+                    ctx.quadraticCurveTo(0, 0, 10, 0)
+                    ctx.fill()
+                    pill(12, 11, width * 0.78, 8, Theme.withAlpha(Theme.textSecondary, 0.18))
+                    pill(12, 26, width * 0.46, 8, Theme.withAlpha(Theme.textSecondary, 0.13))
+                }
+            }
+
+            Canvas {
+                width: parent.width - Theme.spacingLarge * 2
+                height: 32
+                anchors.horizontalCenter: parent.horizontalCenter
+                property int paintToken: upPage.skeletonPaintToken
+                Component.onCompleted: requestPaint()
+                onPaintTokenChanged: requestPaint()
+                onVisibleChanged: if (visible) requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    function pill(x, y, w, h, color) {
+                        ctx.fillStyle = color
+                        ctx.beginPath()
+                        ctx.moveTo(x + h / 2, y)
+                        ctx.lineTo(x + w - h / 2, y)
+                        ctx.quadraticCurveTo(x + w, y, x + w, y + h / 2)
+                        ctx.quadraticCurveTo(x + w, y + h, x + w - h / 2, y + h)
+                        ctx.lineTo(x + h / 2, y + h)
+                        ctx.quadraticCurveTo(x, y + h, x, y + h / 2)
+                        ctx.quadraticCurveTo(x, y, x + h / 2, y)
+                        ctx.fill()
+                    }
+                    pill(0, 0, width * 0.26, 10, Theme.withAlpha(Theme.textPrimary, 0.18))
+                    pill(0, 18, 52, 14, Theme.withAlpha(Theme.primary, 0.20))
+                    pill(60, 18, 78, 14, Theme.withAlpha(Theme.textSecondary, 0.14))
+                    pill(146, 18, 68, 14, Theme.withAlpha(Theme.textSecondary, 0.12))
+                }
+            }
+
+            Row {
+                width: parent.width
+                height: 135
+                spacing: 6
+                anchors.horizontalCenter: parent.horizontalCenter
+                Repeater {
+                    model: 3
+                    Components.VideoCardCompact {
+                        height: 135
+                        placeholder: true
+                        fontFamily: Theme.fontFamily
+                        titleScale: 0.9
+                        subScale: 0.85
+                    }
+                }
+            }
+        }
+    }
+
     // 加载中（同 HomePage：可取消）
     Rectangle {
-        visible: controller && controller.isLoading && (!upVideoList || upVideoList.count === 0)
+        visible: controller && controller.isLoading && upPage.upContentReady && (!upVideoList || upVideoList.count === 0)
         anchors.centerIn: parent
         width: loadingRow.width + 16
         height: 22

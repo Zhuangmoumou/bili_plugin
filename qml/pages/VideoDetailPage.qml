@@ -93,7 +93,7 @@ Rectangle {
     signal backClicked()
     signal playRequested(int quality)
     signal commentsRequested()
-    signal upRequested(var mid)
+    signal upRequested(var mid, var aid)
     signal seasonRequested(var props)
     signal videoSelected(string bvid)
 
@@ -336,7 +336,9 @@ Rectangle {
                 Item {
                     id: heroSkeleton
                     anchors.fill: parent
-                    visible: !detailPage.detailContentReady
+                    visible: opacity > 0
+                    opacity: detailPage.detailContentReady ? 0 : 1
+                    Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
 
                     Rectangle {
                         width: 110
@@ -417,7 +419,13 @@ Rectangle {
                 // 封面容器
                 Rectangle {
                     id: coverContainer
-                    visible: detailPage.detailContentReady
+                    visible: opacity > 0
+                    opacity: detailPage.detailContentReady ? 1 : 0
+                    transform: Translate {
+                        y: detailPage.detailContentReady ? 0 : 3
+                        Behavior on y { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+                    }
+                    Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
                     width: 110
                     height: 66
                     radius: 8
@@ -429,7 +437,7 @@ Rectangle {
                         id: coverImage
                         anchors.fill: parent
                         source: controller && controller.videoPic && detailPage.heroImagesActive
-                        ? "image://bili/size/640x340/" + encodeURIComponent(controller.videoPic) : ""
+                        ? "image://bili/size/620x340/" + encodeURIComponent(controller.videoPic) : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         smooth: true
@@ -503,7 +511,7 @@ Rectangle {
 
                 // 播放按钮（封面正中）
                 Rectangle {
-                    visible: detailPage.detailContentReady
+                    visible: detailPage.detailContentReady && opacity > 0
                     anchors.centerIn: coverContainer
                     width: 30
                     height: 30
@@ -557,7 +565,13 @@ Rectangle {
                 // 右侧信息列
                 Column {
                     id: heroInfoColumn
-                    visible: detailPage.detailContentReady
+                    visible: opacity > 0
+                    opacity: detailPage.detailContentReady ? 1 : 0
+                    transform: Translate {
+                        y: detailPage.detailContentReady ? 0 : 3
+                        Behavior on y { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+                    }
+                    Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutQuad } }
                     anchors.left: coverContainer.right
                     anchors.leftMargin: 9
                     anchors.right: parent.right
@@ -657,7 +671,7 @@ Rectangle {
                             anchors.fill: parent
                             onClicked: {
                                 if (controller && controller.videoOwnerMid > 0) {
-                                    detailPage.upRequested(controller.videoOwnerMid)
+                                    detailPage.upRequested(controller.videoOwnerMid, controller.videoAid)
                                 }
                             }
                         }
@@ -749,7 +763,7 @@ Rectangle {
                 height: 36
 
                 Row {
-                    visible: detailPage.detailContentReady
+                    visible: detailPage.detailContentReady && opacity > 0
                     id: actionRow
                     anchors.fill: parent
                     spacing: 6
@@ -1176,7 +1190,7 @@ Rectangle {
                 }
 
                 Column {
-                    visible: detailPage.detailContentReady
+                    visible: detailPage.detailContentReady && opacity > 0
                     id: descColumn
                     anchors.fill: parent
                     anchors.margins: 9

@@ -30,6 +30,8 @@ struct VideoItem {
     QString rcmdReason;
     qint64 pubdate = 0;   // 发布时间（秒级时间戳）
     int partCount = 1;    // 分P数量，默认为1
+    bool isLastWatchedArc = false;
+    int lastWatchedRank = 0;
 };
 
 struct CommentItem {
@@ -118,7 +120,10 @@ public:
         DescRole,
         RcmdReasonRole,
         DurationTextRole,
-        PartCountRole
+        PartCountRole,
+        AidRole,
+        IsLastWatchedArcRole,
+        LastWatchedRankRole
     };
     Q_ENUM(Roles)
 
@@ -134,6 +139,10 @@ public:
     QString errorMessage() const;
 
     Q_INVOKABLE void clear();
+    Q_INVOKABLE int indexOfBvid(const QString &bvid) const;
+    Q_INVOKABLE int indexOfAid(qint64 aid) const;
+    Q_INVOKABLE int indexOfLastWatched() const;
+    Q_INVOKABLE int indexOfLastWatchedRank(int rank) const;
     void appendItems(const QVector<VideoItem> &items);
     void setLoading(bool loading);
     void setHasMore(bool hasMore);

@@ -19,6 +19,7 @@ public:
   Q_INVOKABLE QString smsLoginLastError() const;
   Q_INVOKABLE void checkLoginStatus();
   Q_INVOKABLE void refreshUserInfo();
+  Q_INVOKABLE void refreshUserInfoIfStale();
   void refreshLoginInfo();
   void fetchUserInfo(qint64 mid);
   Q_INVOKABLE void logout();

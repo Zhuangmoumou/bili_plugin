@@ -1420,7 +1420,7 @@ func (c *BilibiliClient) ToggleUserFollow(ctx context.Context, mid int, follow b
 // GetUserVideosApp 使用 APP 游标接口获取投稿。
 // 注意：该接口实际使用 aid 作为游标参数（不是时间戳）。
 // cursorAid=0 表示首次；cursorAid>0 表示从“上一页最后一个视频的 aid”继续向后翻页。
-func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAid int64, ps int) (json.RawMessage, error) {
+func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAid int64, ps int, includeCursor bool) (json.RawMessage, error) {
 	if ps <= 0 {
 		ps = 20
 	}
@@ -1443,6 +1443,9 @@ func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAi
 	if cursorAid > 0 {
 		params["aid"] = strconv.FormatInt(cursorAid, 10)
 	}
+	if includeCursor {
+		params["include_cursor"] = "true"
+	}
 	params = appSign(params)
 	raw, err := c.request(ctx, "https://app.biliapi.com/x/v2/space/archive/cursor", params, "GET")
 	if err != nil {
@@ -1455,6 +1458,9 @@ func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAi
 		if code, ok := resp["code"].(float64); ok && int(code) == 0 {
 			data, _ := resp["data"].(map[string]interface{})
 			if data != nil {
+				if data["last_watched_locator"] != nil {
+					return raw, nil
+				}
 				list, listKey := data["item"], "item"
 				if list == nil {
 					list = data["archives"]
@@ -1504,8 +1510,8 @@ func (c *BilibiliClient) GetUserVideosApp(ctx context.Context, mid int, cursorAi
 	return raw, nil
 }
 
-func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max int64) (json.RawMessage, error) {
-	logInfo("获取用户投稿 mid=%d pn=%d ps=%d max=%d", mid, pn, ps, max)
+func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max, targetAid int64, includeCursor bool) (json.RawMessage, error) {
+	logInfo("获取用户投稿 mid=%d pn=%d ps=%d max=%d targetAid=%d includeCursor=%t", mid, pn, ps, max, targetAid, includeCursor)
 
 	// 经验：网页端 x/space/wbi/arc/search 更容易触发 -412 / 风控页，
 	// 且 pn 翻页在 UP 有新稿件插入时更容易出现重复/缺失。
@@ -1519,6 +1525,9 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 	if pn < 1 {
 		pn = 1
 	}
+	if targetAid > 0 {
+		return c.GetUserVideosApp(ctx, mid, targetAid, ps, includeCursor)
+	}
 
 	cursor := max
 	var raw json.RawMessage
@@ -1528,7 +1537,7 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 	// 该接口的 cursor 实际为 aid：即“上一页最后一个视频的 aid”（通常在 item[].param 字段）。
 	if cursor <= 0 && pn > 1 {
 		for i := 1; i < pn; i++ {
-			raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps)
+			raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1574,23 +1583,131 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 	}
 
 	// 取目标页
-	raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps)
+	raw, err = c.GetUserVideosApp(ctx, mid, cursor, ps, false)
 	if err != nil {
 		return nil, err
 	}
 	return raw, nil
 }
 
+func metaInt64(obj map[string]interface{}, key string) int64 {
+	v, ok := obj[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch x := v.(type) {
+	case float64:
+		return int64(x)
+	case string:
+		n, _ := strconv.ParseInt(x, 10, 64)
+		return n
+	case int:
+		return int64(x)
+	case int64:
+		return x
+	default:
+		return 0
+	}
+}
+
+func filterListByMetaMid(list interface{}, mid int64, key string) interface{} {
+	items, ok := list.([]interface{})
+	if !ok || mid <= 0 {
+		return list
+	}
+	filtered := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		obj, _ := item.(map[string]interface{})
+		meta, _ := obj["meta"].(map[string]interface{})
+		metaMid := metaInt64(meta, "mid")
+		if metaMid > 0 && metaMid != mid {
+			logWarn("过滤归属不匹配的%s条目 request_mid=%d meta_mid=%d", key, mid, metaMid)
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func filterSeasonsSeriesByMid(raw json.RawMessage, mid int) json.RawMessage {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return raw
+	}
+	if code, ok := resp["code"].(float64); ok && int(code) != 0 {
+		return raw
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	itemsLists, _ := data["items_lists"].(map[string]interface{})
+	if itemsLists == nil {
+		return raw
+	}
+
+	requestMid := int64(mid)
+	itemsLists["seasons_list"] = filterListByMetaMid(itemsLists["seasons_list"], requestMid, "seasons_list")
+	itemsLists["series_list"] = filterListByMetaMid(itemsLists["series_list"], requestMid, "series_list")
+
+	merged, err := json.Marshal(resp)
+	if err != nil {
+		return raw
+	}
+	return merged
+}
+
+func seasonMetaMismatchError(message string, requestMid int, requestSeasonID int, metaMid int64, metaSeasonID int64) json.RawMessage {
+	body, _ := json.Marshal(map[string]interface{}{
+		"code":    -1,
+		"message": message,
+		"data": map[string]interface{}{
+			"request_mid":       requestMid,
+			"request_season_id": requestSeasonID,
+			"meta_mid":          metaMid,
+			"meta_season_id":    metaSeasonID,
+		},
+	})
+	return body
+}
+
+func validateSeasonArchivesMeta(raw json.RawMessage, mid, seasonID int) json.RawMessage {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return raw
+	}
+	if code, ok := resp["code"].(float64); ok && int(code) != 0 {
+		return raw
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	meta, _ := data["meta"].(map[string]interface{})
+	if meta == nil {
+		return raw
+	}
+	metaMid := metaInt64(meta, "mid")
+	metaSeasonID := metaInt64(meta, "season_id")
+	if metaMid > 0 && metaMid != int64(mid) {
+		logWarn("合集归属 mid 不匹配 request_mid=%d meta_mid=%d season_id=%d", mid, metaMid, seasonID)
+		return seasonMetaMismatchError("合集归属不匹配", mid, seasonID, metaMid, metaSeasonID)
+	}
+	if metaSeasonID > 0 && metaSeasonID != int64(seasonID) {
+		logWarn("合集 season_id 不匹配 request_season=%d meta_season=%d mid=%d", seasonID, metaSeasonID, mid)
+		return seasonMetaMismatchError("合集ID不匹配", mid, seasonID, metaMid, metaSeasonID)
+	}
+	return raw
+}
+
 // 获取 UP 主的合集与系列列表（合集 = seasons，系列 = series）
-// 返回结构与官方 seasons_series_list 保持一致：data.items_lists.{seasons_list, series_list, page}
+// 文档接口：/x/polymer/web-space/seasons_series_list，返回 data.items_lists.{seasons_list, series_list, page}。
 func (c *BilibiliClient) GetUserSeasonsSeries(ctx context.Context, mid, pn, ps int) (json.RawMessage, error) {
-	logInfo("获取 UP 合集列表 mid=%d pn=%d ps=%d", mid, pn, ps)
-	return c.wbiRequest(ctx, "https://api.bilibili.com/x/polymer/web-space/seasons_series_list", map[string]string{
+	logInfo("获取 UP 合集/系列列表 mid=%d pn=%d ps=%d", mid, pn, ps)
+	raw, err := c.wbiRequest(ctx, "https://api.bilibili.com/x/polymer/web-space/seasons_series_list", map[string]string{
 		"mid":          strconv.Itoa(mid),
 		"page_num":     strconv.Itoa(pn),
 		"page_size":    strconv.Itoa(ps),
 		"web_location": "333.999",
 	}, "GET")
+	if err != nil {
+		return nil, err
+	}
+	return filterSeasonsSeriesByMid(raw, mid), nil
 }
 
 // 获取 UP 主合集内的视频列表
@@ -1600,13 +1717,18 @@ func (c *BilibiliClient) GetUserSeasonVideos(ctx context.Context, mid, seasonID,
 	if sortReverse {
 		sr = "true"
 	}
-	return c.wbiRequest(ctx, "https://api.bilibili.com/x/polymer/web-space/seasons_archives_list", map[string]string{
+	raw, err := c.wbiRequest(ctx, "https://api.bilibili.com/x/polymer/web-space/seasons_archives_list", map[string]string{
 		"mid":          strconv.Itoa(mid),
 		"season_id":    strconv.Itoa(seasonID),
 		"sort_reverse": sr,
 		"page_num":     strconv.Itoa(pn),
 		"page_size":    strconv.Itoa(ps),
+		"web_location": "333.999",
 	}, "GET")
+	if err != nil {
+		return nil, err
+	}
+	return validateSeasonArchivesMeta(raw, mid, seasonID), nil
 }
 
 func (c *BilibiliClient) GetLoginInfo(ctx context.Context) (json.RawMessage, error) {
@@ -2768,9 +2890,11 @@ func handleUserVideos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxVal := getInt64Query(q, "max", "cursor")
+	targetAid := getInt64Query(q, "aid")
+	includeCursor := strings.EqualFold(q.Get("include_cursor"), "true") || q.Get("include_cursor") == "1"
 
 	handleAPI(w, "/user/videos", func(c *BilibiliClient) (json.RawMessage, error) {
-		return c.GetUserVideos(r.Context(), mid, pn, ps, maxVal)
+		return c.GetUserVideos(r.Context(), mid, pn, ps, maxVal, targetAid, includeCursor)
 	})
 }
 
