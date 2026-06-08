@@ -108,10 +108,7 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
   }
   m_controller->setIsLoading(true);
   m_controller->m_playUrlLoadingKey = requestKey;
-  m_controller->m_playUrl.clear();
-  m_controller->m_dashVideoUrl.clear();
-  m_controller->m_dashAudioUrl.clear();
-  emit m_controller->playUrlChanged();
+  m_controller->clearPlayResult();
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(m_controller->videoAid());
@@ -167,9 +164,8 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
           }
         }
 
-        // 保存 DASH 直链，供外部播放器流式播放
-        self->m_dashVideoUrl = audioOnly ? QString() : videoUrl;
-        self->m_dashAudioUrl = audioUrl;
+        const QString dashVideoUrl = audioOnly ? QString() : videoUrl;
+        const QString dashAudioUrl = audioUrl;
 
         if (videoUrl.isEmpty()) {
           emit self->toastMessage("未获取到播放地址");
@@ -185,8 +181,7 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
           return;
         }
 
-        self->m_playUrl = videoUrl;
-        self->m_playQuality = finalQuality;
+        self->setPlayResult(videoUrl, finalQuality, dashVideoUrl, dashAudioUrl);
 
         if (!audioOnly && !audioUrl.isEmpty()) {
           QUrl parsedAudio(audioUrl);
@@ -195,11 +190,10 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
           }
         }
 
-        emit self->playUrlChanged();
         self->setIsLoading(false);
 
-        if (!self->m_playUrl.isEmpty()) {
-          emit self->playbackReady(self->m_playUrl);
+        if (!videoUrl.isEmpty()) {
+          emit self->playbackReady(videoUrl);
         }
       },
       [self, requestKey](int code, const QString &msg) {
@@ -209,10 +203,7 @@ void BiliPlaybackModule::fetchPlayUrl(int quality) {
           return;
 
         self->m_playUrlLoadingKey.clear();
-        self->m_playUrl.clear();
-        self->m_dashVideoUrl.clear();
-        self->m_dashAudioUrl.clear();
-        emit self->playUrlChanged();
+        self->clearPlayResult();
         self->setIsLoading(false);
         if (code == QNetworkReply::OperationCanceledError)
           return;
@@ -396,10 +387,7 @@ void BiliPlaybackModule::cleanupTempVideo() {
     }
     m_controller->m_tempAudioPath.clear();
   }
-  m_controller->m_playUrl.clear();
-  m_controller->m_dashVideoUrl.clear();
-  m_controller->m_dashAudioUrl.clear();
-  emit m_controller->playUrlChanged();
+  m_controller->clearPlayResult();
 }
 
 bool BiliPlaybackModule::isExternalPlayerRunning() const {
@@ -603,8 +591,7 @@ void BiliPlaybackModule::fetchSubtitleList() {
             self->m_currentVideo.bvid != requestBvid) {
           return;
         }
-        self->m_subtitleItems = data.value("subtitles").toArray();
-        emit self->subtitleListChanged();
+        self->setSubtitleItems(data.value("subtitles").toArray());
       },
       [self, requestAid, requestCid, requestBvid](int, const QString &msg) {
         if (!self)
@@ -614,28 +601,17 @@ void BiliPlaybackModule::fetchSubtitleList() {
             self->m_currentVideo.bvid != requestBvid) {
           return;
         }
-        self->m_subtitleItems = QJsonArray();
-        emit self->subtitleListChanged();
+        self->clearSubtitleItems();
         emit self->toastMessage(QString("获取字幕列表失败：%1").arg(msg));
       });
 }
 
 void BiliPlaybackModule::selectSubtitle(qint64 subtitleId, const QString &label) {
-  if (m_controller->m_selectedSubtitleId == subtitleId && m_controller->m_selectedSubtitleLabel == label) {
-    return;
-  }
-  m_controller->m_selectedSubtitleId = subtitleId;
-  m_controller->m_selectedSubtitleLabel = label;
-  emit m_controller->selectedSubtitleChanged();
+  m_controller->setSelectedSubtitle(subtitleId, label);
 }
 
 void BiliPlaybackModule::clearSelectedSubtitle() {
-  if (m_controller->m_selectedSubtitleId == 0 && m_controller->m_selectedSubtitleLabel.isEmpty()) {
-    return;
-  }
-  m_controller->m_selectedSubtitleId = 0;
-  m_controller->m_selectedSubtitleLabel.clear();
-  emit m_controller->selectedSubtitleChanged();
+  m_controller->clearSelectedSubtitle();
 }
 
 void BiliPlaybackModule::setSubtitleFontSize(int value) {

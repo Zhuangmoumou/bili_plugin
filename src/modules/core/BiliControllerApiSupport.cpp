@@ -97,10 +97,7 @@ void BiliController::updateAcceptQualities(const QJsonObject &data) {
     newAccepts.append(0);
   }
 
-  if (!newAccepts.isEmpty() && newAccepts != m_acceptQualities) {
-    m_acceptQualities = newAccepts;
-    emit acceptQualitiesChanged();
-  }
+  setAcceptQualities(newAccepts);
 }
 
 BiliController::DashResult

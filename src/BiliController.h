@@ -188,6 +188,7 @@ public:
   QString playUrl() const;
   int playQuality() const;
   QVariantList acceptQualities() const;
+  QVector<int> acceptQualityValues() const { return m_acceptQualities; }
 
   bool isDownloading() const { return m_isDownloading; }
   double downloadProgress() const { return m_downloadProgress; }
@@ -197,6 +198,7 @@ public:
   QString dashVideoUrl() const { return m_dashVideoUrl; }
   QString dashAudioUrl() const { return m_dashAudioUrl; }
   QVariantList subtitleList() const;
+  QJsonArray subtitleItemValues() const { return m_subtitleItems; }
   qint64 selectedSubtitleId() const { return m_selectedSubtitleId; }
   QString selectedSubtitleLabel() const { return m_selectedSubtitleLabel; }
   int subtitleFontSize() const { return m_subtitleFontSize; }
@@ -270,6 +272,20 @@ public:
   VideoListModel *watchLaterListModel() const { return m_watchLaterModel; }
   void clearLocalLoginState();
   void setIsLoading(bool loading);
+  void setFavoriteState(bool favorited);
+  void setCoinState(bool coined);
+  void setLikeState(bool liked);
+  void setWatchLaterState(bool watchLater);
+  void clearPlayResult();
+  void setPlayResult(const QString &playUrl, int playQuality,
+                     const QString &dashVideoUrl,
+                     const QString &dashAudioUrl);
+  void clearAcceptQualities();
+  void setAcceptQualities(const QVector<int> &qualities);
+  void clearSubtitleItems();
+  void setSubtitleItems(const QJsonArray &items);
+  void clearSelectedSubtitle();
+  void setSelectedSubtitle(qint64 subtitleId, const QString &label);
   void apiGet(const QString &path, const QMap<QString, QString> &params,
               std::function<void(const QJsonObject &)> onSuccess,
               std::function<void(int, const QString &)> onError = nullptr,

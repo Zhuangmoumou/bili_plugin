@@ -58,14 +58,14 @@ void BiliVideoModule::captureCurrentVideoDetail() {
   snapshot.seasonTotal = m_controller->m_videoSeasonTotal;
   snapshot.parts = m_controller->m_videoPartModel ? m_controller->m_videoPartModel->items()
                                                   : QVector<VideoPartItem>();
-  snapshot.acceptQualities = m_controller->m_acceptQualities;
-  snapshot.isFavorited = m_controller->m_isFavorited;
-  snapshot.isCoined = m_controller->m_isCoined;
-  snapshot.isLiked = m_controller->m_isLiked;
-  snapshot.isWatchLater = m_controller->m_isWatchLater;
-  snapshot.subtitleItems = m_controller->m_subtitleItems;
-  snapshot.selectedSubtitleId = m_controller->m_selectedSubtitleId;
-  snapshot.selectedSubtitleLabel = m_controller->m_selectedSubtitleLabel;
+  snapshot.acceptQualities = m_controller->acceptQualityValues();
+  snapshot.isFavorited = m_controller->isFavorited();
+  snapshot.isCoined = m_controller->isCoined();
+  snapshot.isLiked = m_controller->isLiked();
+  snapshot.isWatchLater = m_controller->isWatchLater();
+  snapshot.subtitleItems = m_controller->subtitleItemValues();
+  snapshot.selectedSubtitleId = m_controller->selectedSubtitleId();
+  snapshot.selectedSubtitleLabel = m_controller->selectedSubtitleLabel();
   snapshot.valid = true;
 
   m_controller->m_videoDetailSnapshots.insert(bvid, snapshot);
@@ -104,25 +104,22 @@ bool BiliVideoModule::restoreCachedVideoDetail(const QString &bvid) {
       m_controller->m_videoPartModel->setItems(snapshot.parts);
     }
   }
-  m_controller->m_acceptQualities = snapshot.acceptQualities;
-  m_controller->m_isFavorited = snapshot.isFavorited;
-  m_controller->m_isCoined = snapshot.isCoined;
-  m_controller->m_isLiked = snapshot.isLiked;
-  m_controller->m_isWatchLater = snapshot.isWatchLater;
-  m_controller->m_subtitleItems = snapshot.subtitleItems;
-  m_controller->m_selectedSubtitleId = snapshot.selectedSubtitleId;
-  m_controller->m_selectedSubtitleLabel = snapshot.selectedSubtitleLabel;
+  if (snapshot.acceptQualities.isEmpty()) {
+    m_controller->clearAcceptQualities();
+  } else {
+    m_controller->setAcceptQualities(snapshot.acceptQualities);
+  }
+  m_controller->setFavoriteState(snapshot.isFavorited);
+  m_controller->setCoinState(snapshot.isCoined);
+  m_controller->setLikeState(snapshot.isLiked);
+  m_controller->setWatchLaterState(snapshot.isWatchLater);
+  m_controller->setSubtitleItems(snapshot.subtitleItems);
+  m_controller->setSelectedSubtitle(snapshot.selectedSubtitleId,
+                                    snapshot.selectedSubtitleLabel);
 
   emit m_controller->videoDetailChanged();
   emit m_controller->videoStatsChanged();
   emit m_controller->playbackProgressChanged();
-  emit m_controller->acceptQualitiesChanged();
-  emit m_controller->favoriteStatusChanged();
-  emit m_controller->coinStatusChanged();
-  emit m_controller->likeStatusChanged();
-  emit m_controller->watchLaterStatusChanged();
-  emit m_controller->subtitleListChanged();
-  emit m_controller->selectedSubtitleChanged();
   return true;
 }
 
@@ -162,25 +159,17 @@ void BiliVideoModule::dropCachedVideoDetail(const QString &bvid) {
   }
   m_controller->m_relatedVideoBvid.clear();
   m_controller->m_relatedVideoLoadingBvid.clear();
-  m_controller->m_isFavorited = false;
-  m_controller->m_isCoined = false;
-  m_controller->m_isLiked = false;
-  m_controller->m_isWatchLater = false;
-  m_controller->m_acceptQualities.clear();
-  m_controller->m_subtitleItems = QJsonArray();
-  m_controller->m_selectedSubtitleId = 0;
-  m_controller->m_selectedSubtitleLabel.clear();
+  m_controller->setFavoriteState(false);
+  m_controller->setCoinState(false);
+  m_controller->setLikeState(false);
+  m_controller->setWatchLaterState(false);
+  m_controller->clearAcceptQualities();
+  m_controller->clearSubtitleItems();
+  m_controller->clearSelectedSubtitle();
 
   emit m_controller->videoDetailChanged();
   emit m_controller->videoStatsChanged();
   emit m_controller->playbackProgressChanged();
-  emit m_controller->acceptQualitiesChanged();
-  emit m_controller->favoriteStatusChanged();
-  emit m_controller->coinStatusChanged();
-  emit m_controller->likeStatusChanged();
-  emit m_controller->watchLaterStatusChanged();
-  emit m_controller->subtitleListChanged();
-  emit m_controller->selectedSubtitleChanged();
 }
 
 // ====== API: 视频详情 ======
@@ -335,33 +324,14 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
       m_controller->m_playbackProgressSeconds = 0;
       emit m_controller->playbackProgressChanged();
     }
-    if (m_controller->m_isFavorited) {
-      m_controller->m_isFavorited = false;
-      emit m_controller->favoriteStatusChanged();
-    }
-    if (m_controller->m_isCoined) {
-      m_controller->m_isCoined = false;
-      emit m_controller->coinStatusChanged();
-    }
-    if (m_controller->m_isLiked) {
-      m_controller->m_isLiked = false;
-      emit m_controller->likeStatusChanged();
-    }
-    if (m_controller->m_isWatchLater) {
-      m_controller->m_isWatchLater = false;
-      emit m_controller->watchLaterStatusChanged();
-    }
+    m_controller->setFavoriteState(false);
+    m_controller->setCoinState(false);
+    m_controller->setLikeState(false);
+    m_controller->setWatchLaterState(false);
 
     // 切换视频时重置字幕选择与列表
-    if (m_controller->m_selectedSubtitleId != 0 || !m_controller->m_selectedSubtitleLabel.isEmpty()) {
-      m_controller->m_selectedSubtitleId = 0;
-      m_controller->m_selectedSubtitleLabel.clear();
-      emit m_controller->selectedSubtitleChanged();
-    }
-    if (!m_controller->m_subtitleItems.isEmpty()) {
-      m_controller->m_subtitleItems = QJsonArray();
-      emit m_controller->subtitleListChanged();
-    }
+    m_controller->clearSelectedSubtitle();
+    m_controller->clearSubtitleItems();
   }
 
   // BV号格式校验

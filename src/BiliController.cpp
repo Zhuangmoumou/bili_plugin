@@ -242,6 +242,87 @@ void BiliController::setGlobalError(const QString &error) {
   }
 }
 
+void BiliController::setFavoriteState(bool favorited) {
+  if (m_isFavorited == favorited) return;
+  m_isFavorited = favorited;
+  emit favoriteStatusChanged();
+}
+
+void BiliController::setCoinState(bool coined) {
+  if (m_isCoined == coined) return;
+  m_isCoined = coined;
+  emit coinStatusChanged();
+}
+
+void BiliController::setLikeState(bool liked) {
+  if (m_isLiked == liked) return;
+  m_isLiked = liked;
+  emit likeStatusChanged();
+}
+
+void BiliController::setWatchLaterState(bool watchLater) {
+  if (m_isWatchLater == watchLater) return;
+  m_isWatchLater = watchLater;
+  emit watchLaterStatusChanged();
+}
+
+void BiliController::clearPlayResult() {
+  if (m_playUrl.isEmpty() && m_dashVideoUrl.isEmpty() &&
+      m_dashAudioUrl.isEmpty()) return;
+  m_playUrl.clear();
+  m_dashVideoUrl.clear();
+  m_dashAudioUrl.clear();
+  emit playUrlChanged();
+}
+
+void BiliController::setPlayResult(const QString &playUrl, int playQuality,
+                                   const QString &dashVideoUrl,
+                                   const QString &dashAudioUrl) {
+  if (m_playUrl == playUrl && m_playQuality == playQuality &&
+      m_dashVideoUrl == dashVideoUrl && m_dashAudioUrl == dashAudioUrl) {
+    return;
+  }
+  m_playUrl = playUrl;
+  m_playQuality = playQuality;
+  m_dashVideoUrl = dashVideoUrl;
+  m_dashAudioUrl = dashAudioUrl;
+  emit playUrlChanged();
+}
+
+void BiliController::clearAcceptQualities() {
+  if (m_acceptQualities.isEmpty()) return;
+  m_acceptQualities.clear();
+  emit acceptQualitiesChanged();
+}
+
+void BiliController::setAcceptQualities(const QVector<int> &qualities) {
+  if (qualities.isEmpty() || m_acceptQualities == qualities) return;
+  m_acceptQualities = qualities;
+  emit acceptQualitiesChanged();
+}
+
+void BiliController::clearSubtitleItems() {
+  setSubtitleItems(QJsonArray());
+}
+
+void BiliController::setSubtitleItems(const QJsonArray &items) {
+  if (m_subtitleItems == items) return;
+  m_subtitleItems = items;
+  emit subtitleListChanged();
+}
+
+void BiliController::clearSelectedSubtitle() {
+  setSelectedSubtitle(0, QString());
+}
+
+void BiliController::setSelectedSubtitle(qint64 subtitleId,
+                                         const QString &label) {
+  if (m_selectedSubtitleId == subtitleId && m_selectedSubtitleLabel == label) return;
+  m_selectedSubtitleId = subtitleId;
+  m_selectedSubtitleLabel = label;
+  emit selectedSubtitleChanged();
+}
+
 // ====== Models ======
 
 QObject *BiliController::feed() const { return m_feedModule.get(); }
@@ -335,22 +416,10 @@ void BiliController::clearLocalLoginState() {
   m_loginInfoRefreshPending = false;
   m_userInfoRefreshPending = false;
   emit qrcodeChanged();
-  if (m_isFavorited) {
-    m_isFavorited = false;
-    emit favoriteStatusChanged();
-  }
-  if (m_isCoined) {
-    m_isCoined = false;
-    emit coinStatusChanged();
-  }
-  if (m_isLiked) {
-    m_isLiked = false;
-    emit likeStatusChanged();
-  }
-  if (m_isWatchLater) {
-    m_isWatchLater = false;
-    emit watchLaterStatusChanged();
-  }
+  setFavoriteState(false);
+  setCoinState(false);
+  setLikeState(false);
+  setWatchLaterState(false);
   emit loginStateChanged();
 }
 
