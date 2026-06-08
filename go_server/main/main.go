@@ -243,6 +243,7 @@ var rootEndpoints = []string{
 	"/search - 搜索视频",
 	"/video/info - 视频详情",
 	"/video/related - 视频相关推荐",
+	"/video/relation - 视频关系状态",
 	"/video/playurl - 播放地址",
 	"/video/player/info - 播放器信息",
 	"/video/danmaku - 弹幕",
@@ -253,6 +254,7 @@ var rootEndpoints = []string{
 	"/user/info - 用户信息",
 	"/user/follow/toggle - 关注/取消关注UP主",
 	"/user/videos - 用户投稿",
+	"/user/search - UP主投稿搜索",
 	"/user/seasons - UP主合集列表",
 	"/user/season/videos - UP主合集内视频",
 	"/login/info - 登录信息",
@@ -260,6 +262,8 @@ var rootEndpoints = []string{
 	"/hot/search - 热搜",
 	"/recommend - 首页推荐",
 	"/history/recent - 最近观看",
+	"/history/search - 搜索历史",
+	"/history/delete - 删除历史",
 	"/toview/list - 稍后再看列表",
 	"/toview/add - 添加稍后再看",
 	"/toview/del - 取消稍后再看",
@@ -282,6 +286,7 @@ var startupEndpoints = []string{
 	"GET  /search                 - 搜索视频",
 	"GET  /video/info             - 视频详情",
 	"GET  /video/related          - 视频相关推荐",
+	"GET  /video/relation         - 视频关系状态",
 	"GET  /video/playurl          - 播放地址",
 	"GET  /video/player/info      - 播放器信息",
 	"GET  /video/danmaku          - 弹幕数据",
@@ -292,6 +297,7 @@ var startupEndpoints = []string{
 	"GET  /user/info              - 用户信息",
 	"GET  /user/follow/toggle     - 关注/取消关注UP主",
 	"GET  /user/videos            - 用户投稿",
+	"GET  /user/search            - UP主投稿搜索",
 	"GET  /user/seasons           - UP主合集列表",
 	"GET  /user/season/videos     - UP主合集内视频",
 	"GET  /login/info             - 登录信息",
@@ -299,6 +305,8 @@ var startupEndpoints = []string{
 	"GET  /hot/search             - 热搜榜",
 	"GET  /recommend              - 首页推荐",
 	"GET  /history/recent         - 最近观看",
+	"GET  /history/search         - 搜索历史",
+	"GET  /history/delete         - 删除历史",
 	"GET  /toview/list            - 稍后再看列表",
 	"GET  /toview/add             - 添加稍后再看",
 	"GET  /toview/del             - 取消稍后再看",
@@ -1266,6 +1274,18 @@ func (c *BilibiliClient) GetVideoInfo(ctx context.Context, aid int, bvid string)
 	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/view", params, "GET")
 }
 
+func (c *BilibiliClient) GetVideoRelation(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
+	logInfo("获取视频关系状态 aid=%d bvid=%s", aid, bvid)
+	params := map[string]string{}
+	if aid > 0 {
+		params["aid"] = strconv.Itoa(aid)
+	}
+	if bvid != "" {
+		params["bvid"] = bvid
+	}
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/archive/relation", params, "GET")
+}
+
 func (c *BilibiliClient) GetVideoRelated(ctx context.Context, aid int, bvid string) (json.RawMessage, error) {
 	logInfo("获取视频相关推荐 aid=%d bvid=%s", aid, bvid)
 	params := map[string]string{}
@@ -1303,15 +1323,35 @@ func (c *BilibiliClient) GetVideoComments(ctx context.Context, oid, typ, sortVal
 	}, "GET")
 }
 
+func (c *BilibiliClient) GetVideoCommentsMain(ctx context.Context, oid, typ, mode, ps int, paginationStr string) (json.RawMessage, error) {
+	logInfo("获取评论主列表 oid=%d type=%d mode=%d", oid, typ, mode)
+	params := map[string]string{
+		"type": strconv.Itoa(typ),
+		"oid":  strconv.Itoa(oid),
+		"mode": strconv.Itoa(mode),
+		"ps":   strconv.Itoa(ps),
+	}
+	if paginationStr == "" {
+		paginationStr = "{\"offset\":\"\"}"
+	}
+	params["pagination_str"] = paginationStr
+	return c.request(ctx, "https://api.bilibili.com/x/v2/reply/main", params, "GET")
+}
+
 func (c *BilibiliClient) GetCommentReplies(ctx context.Context, oid, root, typ, ps, pn int) (json.RawMessage, error) {
 	logInfo("获取子评论 oid=%d root=%d type=%d", oid, root, typ)
-	return c.request(ctx, "https://api.bilibili.com/x/v2/reply/reply", map[string]string{
+	params := map[string]string{
 		"type": strconv.Itoa(typ),
 		"oid":  strconv.Itoa(oid),
 		"root": strconv.Itoa(root),
+		"sort": "1",
 		"ps":   strconv.Itoa(ps),
 		"pn":   strconv.Itoa(pn),
-	}, "GET")
+	}
+	if _, biliJct, err := c.requireLogin(); err == nil && biliJct != "" {
+		params["csrf"] = biliJct
+	}
+	return c.request(ctx, "https://api.bilibili.com/x/v2/reply/reply", params, "GET")
 }
 
 func (c *BilibiliClient) GetUserInfo(ctx context.Context, mid int) (json.RawMessage, error) {
@@ -1598,6 +1638,31 @@ func (c *BilibiliClient) GetUserVideos(ctx context.Context, mid, pn, ps int, max
 	return raw, nil
 }
 
+func (c *BilibiliClient) GetUserSearchVideos(ctx context.Context, mid int, keyword string, pn, ps int) (json.RawMessage, error) {
+	keyword = strings.TrimSpace(keyword)
+	if ps <= 0 {
+		ps = 20
+	}
+	if ps > 30 {
+		ps = 30
+	}
+	if pn < 1 {
+		pn = 1
+	}
+
+	logInfo("搜索 UP 投稿 mid=%d keyword=\"%s\" pn=%d ps=%d", mid, keyword, pn, ps)
+	return c.wbiRequest(ctx, "https://api.bilibili.com/x/space/wbi/arc/search", map[string]string{
+		"mid":           strconv.Itoa(mid),
+		"keyword":       keyword,
+		"pn":            strconv.Itoa(pn),
+		"ps":            strconv.Itoa(ps),
+		"order":         "pubdate",
+		"platform":      "web",
+		"web_location":  "333.1387",
+		"order_avoided": "true",
+	}, "GET")
+}
+
 func metaInt64(obj map[string]interface{}, key string) int64 {
 	v, ok := obj[key]
 	if !ok || v == nil {
@@ -1818,15 +1883,24 @@ func (c *BilibiliClient) GetPlayUrl(ctx context.Context, aid, cid, qn, fnval int
 
 	logInfo("获取播放地址 aid=%d cid=%d qn=%d fnval=%d platform=%s", aid, cid, qn, fnval, platform)
 	return c.wbiRequest(ctx, "https://api.bilibili.com/x/player/wbi/playurl", map[string]string{
-		"avid":     strconv.Itoa(aid),
-		"cid":      strconv.Itoa(cid),
-		"qn":       strconv.Itoa(qn),
-		"type":     "",
-		"otype":    "json",
-		"fourk":    "1",
-		"fnver":    "0",
-		"fnval":    strconv.Itoa(fnval),
-		"platform": platform,
+		"avid":             strconv.Itoa(aid),
+		"cid":              strconv.Itoa(cid),
+		"qn":               strconv.Itoa(qn),
+		"type":             "",
+		"otype":            "json",
+		"fourk":            "1",
+		"fnver":            "0",
+		"fnval":            strconv.Itoa(fnval),
+		"platform":         platform,
+		"gaia_source":      "pre-load",
+		"isGaiaAvoided":    "true",
+		"web_location":     "1315873",
+		"try_look":         "1",
+		"dm_img_list":      "[]",
+		"dm_img_str":       "",
+		"dm_cover_img_str": "",
+		"dm_img_inter":     "{}",
+		"cur_language":     "",
 	}, "GET")
 }
 
@@ -1879,6 +1953,36 @@ func (c *BilibiliClient) GetRecentHistory(ctx context.Context, max, viewAt, ps i
 	}
 	params["business"] = "archive"
 	return c.request(ctx, "https://api.bilibili.com/x/web-interface/history/cursor", params, "GET")
+}
+
+func (c *BilibiliClient) SearchHistory(ctx context.Context, keyword string, pn int) (json.RawMessage, error) {
+	keyword = strings.TrimSpace(keyword)
+	if pn <= 0 {
+		pn = 1
+	}
+	logInfo("搜索历史 keyword=%s pn=%d", keyword, pn)
+	return c.request(ctx, "https://api.bilibili.com/x/web-interface/history/search", map[string]string{
+		"pn":       strconv.Itoa(pn),
+		"keyword":  keyword,
+		"business": "all",
+	}, "GET")
+}
+
+func (c *BilibiliClient) DeleteHistory(ctx context.Context, kid string) (json.RawMessage, error) {
+	_, biliJct, err := c.requireLogin()
+	if err != nil {
+		return nil, err
+	}
+	kid = strings.TrimSpace(kid)
+	if kid == "" {
+		return nil, fmt.Errorf("kid 为空")
+	}
+	logInfo("删除历史 kid=%s", kid)
+	return c.webPost(ctx, "https://api.bilibili.com/x/v2/history/delete", map[string]string{
+		"kid":   kid,
+		"jsonp": "jsonp",
+		"csrf":  biliJct,
+	})
 }
 
 func (c *BilibiliClient) GetWatchLaterList(ctx context.Context, pn, ps int) (json.RawMessage, error) {
@@ -2069,10 +2173,21 @@ func (c *BilibiliClient) ToggleFavorite(ctx context.Context, aid int, add bool, 
 	})
 }
 
-func (c *BilibiliClient) ReportHeartbeat(ctx context.Context, aid, cid int, bvid string, playedTime int) (json.RawMessage, error) {
+func (c *BilibiliClient) ReportHeartbeat(ctx context.Context, aid, cid int, bvid string, playedTime int, videoDuration int, extra map[string]string) (json.RawMessage, error) {
 	_, biliJct, err := c.requireLogin()
 	if err != nil {
 		return nil, err
+	}
+	playType := extra["play_type"]
+	if playType == "" {
+		playType = "0"
+		if playedTime == -1 {
+			playType = "4"
+		}
+	}
+	videoType := extra["type"]
+	if videoType == "" {
+		videoType = "3"
 	}
 	params := map[string]string{
 		"aid":              strconv.Itoa(aid),
@@ -2081,7 +2196,18 @@ func (c *BilibiliClient) ReportHeartbeat(ctx context.Context, aid, cid int, bvid
 		"played_time":      strconv.Itoa(playedTime),
 		"real_played_time": strconv.Itoa(playedTime),
 		"start_ts":         strconv.FormatInt(time.Now().Unix(), 10),
+		"type":             videoType,
+		"dt":               "2",
+		"play_type":        playType,
 		"csrf":             biliJct,
+	}
+	if videoDuration > 0 {
+		params["video_duration"] = strconv.Itoa(videoDuration)
+	}
+	for _, key := range []string{"sub_type", "epid", "sid"} {
+		if value := strings.TrimSpace(extra[key]); value != "" {
+			params[key] = value
+		}
 	}
 	return c.request(ctx, "https://api.bilibili.com/x/click-interface/web/heartbeat", params, "POST")
 }
@@ -2562,6 +2688,23 @@ func handleVideoRelated(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleVideoRelation(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	aid, ok := getIntQuery(w, q, "aid", 1, 0, true)
+	if !ok {
+		return
+	}
+	bvid := q.Get("bvid")
+	if aid == 0 && bvid == "" {
+		logWarn("aid 和 bvid 都未提供")
+		writeError(w, 400, "aid 或 bvid 至少提供一个")
+		return
+	}
+	handleAPI(w, "/video/relation", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetVideoRelation(r.Context(), aid, bvid)
+	})
+}
+
 func handleVideoPlayurl(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	aid, ok := getIntQuery(w, q, "aid", 1, 0, true)
@@ -2917,7 +3060,22 @@ func handleVideoComments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	offset := strings.TrimSpace(q.Get("offset"))
+	paginationStr := strings.TrimSpace(q.Get("pagination_str"))
+	if paginationStr == "" && offset != "" {
+		if raw, err := json.Marshal(map[string]string{"offset": offset}); err == nil {
+			paginationStr = string(raw)
+		}
+	}
+	mode, ok := getIntQuery(w, q, "mode", 0, sortVal+2, true)
+	if !ok {
+		return
+	}
 	handleAPI(w, "/video/comments", func(c *BilibiliClient) (json.RawMessage, error) {
+		sessdata, _, _, _, _, _ := c.getAuth()
+		if sessdata == "" || paginationStr != "" {
+			return c.GetVideoCommentsMain(r.Context(), oid, typ, mode, ps, paginationStr)
+		}
 		return c.GetVideoComments(r.Context(), oid, typ, sortVal, ps, pn)
 	})
 }
@@ -2939,6 +3097,28 @@ func handleUserVideos(w http.ResponseWriter, r *http.Request) {
 
 	handleAPI(w, "/user/videos", func(c *BilibiliClient) (json.RawMessage, error) {
 		return c.GetUserVideos(r.Context(), mid, pn, ps, maxVal, targetAid, includeCursor, sortOrder)
+	})
+}
+
+func handleUserSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	mid, ok := requireIntQuery(w, q, "mid")
+	if !ok {
+		return
+	}
+	keyword := strings.TrimSpace(q.Get("keyword"))
+	if keyword == "" {
+		logWarn("UP 投稿搜索关键词为空")
+		writeError(w, 400, "keyword 不能为空")
+		return
+	}
+	pn, ps, ok := getPageParams(w, q, 20)
+	if !ok {
+		return
+	}
+
+	handleAPI(w, "/user/search", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetUserSearchVideos(r.Context(), mid, keyword, pn, ps)
 	})
 }
 
@@ -3210,6 +3390,34 @@ func handleRecentHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleHistorySearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	keyword := strings.TrimSpace(q.Get("keyword"))
+	if keyword == "" {
+		writeError(w, 400, "keyword 为必填参数")
+		return
+	}
+	pn, ok := getIntQuery(w, q, "pn", 1, 1, true)
+	if !ok {
+		return
+	}
+	handleAPI(w, "/history/search", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.SearchHistory(r.Context(), keyword, pn)
+	})
+}
+
+func handleHistoryDelete(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	kid := strings.TrimSpace(q.Get("kid"))
+	if kid == "" {
+		writeError(w, 400, "kid 为必填参数")
+		return
+	}
+	handleAPI(w, "/history/delete", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.DeleteHistory(r.Context(), kid)
+	})
+}
+
 func handleToviewList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	pn, ps, ok := getPageParams(w, q, 20)
@@ -3264,14 +3472,30 @@ func handlePlayerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
+	videoDuration := 0
+	if raw := q.Get("video_duration"); raw != "" {
+		videoDuration, err = intParam(raw, 1, 0, true)
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+	}
 	bvid := q.Get("bvid")
 	if bvid == "" {
 		writeError(w, 400, "bvid 为必填参数")
 		return
 	}
 
+	extra := map[string]string{
+		"type":      q.Get("type"),
+		"sub_type":  q.Get("sub_type"),
+		"epid":      q.Get("epid"),
+		"sid":       q.Get("sid"),
+		"play_type": q.Get("play_type"),
+	}
+
 	client := getClient()
-	result, err := client.ReportHeartbeat(r.Context(), aid, cid, bvid, playedTime)
+	result, err := client.ReportHeartbeat(r.Context(), aid, cid, bvid, playedTime, videoDuration, extra)
 	if err != nil {
 		logError("处理 /player/heartbeat 请求失败: %s", err.Error())
 		writeError(w, 500, err.Error())
@@ -3772,6 +3996,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/search", handleSearch)
 	mux.HandleFunc("/video/info", handleVideoInfo)
 	mux.HandleFunc("/video/related", handleVideoRelated)
+	mux.HandleFunc("/video/relation", handleVideoRelation)
 	mux.HandleFunc("/video/playurl", handleVideoPlayurl)
 	mux.HandleFunc("/video/player/info", handleVideoPlayerInfo)
 	mux.HandleFunc("/video/danmaku", handleVideoDanmaku)
@@ -3784,6 +4009,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/user/info", handleUserInfo)
 	mux.HandleFunc("/user/follow/toggle", handleUserFollowToggle)
 	mux.HandleFunc("/user/videos", handleUserVideos)
+	mux.HandleFunc("/user/search", handleUserSearch)
 	mux.HandleFunc("/user/seasons", handleUserSeasons)
 	mux.HandleFunc("/user/season/videos", handleUserSeasonVideos)
 	mux.HandleFunc("/user/series/videos", handleUserSeriesVideos)
@@ -3793,6 +4019,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/hot/search", handleHotSearch)
 	mux.HandleFunc("/recommend", handleRecommend)
 	mux.HandleFunc("/history/recent", handleRecentHistory)
+	mux.HandleFunc("/history/search", handleHistorySearch)
+	mux.HandleFunc("/history/delete", handleHistoryDelete)
 	mux.HandleFunc("/toview/list", handleToviewList)
 	mux.HandleFunc("/toview/add", handleToviewAdd)
 	mux.HandleFunc("/toview/del", handleToviewDel)

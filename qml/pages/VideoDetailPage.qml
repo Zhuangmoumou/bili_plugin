@@ -250,14 +250,14 @@ Rectangle {
         id: topBar
         anchors.top: parent.top
         anchors.left: parent.left
-        width: 42
+        width: 52
         height: 24
         z: 5
 
         Rectangle {
             id: backBtn
             anchors.left: parent.left
-            anchors.leftMargin: 8
+            anchors.leftMargin: 18
             anchors.top: parent.top
             anchors.topMargin: 4
             width: 22
@@ -437,7 +437,7 @@ Rectangle {
                         id: coverImage
                         anchors.fill: parent
                         source: controller && controller.videoPic && detailPage.heroImagesActive
-                        ? "image://bili/size/620x340/" + encodeURIComponent(controller.videoPic) : ""
+                        ? "image://bili/size/320x170/" + encodeURIComponent(controller.videoPic) : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         smooth: true
@@ -900,13 +900,13 @@ Rectangle {
             Item {
                 width: parent.width - 16
                 anchors.horizontalCenter: parent.horizontalCenter
-                height: detailPage.detailContentReady ? 24 : 0
-                visible: detailPage.detailContentReady
+                height: 24
 
                 Row {
                     id: toolRow
                     anchors.fill: parent
                     spacing: 6
+                    visible: detailPage.detailContentReady
 
                     ToolButton {
                         width: (parent.width - parent.spacing * 2) / 3
@@ -936,6 +936,95 @@ Rectangle {
                         onTriggered: {
                             if (controller) controller.playback.fetchSubtitleList()
                             detailPage.subtitlePickerVisible = true
+                        }
+                    }
+                }
+
+                Row {
+                    visible: !detailPage.detailContentReady
+                    anchors.fill: parent
+                    spacing: 6
+                    Repeater {
+                        model: 3
+                        Rectangle {
+                            width: (parent.width - parent.spacing * 2) / 3
+                            height: 24
+                            radius: 8
+                            color: Qt.rgba(1, 1, 1, 0.05)
+                            border.color: Qt.rgba(1, 1, 1, 0.08)
+                            border.width: 1
+
+                            Canvas {
+                                anchors.centerIn: parent
+                                width: 46
+                                height: 16
+                                property int paintToken: detailPage.skeletonPaintToken
+                                Component.onCompleted: requestPaint()
+                                onPaintTokenChanged: requestPaint()
+                                onVisibleChanged: if (visible) requestPaint()
+                                onWidthChanged: requestPaint()
+                                onHeightChanged: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.strokeStyle = Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.22)
+                                    ctx.fillStyle = Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.16)
+                                    ctx.lineWidth = 1.2
+                                    ctx.lineCap = "round"
+                                    ctx.lineJoin = "round"
+
+                                    if (index === 0) {
+                                        ctx.beginPath()
+                                        ctx.moveTo(2, 3)
+                                        ctx.lineTo(14, 3)
+                                        ctx.quadraticCurveTo(17, 3, 17, 6)
+                                        ctx.lineTo(17, 9)
+                                        ctx.quadraticCurveTo(17, 12, 14, 12)
+                                        ctx.lineTo(8, 12)
+                                        ctx.lineTo(4, 15)
+                                        ctx.lineTo(5, 12)
+                                        ctx.lineTo(2, 12)
+                                        ctx.quadraticCurveTo(0, 12, 0, 9)
+                                        ctx.lineTo(0, 6)
+                                        ctx.quadraticCurveTo(0, 3, 2, 3)
+                                        ctx.stroke()
+                                    } else if (index === 1) {
+                                        ctx.beginPath()
+                                        ctx.moveTo(8, 1)
+                                        ctx.lineTo(8, 10)
+                                        ctx.moveTo(4, 7)
+                                        ctx.lineTo(8, 11)
+                                        ctx.lineTo(12, 7)
+                                        ctx.moveTo(2, 14)
+                                        ctx.lineTo(14, 14)
+                                        ctx.stroke()
+                                    } else {
+                                        ctx.beginPath()
+                                        ctx.moveTo(1, 3)
+                                        ctx.lineTo(15, 3)
+                                        ctx.lineTo(15, 12)
+                                        ctx.lineTo(1, 12)
+                                        ctx.closePath()
+                                        ctx.stroke()
+                                        ctx.beginPath()
+                                        ctx.moveTo(4, 6)
+                                        ctx.lineTo(12, 6)
+                                        ctx.moveTo(5, 9)
+                                        ctx.lineTo(11, 9)
+                                        ctx.stroke()
+                                    }
+
+                                    ctx.beginPath()
+                                    ctx.moveTo(24, 5)
+                                    ctx.lineTo(width - 4, 5)
+                                    ctx.quadraticCurveTo(width, 5, width, 8)
+                                    ctx.quadraticCurveTo(width, 11, width - 4, 11)
+                                    ctx.lineTo(24, 11)
+                                    ctx.quadraticCurveTo(20, 11, 20, 8)
+                                    ctx.quadraticCurveTo(20, 5, 24, 5)
+                                    ctx.fill()
+                                }
+                            }
                         }
                     }
                 }

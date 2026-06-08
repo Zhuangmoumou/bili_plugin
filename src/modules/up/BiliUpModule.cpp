@@ -204,6 +204,7 @@ BiliUpModule::BiliUpModule(BiliController *controller)
 
 QObject *BiliUpModule::upVideoModel() { return m_controller->m_upVideoModel; }
 QObject *BiliUpModule::upSeasonModel() { return m_controller->m_upSeasonModel; }
+QObject *BiliUpModule::upSearchVideoModel() { return m_controller->m_upSearchModel; }
 
 // ====== UP 主主页 ======
 
@@ -228,6 +229,7 @@ void BiliUpModule::fetchUpInfo(qint64 mid) {
       m_controller->m_upVideoModel->clear();
       m_controller->m_upVideoModel->setHasMore(true);
     }
+    clearUpSearch();
     if (m_controller->m_upIsFollowing) {
       m_controller->m_upIsFollowing = false;
       emit m_controller->upFollowChanged();
@@ -552,6 +554,126 @@ void BiliUpModule::fetchPreviousUpVideos() {
         emit self->toastMessage(QString("加载更早定位内容失败：%1").arg(msg));
       },
       true);
+}
+
+void BiliUpModule::searchUpVideos(qint64 mid, const QString &keyword, int page, int pageSize) {
+  if (mid <= 0 || !m_controller || !m_controller->m_upSearchModel) {
+    return;
+  }
+
+  QString trimmed = keyword.trimmed();
+  if (trimmed.isEmpty()) {
+    emit m_controller->toastMessage("请输入搜索关键词");
+    return;
+  }
+  if (m_controller->m_upSearchModel->loading()) {
+    return;
+  }
+  if (trimmed.length() > 100) {
+    trimmed = trimmed.left(100);
+  }
+
+  page = qBound(1, page, 100);
+  pageSize = qBound(1, pageSize, 30);
+
+  const bool reset = page == 1 || m_upSearchMid != mid || m_upSearchKeyword != trimmed;
+  m_upSearchMid = mid;
+  m_upSearchKeyword = trimmed;
+  m_upSearchPage = page;
+  m_upSearchPageSize = pageSize;
+
+  if (reset) {
+    m_controller->m_upSearchModel->clear();
+  }
+  m_controller->m_upSearchModel->setKeyword(m_upSearchKeyword);
+  m_controller->m_upSearchModel->setLoading(true);
+  m_controller->m_upSearchModel->setErrorMessage("");
+  m_controller->setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["mid"] = QString::number(mid);
+  params["keyword"] = m_upSearchKeyword;
+  params["pn"] = QString::number(page);
+  params["ps"] = QString::number(pageSize);
+
+  QPointer<BiliController> self(m_controller);
+  SearchResultModel *searchModel = m_controller->m_upSearchModel;
+  const qint64 requestMid = mid;
+  const QString requestKeyword = m_upSearchKeyword;
+  const int requestPage = page;
+  const int requestPageSize = pageSize;
+
+  m_controller->apiGet(
+      "/user/search", params,
+      [this, self, searchModel, requestMid, requestKeyword, requestPage,
+       requestPageSize](const QJsonObject &data) {
+        if (!self || !searchModel) {
+          return;
+        }
+        biliRunInWorker(
+            self,
+            [data, requestMid, requestPage, requestPageSize]() {
+              return parseUpVideosPayload(data, requestMid, requestPage,
+                                          requestPageSize);
+            },
+            [this, self, searchModel, requestKeyword,
+             requestPageSize](ParsedUpVideos result) {
+              if (!self || !searchModel) {
+                return;
+              }
+              if (m_upSearchMid != result.mid || m_upSearchKeyword != requestKeyword ||
+                  m_upSearchPage != result.page) {
+                searchModel->setLoading(false);
+                self->setIsLoading(false);
+                return;
+              }
+
+              searchModel->appendItems(result.items);
+              bool hasMore = result.hasMore;
+              if (result.totalKnown && requestPageSize > 0) {
+                hasMore = result.page * requestPageSize < result.total;
+              }
+              searchModel->setHasMore(hasMore);
+              searchModel->setLoading(false);
+              self->setIsLoading(false);
+
+              if (result.items.isEmpty() && result.page == 1) {
+                searchModel->setErrorMessage(
+                    QString("未找到“%1”相关视频").arg(requestKeyword));
+              }
+            });
+      },
+      [self, searchModel](int, const QString &msg) {
+        if (!self || !searchModel) return;
+        searchModel->setLoading(false);
+        searchModel->setErrorMessage(msg);
+        self->setIsLoading(false);
+        emit self->toastMessage(QString("UP 投稿搜索失败：%1").arg(msg));
+      },
+      true);
+}
+
+void BiliUpModule::searchMoreUpVideos() {
+  if (!m_controller || !m_controller->m_upSearchModel) return;
+  if (!m_controller->m_upSearchModel->hasMore() ||
+      m_controller->m_upSearchModel->loading() || m_upSearchKeyword.isEmpty()) {
+    return;
+  }
+  searchUpVideos(m_upSearchMid, m_upSearchKeyword, m_upSearchPage + 1,
+                 m_upSearchPageSize);
+}
+
+void BiliUpModule::clearUpSearch() {
+  m_upSearchMid = 0;
+  m_upSearchKeyword.clear();
+  m_upSearchPage = 1;
+  m_upSearchPageSize = 20;
+  if (m_controller && m_controller->m_upSearchModel) {
+    m_controller->m_upSearchModel->clear();
+    m_controller->m_upSearchModel->setHasMore(true);
+    m_controller->m_upSearchModel->setLoading(false);
+    m_controller->m_upSearchModel->setErrorMessage("");
+  }
 }
 
 void BiliUpModule::fetchMoreUpVideos() {

@@ -39,6 +39,8 @@ struct VideoItem {
     int partCount = 1;    // 分P数量，默认为1
     bool isLastWatchedArc = false;
     int lastWatchedRank = 0;
+    QString historyBusiness;
+    qint64 historyKid = 0;
     QVector<VideoStaffItem> staff;
 };
 
@@ -131,7 +133,9 @@ public:
         PartCountRole,
         AidRole,
         IsLastWatchedArcRole,
-        LastWatchedRankRole
+        LastWatchedRankRole,
+        HistoryBusinessRole,
+        HistoryKidRole
     };
     Q_ENUM(Roles)
 
@@ -151,6 +155,7 @@ public:
     Q_INVOKABLE int indexOfAid(qint64 aid) const;
     Q_INVOKABLE int indexOfLastWatched() const;
     Q_INVOKABLE int indexOfLastWatchedRank(int rank) const;
+    Q_INVOKABLE void removeAt(int row);
     void appendItems(const QVector<VideoItem> &items);
     void prependItems(const QVector<VideoItem> &items);
     void setLoading(bool loading);

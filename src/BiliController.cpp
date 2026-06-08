@@ -50,6 +50,7 @@ BiliController::BiliController(QObject *parent)
       m_popularModel(new VideoListModel(this)),
       m_rankingModel(new VideoListModel(this)),
       m_searchModel(new SearchResultModel(this)),
+      m_upSearchModel(new SearchResultModel(this)),
       m_commentModel(new CommentListModel(this)),
       m_commentReplyModel(new CommentReplyListModel(this)),
       m_hotSearchModel(new HotSearchModel(this)),

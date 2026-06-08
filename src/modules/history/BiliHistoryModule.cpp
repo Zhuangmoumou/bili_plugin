@@ -25,6 +25,12 @@ struct ParsedWatchLater {
   bool hasMore = false;
 };
 
+struct ParsedHistorySearch {
+  int page = 1;
+  QVector<VideoItem> items;
+  bool hasMore = false;
+};
+
 QJsonArray recentHistoryList(const QJsonObject &data) {
   QJsonArray list = data.value("list").toArray();
   if (list.isEmpty()) {
@@ -47,6 +53,11 @@ QVector<VideoItem> parseRecentHistoryItems(const QJsonObject &data) {
     item.bvid = history.value("bvid").toString();
     item.aid = history.value("oid").toVariant().toLongLong();
     item.cid = history.value("cid").toVariant().toLongLong();
+    item.historyBusiness = history.value("business").toString(obj.value("business").toString("archive"));
+    item.historyKid = history.value("kid").toVariant().toLongLong();
+    if (item.historyKid <= 0) {
+      item.historyKid = item.aid;
+    }
     item.title = obj.value("title").toString();
     item.pic = obj.value("cover").toString();
     item.duration = obj.value("duration").toInt();
@@ -108,6 +119,14 @@ ParsedRecentHistory parseRecentHistoryPayload(const QJsonObject &data) {
   result.max = cursor.value("max").toVariant().toInt();
   result.viewAt = cursor.value("view_at").toVariant().toInt();
   result.items = parseRecentHistoryItems(data);
+  return result;
+}
+
+ParsedHistorySearch parseHistorySearchPayload(const QJsonObject &data, int page, int pageSize) {
+  ParsedHistorySearch result;
+  result.page = page;
+  result.items = parseRecentHistoryItems(data);
+  result.hasMore = result.items.size() >= pageSize;
   return result;
 }
 
@@ -215,6 +234,113 @@ void BiliHistoryModule::fetchMoreRecentHistory() {
         self->recentHistoryListModel()->setLoading(false);
         self->setIsLoading(false);
         emit self->toastMessage(QString("最近观看加载失败：%1").arg(msg));
+      });
+}
+
+void BiliHistoryModule::searchHistory(const QString &keyword, int page) {
+  BiliController *controller = m_controller;
+  if (!controller) return;
+  if (!controller->loggedIn()) {
+    emit controller->toastMessage("请先登录后搜索历史");
+    return;
+  }
+
+  QString kw = keyword.trimmed();
+  if (kw.isEmpty()) {
+    clearHistorySearch();
+    fetchRecentHistory();
+    return;
+  }
+  if (controller->recentHistoryListModel()->loading()) return;
+
+  page = qBound(1, page, 1000);
+  if (page == 1 || kw != m_historySearchKeyword) {
+    controller->recentHistoryListModel()->clear();
+    m_historySearchKeyword = kw;
+    m_historySearchPage = 1;
+    m_historySearchHasMore = true;
+  }
+
+  controller->recentHistoryListModel()->setLoading(true);
+  controller->recentHistoryListModel()->setErrorMessage("");
+  controller->setIsLoading(true);
+
+  QMap<QString, QString> params;
+  params["keyword"] = kw;
+  params["pn"] = QString::number(page);
+
+  QPointer<BiliController> self(controller);
+  controller->network()->get(
+      "/history/search", params,
+      [this, self, page](const QJsonObject &data) {
+        if (!self) return;
+        biliRunInWorker(
+            self, [data, page]() { return parseHistorySearchPayload(data, page, 20); },
+            [this, self](ParsedHistorySearch result) {
+              if (!self) return;
+              m_historySearchPage = result.page;
+              m_historySearchHasMore = result.hasMore;
+              self->recentHistoryListModel()->appendItems(result.items);
+              self->recentHistoryListModel()->setHasMore(result.hasMore);
+              self->recentHistoryListModel()->setLoading(false);
+              self->setIsLoading(false);
+              if (result.items.isEmpty() && result.page == 1) {
+                self->recentHistoryListModel()->setErrorMessage("未找到相关历史");
+              }
+            });
+      },
+      [self](int, const QString &msg) {
+        if (!self) return;
+        self->recentHistoryListModel()->setLoading(false);
+        self->setIsLoading(false);
+        self->recentHistoryListModel()->setErrorMessage(msg);
+        emit self->toastMessage(QString("历史搜索失败：%1").arg(msg));
+      });
+}
+
+void BiliHistoryModule::searchMoreHistory() {
+  BiliController *controller = m_controller;
+  if (!controller) return;
+  if (m_historySearchKeyword.isEmpty() || !m_historySearchHasMore)
+    return;
+  if (controller->recentHistoryListModel()->loading())
+    return;
+  searchHistory(m_historySearchKeyword, m_historySearchPage + 1);
+}
+
+void BiliHistoryModule::clearHistorySearch() {
+  m_historySearchKeyword.clear();
+  m_historySearchPage = 1;
+  m_historySearchHasMore = true;
+}
+
+void BiliHistoryModule::deleteRecentHistoryItem(int row, const QString &business, qint64 kid) {
+  BiliController *controller = m_controller;
+  if (!controller) return;
+  if (!controller->loggedIn()) {
+    emit controller->toastMessage("请先登录后删除历史");
+    return;
+  }
+  QString biz = business.trimmed();
+  if (biz.isEmpty()) biz = "archive";
+  if (kid <= 0) {
+    emit controller->toastMessage("历史记录信息不完整，无法删除");
+    return;
+  }
+
+  QMap<QString, QString> params;
+  params["kid"] = QString("%1_%2").arg(biz).arg(kid);
+  QPointer<BiliController> self(controller);
+  controller->network()->get(
+      "/history/delete", params,
+      [self, row](const QJsonObject &) {
+        if (!self) return;
+        self->recentHistoryListModel()->removeAt(row);
+        emit self->toastMessage("已删除历史记录");
+      },
+      [self](int, const QString &msg) {
+        if (!self) return;
+        emit self->toastMessage(QString("删除历史失败：%1").arg(msg));
       });
 }
 

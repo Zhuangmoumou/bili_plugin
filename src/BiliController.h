@@ -451,6 +451,7 @@ private:
   VideoListModel *m_popularModel;
   VideoListModel *m_rankingModel;
   SearchResultModel *m_searchModel;
+  SearchResultModel *m_upSearchModel;
   CommentListModel *m_commentModel;
   CommentReplyListModel *m_commentReplyModel;
   HotSearchModel *m_hotSearchModel;

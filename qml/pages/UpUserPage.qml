@@ -1,6 +1,7 @@
 import QtQuick 2.12
 import QtGraphicalEffects 1.12
 import BiliPlugin 1.0
+import "qrc:/qml/commons"
 import "../components" as Components
 import ".."
 
@@ -24,6 +25,10 @@ Rectangle {
     property int locatingLastWatchedFetches: 0
     property bool locatingLastWatchedAroundRequested: false
     property int locatedLastWatchedIndex: -1
+    property bool upSearchMode: false
+    property string upSearchKeyword: ""
+    property bool upSearchLoadingMore: false
+    property real savedUpSearchContentX: 0
     readonly property bool upContentReady: upInfoReady && controller && controller.upUserMid === Number(upMid) && controller.upUserName.length > 0
 
     signal backClicked()
@@ -62,6 +67,57 @@ Rectangle {
             mainFlick.contentY = Math.max(0, contentColumn.y + videoSection.y - Theme.spacingSmall)
             clampScrollState()
         })
+    }
+
+    function restoreUpSearchPosition() {
+        if (!upSearchMode || savedUpSearchContentX <= 0) return
+        Qt.callLater(function() {
+            upSearchResultList.contentX = savedUpSearchContentX
+            Qt.callLater(function() {
+                upSearchResultList.contentX = savedUpSearchContentX
+            })
+        })
+    }
+
+    function requestUpSearchKeyboard() {
+        let component = qmlCreateComponent("YInputPage")
+        if (Component.Ready === component.status) {
+            var incubator = component.incubateObject(up_search_pop_helper.containerItem)
+            if (incubator.status !== Component.Ready) {
+                incubator.onStatusChanged = function(status) {
+                    if (status === Component.Ready)
+                        up_search_pop_helper.inputPageCreated(incubator.object)
+                }
+            } else {
+                up_search_pop_helper.inputPageCreated(incubator.object)
+            }
+        }
+    }
+
+    function doUpSearch() {
+        var kw = upSearchKeyword.trim()
+        if (kw.length === 0) return
+        var model = controller && controller.up ? controller.up.upSearchVideoModel() : null
+        if (model && model.keyword === kw && model.count > 0) {
+            upSearchMode = true
+            scrollToVideoSection()
+            restoreUpSearchPosition()
+            return
+        }
+        savedUpSearchContentX = 0
+        if (upSearchResultList) upSearchResultList.contentX = 0
+        upSearchKeyword = kw
+        upSearchMode = true
+        scrollToVideoSection()
+        if (controller && controller.up) controller.up.searchUpVideos(Number(upMid), kw, 1, 20)
+    }
+
+    function resetUpSearchState() {
+        upSearchMode = false
+        upSearchKeyword = ""
+        upSearchLoadingMore = false
+        savedUpSearchContentX = 0
+        if (controller && controller.up && controller.up.clearUpSearch) controller.up.clearUpSearch()
     }
 
     function positionLastWatchedIndex(idx) {
@@ -176,8 +232,13 @@ Rectangle {
         locatingLastWatchedFetches = 0
         locatingLastWatchedAroundRequested = false
         locatedLastWatchedIndex = -1
+        upSearchMode = false
+        upSearchKeyword = ""
+        upSearchLoadingMore = false
+        savedUpSearchContentX = 0
         skeletonPaintToken += 1
         if (controller && controller.up) {
+            if (controller.up.clearUpSearch) controller.up.clearUpSearch()
             var videoModel = controller.up.upVideoModel()
             if (videoModel && videoModel.clear) videoModel.clear()
             var seasonModel = controller.up.upSeasonModel()
@@ -207,6 +268,7 @@ Rectangle {
                 if (videoModel && videoModel.clear) videoModel.clear()
                 var seasonModel = controller.up.upSeasonModel()
                 if (seasonModel && seasonModel.clear) seasonModel.clear()
+                upPage.resetUpSearchState()
             }
             resetScrollState()
             scheduleInitialFetch()
@@ -271,7 +333,7 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        contentHeight: Math.max(height, contentColumn.childrenRect.height + Theme.spacingLarge * 2)
+        contentHeight: Math.max(height, contentColumn.childrenRect.height + Theme.spacingLarge + Theme.spacingMedium)
         onContentHeightChanged: upPage.clampScrollState()
         boundsBehavior: Flickable.StopAtBounds
         clip: true
@@ -522,7 +584,7 @@ Rectangle {
                         anchors.left: parent.left
                         anchors.leftMargin: Theme.spacingLarge
                         anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - Theme.spacingLarge * 2 - lastWatchedButton.width - 6
+                        width: parent.width - Theme.spacingLarge * 2 - lastWatchedButton.width - searchButton.width - 12
                         spacing: Theme.spacingSmall
 
                         // 装饰条
@@ -536,9 +598,11 @@ Rectangle {
 
                         Text {
                             id: titleHeaderText
-                            text: controller && controller.upSelectedSeasonId !== 0
-                                  ? (controller.upSelectedSeasonName || "合集")
-                                  : "视频列表"
+                            text: upPage.upSearchMode
+                                  ? "搜索：" + upPage.upSearchKeyword
+                                  : (controller && controller.upSelectedSeasonId !== 0
+                                     ? (controller.upSelectedSeasonName || "合集")
+                                     : "视频列表")
                             color: Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontMedium
@@ -550,11 +614,54 @@ Rectangle {
                         Text {
                             id: listCountText
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: controller && (controller.upVideoTotal > 0 || (!!upVideoList.model && upVideoList.count > 0))
-                            text: " · " + (controller.upVideoTotal > 0 ? controller.upVideoTotal : upVideoList.count) + " 个视频"
+                            visible: controller && (upPage.upSearchMode
+                                                     ? (!!upSearchResultList.model && upSearchResultList.count > 0)
+                                                     : (controller.upVideoTotal > 0 || (!!upVideoList.model && upVideoList.count > 0)))
+                            text: " · " + (upPage.upSearchMode
+                                           ? upSearchResultList.count
+                                           : (controller.upVideoTotal > 0 ? controller.upVideoTotal : upVideoList.count)) + " 个视频"
                             color: Theme.textTertiary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
+                        }
+                    }
+
+                    Rectangle {
+                        id: searchButton
+                        anchors.right: lastWatchedButton.left
+                        anchors.rightMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 34
+                        height: 20
+                        radius: 10
+                        color: searchArea.pressed ? Theme.withAlpha(Theme.primary, 0.22)
+                                                  : Theme.withAlpha(Theme.primary, 0.10)
+                        border.color: Theme.withAlpha(Theme.primary, 0.32)
+                        border.width: 1
+
+                        Canvas {
+                            anchors.centerIn: parent
+                            width: 13
+                            height: 13
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.strokeStyle = Theme.textSecondary
+                                ctx.lineWidth = 1.6
+                                ctx.beginPath()
+                                ctx.arc(5.5, 5.5, 4, 0, Math.PI * 2, false)
+                                ctx.stroke()
+                                ctx.beginPath()
+                                ctx.moveTo(8.7, 8.7)
+                                ctx.lineTo(12, 12)
+                                ctx.stroke()
+                            }
+                        }
+
+                        MouseArea {
+                            id: searchArea
+                            anchors.fill: parent
+                            onClicked: upPage.requestUpSearchKeyboard()
                         }
                     }
 
@@ -570,11 +677,11 @@ Rectangle {
                                                         : Theme.withAlpha(Theme.primary, 0.10)
                         border.color: Theme.withAlpha(Theme.primary, 0.32)
                         border.width: 1
-                        opacity: controller && controller.loggedIn ? 1 : 0.55
+                        opacity: upPage.upSearchMode || (controller && controller.loggedIn) ? 1 : 0.55
 
                         Text {
                             anchors.centerIn: parent
-                            text: "上次观看"
+                            text: upPage.upSearchMode ? "返回列表" : "上次观看"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
@@ -584,7 +691,13 @@ Rectangle {
                         MouseArea {
                             id: lastWatchedArea
                             anchors.fill: parent
-                            onClicked: upPage.locateLastWatched()
+                            onClicked: {
+                                if (upPage.upSearchMode) {
+                                    upPage.upSearchMode = false
+                                } else {
+                                    upPage.locateLastWatched()
+                                }
+                            }
                         }
                     }
                 }
@@ -596,6 +709,7 @@ Rectangle {
                     id: filterStrip
                     width: parent.width
                     height: 24
+                    visible: !upPage.upSearchMode
                     anchors.top: videoHeader.bottom
                     anchors.topMargin: Theme.spacingSmall
 
@@ -740,6 +854,7 @@ Rectangle {
 
                 ListView {
                     id: upVideoList
+                    visible: !upPage.upSearchMode
                     width: parent.width
                     height: 135
                     anchors.top: filterStrip.bottom
@@ -826,6 +941,80 @@ Rectangle {
                     }
                 }
 
+                ListView {
+                    id: upSearchResultList
+                    visible: upPage.upSearchMode
+                    width: parent.width
+                    height: 135
+                    anchors.top: videoHeader.bottom
+                    anchors.topMargin: Theme.spacingSmall
+                    orientation: ListView.Horizontal
+                    spacing: 6
+                    clip: true
+                    cacheBuffer: 640
+                    displayMarginBeginning: 160
+                    displayMarginEnd: 160
+                    model: controller && controller.up ? controller.up.upSearchVideoModel() : null
+                    leftMargin: 4
+                    rightMargin: 4
+
+                    delegate: Components.VideoCardCompact {
+                        height: upSearchResultList.height
+                        videoTitle: model.title || ""
+                        coverUrl: model.pic || ""
+                        imageActive: upPage.visible && upPage.upSearchMode
+                        preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
+                        upName: model.ownerName || ""
+                        viewCount: model.views || ""
+                        durationText: model.durationText || ""
+                        bvid: model.bvid || ""
+                        showCollection: model.partCount > 1
+                        fontFamily: Theme.fontFamily
+                        titleScale: 0.9
+                        subScale: 0.85
+                        onClicked: {
+                            upPage.savedUpSearchContentX = upSearchResultList.contentX
+                            upPage.videoSelected(bvid)
+                        }
+                    }
+
+                    Row {
+                        visible: upPage.upSearchMode
+                                 && upSearchResultList.model
+                                 && upSearchResultList.model.loading
+                                 && upSearchResultList.count === 0
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+                        Repeater {
+                            model: 3
+                            Components.VideoCardCompact {
+                                height: upSearchResultList.height
+                                placeholder: true
+                                fontFamily: Theme.fontFamily
+                                titleScale: 0.9
+                                subScale: 0.85
+                            }
+                        }
+                    }
+
+                    onAtXEndChanged: {
+                        if (!atXEnd || !controller || !controller.up) return
+                        if (upSearchResultList.contentWidth <= upSearchResultList.width + 2) return
+                        if (upPage.upSearchLoadingMore) return
+                        if (upSearchResultList.model && upSearchResultList.model.loading) return
+                        if (upSearchResultList.model && upSearchResultList.model.hasMore === false) return
+                        upPage.upSearchLoadingMore = true
+                        controller.up.searchMoreUpVideos()
+                    }
+
+                    onCountChanged: {
+                        upPage.upSearchLoadingMore = false
+                        upPage.restoreUpSearchPosition()
+                    }
+                }
+
                 Connections {
                     target: upVideoList.model
                     function onLoadingChanged() {
@@ -847,16 +1036,70 @@ Rectangle {
                     }
                 }
 
+                Connections {
+                    target: upSearchResultList.model
+                    function onLoadingChanged() {
+                        if (!target || target.loading) return
+                        upPage.upSearchLoadingMore = false
+                        upPage.restoreUpSearchPosition()
+                    }
+                }
+
                 Text {
-                    visible: upVideoList.count === 0 && controller && !controller.isLoading
+                    visible: !upPage.upSearchMode && upVideoList.count === 0 && controller && !controller.isLoading
                     text: controller && controller.upSelectedSeasonId !== 0 ? "该合集暂无视频" : "暂无投稿"
                     color: Theme.textTertiary
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: upVideoList.bottom
                     anchors.topMargin: 6
                 }
+
+                Text {
+                    visible: upPage.upSearchMode
+                             && upSearchResultList.count === 0
+                             && upSearchResultList.model
+                             && !upSearchResultList.model.loading
+                    text: upSearchResultList.model && upSearchResultList.model.errorMessage
+                          ? upSearchResultList.model.errorMessage
+                          : "未找到相关视频"
+                    color: Theme.textTertiary
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: upSearchResultList.bottom
+                    anchors.topMargin: 6
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSmall
+                }
             }
         }
+    }
+
+    YPagePopHelper {
+        id: up_search_pop_helper
+        z: 99
+
+        function inputPageCreated(keyboardPage) {
+            keyboardPage.backButtonClicked.connect(function() {
+                qmlGlobal.inputPageShowing = false
+                keyboardPage.todoDestroy()
+                keyboardPage = null
+            })
+
+            keyboardPage.inputFinished.connect(function(content) {
+                upPage.upSearchKeyword = content.trim()
+                qmlGlobal.inputPageShowing = false
+                keyboardPage.todoDestroy()
+                if (upPage.upSearchKeyword.length > 0) {
+                    upPage.doUpSearch()
+                }
+            })
+
+            keyboardPage.enterText(upPage.upSearchKeyword)
+            keyboardPage.show()
+            qmlGlobal.inputPageShowing = true
+        }
+
+        isShowing: qmlGlobal.inputPageShowing
+        objectName: "from_UpUserPage.qml"
     }
 
     Item {

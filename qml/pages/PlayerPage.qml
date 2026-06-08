@@ -51,7 +51,7 @@ Rectangle {
         Image {
             anchors.fill: parent
             source: controller && controller.videoPic
-                    ? "image://bili/" + encodeURIComponent(controller.videoPic)
+                    ? "image://bili/size/640x320/" + encodeURIComponent(controller.videoPic)
                     : ""
             fillMode: Image.PreserveAspectCrop
             asynchronous: true

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QString>
 #include <QtGlobal>
 
 class BiliController;
@@ -25,6 +26,8 @@ signals:
 private:
   BiliController *m_controller;
   int m_commentPage = 1;
+  QString m_commentNextOffset;
+  bool m_commentHasMore = true;
   int m_commentReplyPage = 1;
   bool m_commentReplyHasMore = false;
   qint64 m_currentCommentRootRpid = 0;

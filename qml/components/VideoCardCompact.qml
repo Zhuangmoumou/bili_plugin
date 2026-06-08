@@ -40,7 +40,7 @@ Item {
         if (!url) return ""
         var s = String(url)
         if (s.indexOf("data:image/") === 0 || s.indexOf("image://") === 0) return s
-        return "image://bili/" + encodeURIComponent(s)
+        return "image://bili/size/320x170/" + encodeURIComponent(s)
     }
 
     function isNearViewport() {

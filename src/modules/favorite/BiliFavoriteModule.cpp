@@ -270,10 +270,11 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
+  params["bvid"] = m_controller->m_currentVideo.bvid;
   const qint64 requestAid = aid;
 
   m_controller->apiGet(
-      "/fav/status", params,
+      "/video/relation", params,
       [this, requestAid](const QJsonObject &data) {
         if (m_favoriteStatusLoadingAid == requestAid) {
           m_favoriteStatusLoadingAid = 0;
@@ -282,15 +283,36 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
           return;
         }
 
-        bool fav = false;
-        if (data.value("favoured").isBool()) {
-          fav = data.value("favoured").toBool(false);
-        } else {
-          fav = data.value("favoured").toInt(0) == 1;
-        }
+        auto intValue = [](const QJsonValue &value) {
+          if (value.isBool()) return value.toBool() ? 1 : 0;
+          if (value.isString()) return value.toString().toInt();
+          return value.toInt(0);
+        };
+
+        const bool fav = intValue(data.value("favorite")) > 0 ||
+                         intValue(data.value("favoured")) > 0;
+        const bool coined = intValue(data.value("coin")) > 0 ||
+                            intValue(data.value("multiply")) > 0;
+        const bool liked = intValue(data.value("like")) > 0 ||
+                           intValue(data.value("liked")) == 1;
+        const bool watchLater = intValue(data.value("watchlater")) > 0 ||
+                                intValue(data.value("watch_later")) > 0;
+
         if (m_controller->m_isFavorited != fav) {
           m_controller->m_isFavorited = fav;
           emit m_controller->favoriteStatusChanged();
+        }
+        if (m_controller->m_isCoined != coined) {
+          m_controller->m_isCoined = coined;
+          emit m_controller->coinStatusChanged();
+        }
+        if (m_controller->m_isLiked != liked) {
+          m_controller->m_isLiked = liked;
+          emit m_controller->likeStatusChanged();
+        }
+        if (m_controller->m_isWatchLater != watchLater) {
+          m_controller->m_isWatchLater = watchLater;
+          emit m_controller->watchLaterStatusChanged();
         }
       },
       [this, requestAid](int, const QString &msg) {
@@ -300,7 +322,7 @@ void BiliFavoriteModule::fetchFavoriteStatus() {
         if (!m_controller || m_controller->m_currentVideo.aid != requestAid) {
           return;
         }
-        emit m_controller->toastMessage(QString("获取收藏状态失败：%1").arg(msg));
+        emit m_controller->toastMessage(QString("获取视频关系状态失败：%1").arg(msg));
       });
 }
 

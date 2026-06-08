@@ -45,6 +45,8 @@ QVariant VideoListModel::data(const QModelIndex &index, int role) const
     case AidRole: return item.aid;
     case IsLastWatchedArcRole: return item.isLastWatchedArc;
     case LastWatchedRankRole: return item.lastWatchedRank;
+    case HistoryBusinessRole: return item.historyBusiness;
+    case HistoryKidRole: return item.historyKid;
     default: return QVariant();
     }
 }
@@ -69,7 +71,9 @@ QHash<int, QByteArray> VideoListModel::roleNames() const
         {PartCountRole, "partCount"},
         {AidRole, "aid"},
         {IsLastWatchedArcRole, "isLastWatchedArc"},
-        {LastWatchedRankRole, "lastWatchedRank"}
+        {LastWatchedRankRole, "lastWatchedRank"},
+        {HistoryBusinessRole, "historyBusiness"},
+        {HistoryKidRole, "historyKid"}
     };
 }
 
@@ -121,6 +125,15 @@ int VideoListModel::indexOfLastWatchedRank(int rank) const
         if (m_items.at(i).lastWatchedRank == rank) return i;
     }
     return -1;
+}
+
+void VideoListModel::removeAt(int row)
+{
+    if (row < 0 || row >= m_items.count()) return;
+    beginRemoveRows(QModelIndex(), row, row);
+    m_items.removeAt(row);
+    endRemoveRows();
+    emit countChanged();
 }
 
 void VideoListModel::appendItems(const QVector<VideoItem> &items)

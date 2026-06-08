@@ -35,6 +35,50 @@
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
+namespace {
+
+struct CurrentPartPlaybackInfo {
+  int index = 1;
+  int count = 1;
+  int duration = 0;
+};
+
+CurrentPartPlaybackInfo currentPartPlaybackInfo(qint64 currentCid, int fallbackDuration,
+                                                VideoPartListModel *partModel) {
+  CurrentPartPlaybackInfo info;
+  info.duration = fallbackDuration;
+  if (!partModel || partModel->count() <= 0) return info;
+
+  info.count = qMax(1, partModel->count());
+  for (int i = 0; i < partModel->count(); ++i) {
+    QModelIndex idx = partModel->index(i, 0);
+    qint64 cid = partModel->data(idx, VideoPartListModel::CidRole).toLongLong();
+    if (cid != currentCid) continue;
+
+    info.index = i + 1;
+    int partDuration = partModel->data(idx, VideoPartListModel::DurationRole).toInt();
+    if (partDuration > 0) info.duration = partDuration;
+    break;
+  }
+  return info;
+}
+
+QString biliHeartbeatScriptOpts(qint64 aid, qint64 cid, const QString &bvid, int duration,
+                                VideoPartListModel *partModel) {
+  CurrentPartPlaybackInfo part = currentPartPlaybackInfo(cid, duration, partModel);
+  return QStringLiteral("--script-opts=bili-aid=%1,bili-cid=%2,bili-bvid=%3,"
+                        "bili-part-index=%4,bili-part-count=%5,bili-part-duration=%6,"
+                        "bili-type=3,bili-sub-type=0,bili-epid=0,bili-sid=0")
+      .arg(aid)
+      .arg(cid)
+      .arg(bvid)
+      .arg(part.index)
+      .arg(part.count)
+      .arg(part.duration);
+}
+
+} // namespace
+
 BiliPlaybackModule::BiliPlaybackModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
 
@@ -460,9 +504,9 @@ void BiliPlaybackModule::launchExternalPlayer(const QString &path) {
   if (filePath.startsWith("http")) {
     args << "--referrer=https://www.bilibili.com"
          << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-         << ("--script-opts=bili-aid=" + QString::number(m_controller->videoAid())
-             + ",bili-cid=" + QString::number(m_controller->m_currentVideo.cid)
-             + ",bili-bvid=" + m_controller->m_currentVideo.bvid);
+         << biliHeartbeatScriptOpts(m_controller->videoAid(), m_controller->m_currentVideo.cid,
+                                  m_controller->m_currentVideo.bvid, m_controller->m_currentVideo.duration,
+                                  m_controller->m_videoPartModel);
   }
   startExternalPlayer(args);
 }
@@ -497,9 +541,9 @@ void BiliPlaybackModule::launchExternalPlayerWithAudioUrl(const QString &videoUr
   args << videoUrl << ("--audio-file=" + audioUrl)
        << "--referrer=https://www.bilibili.com"
        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-       << ("--script-opts=bili-aid=" + QString::number(m_controller->videoAid())
-           + ",bili-cid=" + QString::number(m_controller->m_currentVideo.cid)
-           + ",bili-bvid=" + m_controller->m_currentVideo.bvid);
+       << biliHeartbeatScriptOpts(m_controller->videoAid(), m_controller->m_currentVideo.cid,
+                                  m_controller->m_currentVideo.bvid, m_controller->m_currentVideo.duration,
+                                  m_controller->m_videoPartModel);
 
   startExternalPlayer(args);
 }
@@ -524,9 +568,9 @@ void BiliPlaybackModule::launchExternalPlayerWithAudioUrlAndSubtitle(const QStri
   }
   args << "--referrer=https://www.bilibili.com"
        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-       << ("--script-opts=bili-aid=" + QString::number(m_controller->videoAid())
-           + ",bili-cid=" + QString::number(m_controller->m_currentVideo.cid)
-           + ",bili-bvid=" + m_controller->m_currentVideo.bvid);
+       << biliHeartbeatScriptOpts(m_controller->videoAid(), m_controller->m_currentVideo.cid,
+                                  m_controller->m_currentVideo.bvid, m_controller->m_currentVideo.duration,
+                                  m_controller->m_videoPartModel);
 
   qDebug() << "[BiliController] launchExternalPlayerWithAudioUrlAndSubtitle"
            << "sub=" << sub;

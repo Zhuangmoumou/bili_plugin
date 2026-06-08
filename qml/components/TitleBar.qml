@@ -119,10 +119,24 @@ Rectangle {
 
             Behavior on color { ColorAnimation { duration: Theme.animFast } }
 
-            Text {
-                text: "🔍"
-                font.pixelSize: Theme.fontNormal
+            Canvas {
                 anchors.centerIn: parent
+                width: 16
+                height: 16
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    ctx.strokeStyle = Theme.primary
+                    ctx.lineWidth = 1.8
+                    ctx.lineCap = "round"
+                    ctx.beginPath()
+                    ctx.arc(7, 7, 5, 0, Math.PI * 2)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(11, 11)
+                    ctx.lineTo(15, 15)
+                    ctx.stroke()
+                }
             }
         }
 

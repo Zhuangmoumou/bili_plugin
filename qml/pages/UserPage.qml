@@ -1,6 +1,7 @@
 import QtQuick 2.12
 import QtGraphicalEffects 1.12
 import BiliPlugin 1.0
+import "qrc:/qml/commons"
 import "../components" as Components
 import ".."
 
@@ -21,6 +22,8 @@ Rectangle {
     property int currentFavId: 0
     property real recentHistoryContentX: 0
     property bool recentHistoryForceStart: false
+    property bool recentHistorySearchMode: false
+    property string recentHistoryKeyword: ""
     property bool loginPanelVisible: false
     property int previousFavView: 0
     property int lastAnimatedFavView: 0
@@ -67,6 +70,47 @@ Rectangle {
         if (controller) Qt.callLater(function() { controller.favorite.fetchFavoriteItems(fid, 1, 20) })
     }
 
+    function requestHistorySearchKeyboard() {
+        let component = qmlCreateComponent("YInputPage")
+        if (Component.Ready === component.status) {
+            var incubator = component.incubateObject(history_search_pop_helper.containerItem)
+            if (incubator.status !== Component.Ready) {
+                incubator.onStatusChanged = function(status) {
+                    if (status === Component.Ready)
+                        history_search_pop_helper.inputPageCreated(incubator.object)
+                }
+            } else {
+                history_search_pop_helper.inputPageCreated(incubator.object)
+            }
+        }
+    }
+
+    function doHistorySearch(keyword) {
+        var kw = keyword.trim()
+        recentHistoryKeyword = kw
+        recentHistorySearchMode = kw.length > 0
+        recentHistoryContentX = 0
+        recentHistoryForceStart = true
+        if (!controller || !controller.history) return
+        if (kw.length === 0) {
+            controller.history.clearHistorySearch()
+            controller.history.fetchRecentHistory()
+        } else {
+            controller.history.searchHistory(kw, 1)
+        }
+    }
+
+    function clearHistorySearchMode() {
+        recentHistoryKeyword = ""
+        recentHistorySearchMode = false
+        recentHistoryForceStart = true
+        recentHistoryContentX = 0
+        if (controller && controller.history) {
+            controller.history.clearHistorySearch()
+            controller.history.fetchRecentHistory()
+        }
+    }
+
     function openLoginPanel() {
         loginPanelVisible = true
         if (controller && controller.qrcodeUrl === "") {
@@ -96,6 +140,10 @@ Rectangle {
             return
         }
         if (favView === 3) {
+            if (recentHistorySearchMode) {
+                clearHistorySearchMode()
+                return
+            }
             favView = 0
             return
         }
@@ -177,8 +225,10 @@ Rectangle {
             return "个人中心"
         }
         showBack: true
+        showSearch: controller && controller.loggedIn && favView === 3
         anchors.top: parent.top
         onBackClicked: userPage.backInternal()
+        onSearchClicked: userPage.requestHistorySearchKeyboard()
     }
 
     // ====== 未登录：个人中心占位 ======
@@ -1088,6 +1138,9 @@ Rectangle {
                                     onClicked: {
                                         recentHistoryContentX = 0
                                         recentHistoryForceStart = true
+                                        recentHistorySearchMode = false
+                                        recentHistoryKeyword = ""
+                                        if (controller && controller.history) controller.history.clearHistorySearch()
                                         if (recentLoader.item && recentLoader.item.resetPosition) {
                                             recentLoader.item.resetPosition()
                                         }
@@ -1369,6 +1422,11 @@ Rectangle {
                 sourceComponent: Component {
                     Item {
                         anchors.fill: parent
+                        property int pendingDeleteIndex: -1
+                        property string pendingDeleteTitle: ""
+                        property string pendingDeleteBusiness: "archive"
+                        property var pendingDeleteKid: 0
+                        property bool deleteConfirmVisible: false
 
                         function resetPosition() {
                             recentList.contentX = 0
@@ -1425,27 +1483,48 @@ Rectangle {
                                 if (recentList.model && recentList.model.hasMore === false) return
                                 _loadingMore = true
                                 Qt.callLater(function() {
-                                    controller.history.fetchMoreRecentHistory()
+                                    if (userPage.recentHistorySearchMode)
+                                        controller.history.searchMoreHistory()
+                                    else
+                                        controller.history.fetchMoreRecentHistory()
                                     _loadingMore = false
                                 })
                             }
 
-                            delegate: Components.VideoCardCompact {
+                            delegate: Item {
+                                width: 105
                                 height: recentList.height
-                                videoTitle: model.title || ""
-                                // 与 HomePage 保持一致：直接使用 model.pic，避免重复 encode 带来额外开销/错误
-                                coverUrl: model.pic || ""
-                                imageActive: userPage.recentHistoryImagesActive
-                                preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
-                                upName: model.ownerName || ""
-                                viewCount: ""
-                                durationText: model.durationText || ""
-                                bvid: model.bvid || ""
-                                showCollection: model.partCount > 1
-                                onClicked: {
-                                    userPage.recentHistoryContentX = recentList.contentX
-                                    userPage.recentHistoryForceStart = false
-                                    userPage.videoSelected(bvid)
+
+                                Components.VideoCardCompact {
+                                    id: recentCard
+                                    anchors.fill: parent
+                                    videoTitle: model.title || ""
+                                    // 与 HomePage 保持一致：直接使用 model.pic，避免重复 encode 带来额外开销/错误
+                                    coverUrl: model.pic || ""
+                                    imageActive: userPage.recentHistoryImagesActive
+                                    preferOffscreenPlaceholder: controller && controller.videoCardOffscreenPlaceholderEnabled
+                                    upName: model.ownerName || ""
+                                    viewCount: ""
+                                    durationText: model.durationText || ""
+                                    bvid: model.bvid || ""
+                                    showCollection: model.partCount > 1
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    pressAndHoldInterval: 550
+                                    onClicked: {
+                                        userPage.recentHistoryContentX = recentList.contentX
+                                        userPage.recentHistoryForceStart = false
+                                        userPage.videoSelected(model.bvid || "")
+                                    }
+                                    onPressAndHold: {
+                                        pendingDeleteIndex = index
+                                        pendingDeleteTitle = model.title || ""
+                                        pendingDeleteBusiness = model.historyBusiness || "archive"
+                                        pendingDeleteKid = model.historyKid || model.aid || 0
+                                        deleteConfirmVisible = true
+                                    }
                                 }
                             }
 
@@ -1467,9 +1546,133 @@ Rectangle {
 
                         Text {
                             visible: recentList.count === 0
-                            text: "暂无最近观看"
+                            text: userPage.recentHistorySearchMode ? "未找到相关历史" : "暂无最近观看"
                             color: Theme.textTertiary
                             anchors.centerIn: parent
+                        }
+
+                        Rectangle {
+                            visible: userPage.recentHistorySearchMode
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.topMargin: 4
+                            anchors.rightMargin: 6
+                            width: Math.min(parent.width - 12, searchLabel.implicitWidth + 42)
+                            height: 22
+                            radius: 11
+                            color: Theme.withAlpha(Theme.primary, 0.16)
+                            border.color: Theme.withAlpha(Theme.primary, 0.45)
+                            z: 20
+
+                            Text {
+                                id: searchLabel
+                                anchors.left: parent.left
+                                anchors.leftMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "搜索：" + userPage.recentHistoryKeyword
+                                color: Theme.primary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSmall
+                                elide: Text.ElideRight
+                                width: parent.width - 32
+                            }
+
+                            Canvas {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 10
+                                height: 10
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    ctx.strokeStyle = Theme.primary
+                                    ctx.lineWidth = 1.6
+                                    ctx.lineCap = "round"
+                                    ctx.beginPath()
+                                    ctx.moveTo(1, 1)
+                                    ctx.lineTo(9, 9)
+                                    ctx.moveTo(9, 1)
+                                    ctx.lineTo(1, 9)
+                                    ctx.stroke()
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: userPage.clearHistorySearchMode()
+                            }
+                        }
+
+                        Rectangle {
+                            visible: opacity > 0
+                            opacity: deleteConfirmVisible ? 1 : 0
+                            scale: deleteConfirmVisible ? 1 : 0.92
+                            anchors.centerIn: parent
+                            width: 210
+                            height: 96
+                            radius: Theme.radiusLarge
+                            color: Theme.bgSecondary
+                            border.color: Theme.withAlpha(Theme.error, 0.55)
+                            z: 40
+                            Behavior on opacity { NumberAnimation { duration: Theme.animFast; easing.type: Easing.OutQuad } }
+                            Behavior on scale { NumberAnimation { duration: Theme.animFast; easing.type: Easing.OutBack } }
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 7
+
+                                Text {
+                                    width: parent.width
+                                    text: "删除这条历史？"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontMedium
+                                    font.bold: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                Text {
+                                    width: parent.width
+                                    text: pendingDeleteTitle
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSmall
+                                    elide: Text.ElideRight
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                Row {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    spacing: 10
+                                    Rectangle {
+                                        width: 70
+                                        height: 24
+                                        radius: 12
+                                        color: cancelDeleteArea.pressed ? Theme.bgTertiary : Theme.withAlpha(Theme.textSecondary, 0.12)
+                                        Text { anchors.centerIn: parent; text: "取消"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                                        MouseArea { id: cancelDeleteArea; anchors.fill: parent; onClicked: deleteConfirmVisible = false }
+                                    }
+                                    Rectangle {
+                                        width: 70
+                                        height: 24
+                                        radius: 12
+                                        color: confirmDeleteArea.pressed ? Theme.withAlpha(Theme.error, 0.35) : Theme.withAlpha(Theme.error, 0.2)
+                                        Text { anchors.centerIn: parent; text: "删除"; color: Theme.error; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.bold: true }
+                                        MouseArea {
+                                            id: confirmDeleteArea
+                                            anchors.fill: parent
+                                            onClicked: {
+                                                deleteConfirmVisible = false
+                                                if (controller && controller.history) {
+                                                    controller.history.deleteRecentHistoryItem(pendingDeleteIndex, pendingDeleteBusiness, Number(pendingDeleteKid))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         Component.onCompleted: {
@@ -1596,6 +1799,32 @@ Rectangle {
                 }
             }
         }
+    }
+
+    YPagePopHelper {
+        id: history_search_pop_helper
+        z: 99
+
+        function inputPageCreated(keyboardPage) {
+            keyboardPage.backButtonClicked.connect(function() {
+                qmlGlobal.inputPageShowing = false
+                keyboardPage.todoDestroy()
+                keyboardPage = null
+            })
+
+            keyboardPage.inputFinished.connect(function(content) {
+                qmlGlobal.inputPageShowing = false
+                keyboardPage.todoDestroy()
+                userPage.doHistorySearch(content)
+            })
+
+            keyboardPage.enterText(userPage.recentHistoryKeyword)
+            keyboardPage.show()
+            qmlGlobal.inputPageShowing = true
+        }
+
+        isShowing: qmlGlobal.inputPageShowing
+        objectName: "from_UserPage_history_search"
     }
 
 }

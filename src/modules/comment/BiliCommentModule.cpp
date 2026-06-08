@@ -43,6 +43,8 @@ struct ParsedComments {
   int page = 1;
   int total = 0;
   QVector<CommentItem> items;
+  QString nextOffset;
+  bool hasMore = false;
 };
 
 struct ParsedCommentReplies {
@@ -57,6 +59,15 @@ ParsedComments parseCommentsPayload(const QJsonObject &data, int page) {
 
   QJsonObject pageObj = data.value("page").toObject();
   result.total = pageObj.value("count").toInt();
+  QJsonObject cursorObj = data.value("cursor").toObject();
+  QJsonObject paginationReply = cursorObj.value("pagination_reply").toObject();
+  result.nextOffset = paginationReply.value("next_offset").toString();
+  if (result.nextOffset.isEmpty()) {
+    result.nextOffset = cursorObj.value("next_offset").toString();
+  }
+  if (result.nextOffset.isEmpty()) {
+    result.nextOffset = cursorObj.value("offset").toString();
+  }
 
   QJsonArray replies = data.value("replies").toArray();
   QSet<qint64> seenRpids;
@@ -108,6 +119,10 @@ ParsedComments parseCommentsPayload(const QJsonObject &data, int page) {
     }
   }
 
+  const int num = pageObj.value("num").toInt(page);
+  const int size = pageObj.value("size").toInt(20);
+  result.hasMore = !result.nextOffset.isEmpty() ||
+      ((result.total > 0) ? (num * size < result.total) : (result.items.size() >= size));
   return result;
 }
 
@@ -165,6 +180,8 @@ void BiliCommentModule::fetchComments(int page) {
   page = qBound(1, page, 1000);
   m_commentPage = page;
   if (page == 1) {
+    m_commentNextOffset.clear();
+    m_commentHasMore = true;
     m_controller->commentListModel()->clear();
   }
   m_controller->commentListModel()->setLoading(true);
@@ -173,8 +190,12 @@ void BiliCommentModule::fetchComments(int page) {
   params["oid"] = QString::number(m_controller->videoAid());
   params["type"] = "1";
   params["sort"] = "2";
+  params["mode"] = "4";
   params["pn"] = QString::number(page);
-  params["ps"] = "10";
+  params["ps"] = "20";
+  if (page > 1 && !m_commentNextOffset.isEmpty()) {
+    params["offset"] = m_commentNextOffset;
+  }
 
   QPointer<BiliController> self(m_controller);
   const int requestPage = page;
@@ -190,6 +211,8 @@ void BiliCommentModule::fetchComments(int page) {
             [this, self](ParsedComments result) {
               if (!self || m_commentPage != result.page)
                 return;
+              m_commentNextOffset = result.nextOffset;
+              m_commentHasMore = result.hasMore;
               self->commentListModel()->setTotalCount(result.total);
               self->commentListModel()->appendItems(result.items);
               self->commentListModel()->setLoading(false);
@@ -317,6 +340,8 @@ void BiliCommentModule::fetchMoreCommentReplies() {
 
 void BiliCommentModule::fetchMoreComments() {
   if (m_controller->commentListModel()->loading())
+    return;
+  if (!m_commentHasMore)
     return;
   m_commentPage++;
   fetchComments(m_commentPage);
