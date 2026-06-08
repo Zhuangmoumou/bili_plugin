@@ -42,7 +42,7 @@ Rectangle {
     property bool initialCommentsRequested: false
     property bool commentsModelAttached: false
     property bool commentImagesDeferred: false
-    property bool commentLoadingMaskVisible: true
+    property bool commentLoadingMaskVisible: false
     signal backClicked()
 
     function deferCommentImages() {
@@ -97,10 +97,21 @@ Rectangle {
         })
     }
 
+    function showInitialCommentLoadingIfNeeded() {
+        if (!controller || viewMode !== 0 || initialCommentsRequested) return
+        if (controller.videoDetailPreloadEnabled || controller.comments.commentsReady) return
+        showCommentLoadingMask()
+    }
+
     function updateCommentLoadingMask() {
         if (viewMode === 0) {
+            if (controller && controller.comments.commentsReady) {
+                commentLoadingMaskVisible = false
+                return
+            }
             var cm = controller ? controller.comments.commentModel() : null
-            if (!initialCommentsRequested || (cm && cm.loading && commentList.count === 0)) {
+            if ((!initialCommentsRequested && controller && !controller.videoDetailPreloadEnabled) ||
+                    (cm && cm.loading && commentList.count === 0)) {
                 showCommentLoadingMask()
             } else {
                 hideCommentLoadingMaskSoon()
@@ -116,13 +127,21 @@ Rectangle {
     }
 
     onViewModeChanged: updateCommentLoadingMask()
+    onControllerChanged: showInitialCommentLoadingIfNeeded()
 
     function requestInitialComments() {
         if (!controller || initialCommentsRequested) return
         initialCommentsRequested = true
+        commentsModelAttached = true
+        var cm = controller.comments.commentModel()
+        if (controller.comments.commentsReady ||
+                (cm && !cm.loading && (cm.count > 0 || (cm.errorMessage && cm.errorMessage.length > 0)))) {
+            commentLoadingMaskVisible = false
+            return
+        }
         showCommentLoadingMask()
         controller.comments.fetchComments()
-        commentsModelAttached = true
+        updateCommentLoadingMask()
     }
 
     Timer {
@@ -1384,6 +1403,13 @@ Rectangle {
     }
 
     Connections {
+        target: controller ? controller.comments : null
+        function onCommentsReadyChanged() {
+            commentsPage.updateCommentLoadingMask()
+        }
+    }
+
+    Connections {
         target: controller ? controller.comments.commentModel() : null
         function onLoadingChanged() {
             if (!target || !target.loading) commentsPage.autoLoadingComments = false
@@ -1471,10 +1497,14 @@ Rectangle {
     }
 
     Component.onCompleted: {
+        showInitialCommentLoadingIfNeeded()
         initialCommentsTimer.restart()
     }
 
     onVisibleChanged: {
-        if (visible && !initialCommentsRequested) initialCommentsTimer.restart()
+        if (visible && !initialCommentsRequested) {
+            showInitialCommentLoadingIfNeeded()
+            initialCommentsTimer.restart()
+        }
     }
 }

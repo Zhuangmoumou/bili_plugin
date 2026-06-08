@@ -1575,7 +1575,7 @@ Rectangle {
                                 width: parent.width
                                 text: relatedSection.relatedModel && relatedSection.relatedModel.loading
                                       ? "正在加载相关视频"
-                                      : (detailPage.relatedExpanded && relatedSection.relatedModel && relatedSection.relatedModel.count > 0
+                                      : (relatedSection.relatedModel && relatedSection.relatedModel.count > 0
                                          ? "为你找到 " + relatedSection.relatedModel.count + " 个相关视频"
                                          : (detailPage.relatedExpanded ? "暂无推荐" : "点击加载相关视频"))
                                 color: "#94a3b8"
@@ -1613,6 +1613,8 @@ Rectangle {
                         onClicked: {
                             if (!controller || controller.videoBvid !== detailPage.bvid) return
                             detailPage.relatedExpanded = true
+                            var model = relatedSection.relatedModel
+                            if (model && (model.count > 0 || model.loading)) return
                             Qt.callLater(function() {
                                 if (controller && controller.videoBvid === detailPage.bvid) {
                                     controller.season.fetchRelatedVideos()

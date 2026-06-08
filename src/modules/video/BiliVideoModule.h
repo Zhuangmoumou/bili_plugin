@@ -19,5 +19,7 @@ public:
   Q_INVOKABLE QObject *videoPartModel();
 
 private:
+  void scheduleVideoDetailPreload(const QString &bvid, qint64 aid, qint64 cid);
+
   BiliController *m_controller;
 };

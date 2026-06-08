@@ -566,43 +566,61 @@ void BiliPlaybackModule::launchExternalPlayerWithAudioUrlAndSubtitle(const QStri
   startExternalPlayer(args);
 }
 
-void BiliPlaybackModule::fetchSubtitleList() {
+void BiliPlaybackModule::fetchSubtitleList(bool silent) {
   if (m_controller->m_currentVideo.aid <= 0 || m_controller->m_currentVideo.cid <= 0) {
-    emit m_controller->toastMessage("视频信息不完整，无法获取字幕");
+    if (!silent) emit m_controller->toastMessage("视频信息不完整，无法获取字幕");
+    return;
+  }
+
+  const qint64 requestAid = m_controller->m_currentVideo.aid;
+  const qint64 requestCid = m_controller->m_currentVideo.cid;
+  const QString requestBvid = m_controller->m_currentVideo.bvid;
+  const QString requestKey = QString("%1:%2:%3")
+                                 .arg(requestBvid)
+                                 .arg(requestAid)
+                                 .arg(requestCid);
+  if (m_controller->m_subtitleItemsKey == requestKey ||
+      m_controller->m_subtitleItemsLoadingKey == requestKey) {
     return;
   }
 
   QMap<QString, QString> params;
-  params["aid"] = QString::number(m_controller->m_currentVideo.aid);
-  params["cid"] = QString::number(m_controller->m_currentVideo.cid);
-  params["bvid"] = m_controller->m_currentVideo.bvid;
+  params["aid"] = QString::number(requestAid);
+  params["cid"] = QString::number(requestCid);
+  params["bvid"] = requestBvid;
 
+  m_controller->m_subtitleItemsLoadingKey = requestKey;
   QPointer<BiliController> self(m_controller);
-  const qint64 requestAid = m_controller->m_currentVideo.aid;
-  const qint64 requestCid = m_controller->m_currentVideo.cid;
-  const QString requestBvid = m_controller->m_currentVideo.bvid;
   m_controller->m_network->get(
       "/video/subtitle/list", params,
-      [self, requestAid, requestCid, requestBvid](const QJsonObject &data) {
+      [self, requestAid, requestCid, requestBvid, requestKey](const QJsonObject &data) {
         if (!self)
           return;
         if (self->m_currentVideo.aid != requestAid ||
             self->m_currentVideo.cid != requestCid ||
             self->m_currentVideo.bvid != requestBvid) {
+          if (self->m_subtitleItemsLoadingKey == requestKey) {
+            self->m_subtitleItemsLoadingKey.clear();
+          }
           return;
         }
+        self->m_subtitleItemsLoadingKey.clear();
+        self->m_subtitleItemsKey = requestKey;
         self->setSubtitleItems(data.value("subtitles").toArray());
       },
-      [self, requestAid, requestCid, requestBvid](int, const QString &msg) {
+      [self, requestAid, requestCid, requestBvid, requestKey, silent](int, const QString &msg) {
         if (!self)
           return;
+        if (self->m_subtitleItemsLoadingKey == requestKey) {
+          self->m_subtitleItemsLoadingKey.clear();
+        }
         if (self->m_currentVideo.aid != requestAid ||
             self->m_currentVideo.cid != requestCid ||
             self->m_currentVideo.bvid != requestBvid) {
           return;
         }
         self->clearSubtitleItems();
-        emit self->toastMessage(QString("获取字幕列表失败：%1").arg(msg));
+        if (!silent) emit self->toastMessage(QString("获取字幕列表失败：%1").arg(msg));
       });
 }
 
@@ -712,6 +730,15 @@ void BiliPlaybackModule::setVideoCardOffscreenPlaceholderEnabled(bool enabled) {
   m_controller->m_videoCardOffscreenPlaceholderEnabled = enabled;
   QSettings settings("BiliPocket", "BiliPlugin");
   settings.setValue("videoCardOffscreenPlaceholderEnabled", m_controller->m_videoCardOffscreenPlaceholderEnabled);
+  settings.sync();
+  emit m_controller->preferenceSettingsChanged();
+}
+
+void BiliPlaybackModule::setVideoDetailPreloadEnabled(bool enabled) {
+  if (m_controller->m_videoDetailPreloadEnabled == enabled) return;
+  m_controller->m_videoDetailPreloadEnabled = enabled;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("videoDetailPreloadEnabled", m_controller->m_videoDetailPreloadEnabled);
   settings.sync();
   emit m_controller->preferenceSettingsChanged();
 }

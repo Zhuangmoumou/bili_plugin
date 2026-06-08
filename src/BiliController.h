@@ -110,6 +110,7 @@ class BiliController : public QObject {
   Q_PROPERTY(bool subtitleBackgroundEnabled READ subtitleBackgroundEnabled NOTIFY subtitleStyleChanged)
   Q_PROPERTY(double subtitleBackgroundOpacity READ subtitleBackgroundOpacity NOTIFY subtitleStyleChanged)
   Q_PROPERTY(bool videoCardOffscreenPlaceholderEnabled READ videoCardOffscreenPlaceholderEnabled NOTIFY preferenceSettingsChanged)
+  Q_PROPERTY(bool videoDetailPreloadEnabled READ videoDetailPreloadEnabled NOTIFY preferenceSettingsChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -211,6 +212,7 @@ public:
   bool subtitleBackgroundEnabled() const { return m_subtitleBackgroundEnabled; }
   double subtitleBackgroundOpacity() const { return m_subtitleBackgroundOpacity; }
   bool videoCardOffscreenPlaceholderEnabled() const { return m_videoCardOffscreenPlaceholderEnabled; }
+  bool videoDetailPreloadEnabled() const { return m_videoDetailPreloadEnabled; }
 
   bool loggedIn() const;
   qint64 upUserMid() const { return m_upUserMid; }
@@ -408,6 +410,8 @@ private:
   QString m_dashVideoUrl;
   QString m_dashAudioUrl;
   QJsonArray m_subtitleItems;
+  QString m_subtitleItemsKey;
+  QString m_subtitleItemsLoadingKey;
   qint64 m_selectedSubtitleId = 0;
   QString m_selectedSubtitleLabel;
   int m_subtitleFontSize = 10;
@@ -420,6 +424,7 @@ private:
   bool m_subtitleBackgroundEnabled = false;
   double m_subtitleBackgroundOpacity = 0.5;
   bool m_videoCardOffscreenPlaceholderEnabled = false;
+  bool m_videoDetailPreloadEnabled = false;
   QPointer<QNetworkReply> m_downloadReply;
   QPointer<QProcess> m_externalPlayerProcess;
 

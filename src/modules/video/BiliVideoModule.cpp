@@ -3,8 +3,10 @@
 #include "BiliJsonUtils.h"
 #include "BiliModels.h"
 #include "BiliNetwork.h"
+#include "modules/comment/BiliCommentModule.h"
 #include "modules/history/BiliHistoryModule.h"
 #include "modules/login/BiliLoginModule.h"
+#include "modules/playback/BiliPlaybackModule.h"
 #include "modules/season/BiliSeasonModule.h"
 
 #include <QCoreApplication>
@@ -39,6 +41,36 @@ BiliVideoModule::BiliVideoModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
 
 QObject *BiliVideoModule::videoPartModel() { return m_controller->m_videoPartModel; }
+
+void BiliVideoModule::scheduleVideoDetailPreload(const QString &bvid, qint64 aid, qint64 cid) {
+  if (!m_controller || !m_controller->m_videoDetailPreloadEnabled ||
+      bvid.isEmpty() || aid <= 0 || cid <= 0) {
+    return;
+  }
+
+  QPointer<BiliController> self(m_controller);
+  auto isCurrentVideo = [self, bvid, aid, cid]() {
+    return self && self->m_videoDetailPreloadEnabled &&
+           self->m_currentVideo.bvid == bvid &&
+           self->m_currentVideo.aid == aid &&
+           self->m_currentVideo.cid == cid;
+  };
+
+  QTimer::singleShot(0, m_controller, [self, isCurrentVideo]() {
+    if (!isCurrentVideo() || !self->m_commentModule) return;
+    self->m_commentModule->fetchComments(1, true);
+  });
+
+  QTimer::singleShot(20, m_controller, [self, isCurrentVideo]() {
+    if (!isCurrentVideo() || !self->m_playbackModule) return;
+    self->m_playbackModule->fetchSubtitleList(true);
+  });
+
+  QTimer::singleShot(40, m_controller, [self, isCurrentVideo]() {
+    if (!isCurrentVideo() || !self->m_seasonModule) return;
+    self->m_seasonModule->fetchRelatedVideos();
+  });
+}
 
 void BiliVideoModule::captureCurrentVideoDetail() {
   if (!m_controller)
@@ -120,6 +152,9 @@ bool BiliVideoModule::restoreCachedVideoDetail(const QString &bvid) {
   emit m_controller->videoDetailChanged();
   emit m_controller->videoStatsChanged();
   emit m_controller->playbackProgressChanged();
+  scheduleVideoDetailPreload(m_controller->m_currentVideo.bvid,
+                             m_controller->m_currentVideo.aid,
+                             m_controller->m_currentVideo.cid);
   return true;
 }
 
@@ -454,6 +489,11 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
         emit self->videoStatsChanged();
         emit self->playbackProgressChanged();
         self->setIsLoading(false);
+        if (self->m_videoModule) {
+          self->m_videoModule->scheduleVideoDetailPreload(
+              self->m_currentVideo.bvid, self->m_currentVideo.aid,
+              self->m_currentVideo.cid);
+        }
       },
       [self, requestedBvid](int code, const QString &msg) {
         if (!self)

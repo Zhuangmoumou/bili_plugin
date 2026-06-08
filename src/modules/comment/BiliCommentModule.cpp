@@ -154,6 +154,11 @@ ParsedCommentReplies parseCommentRepliesPayload(const QJsonObject &data,
 BiliCommentModule::BiliCommentModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
 
+bool BiliCommentModule::commentsReady() const {
+  return m_controller && m_commentFirstPageLoaded &&
+         m_commentBvid == m_controller->videoBvid();
+}
+
 QObject *BiliCommentModule::commentModel() { return m_controller->commentListModel(); }
 QObject *BiliCommentModule::commentReplyModel() { return m_controller->commentReplyListModel(); }
 
@@ -165,21 +170,32 @@ void BiliCommentModule::resetReplyState() {
 
 // ====== API: 评论 ======
 
-void BiliCommentModule::fetchComments(int page) {
-  if (m_controller->videoBvid().isEmpty()) {
-    emit m_controller->toastMessage("请先打开一个视频");
+void BiliCommentModule::fetchComments(int page, bool silent) {
+  const QString currentBvid = m_controller->videoBvid();
+  if (currentBvid.isEmpty()) {
+    if (!silent) emit m_controller->toastMessage("请先打开一个视频");
     return;
   }
-  if (m_controller->commentListModel()->loading())
-    return;
+  if (m_controller->commentListModel()->loading()) {
+    if (m_commentBvid == currentBvid) return;
+    m_controller->commentListModel()->setLoading(false);
+  }
   if (m_controller->videoAid() <= 0) {
-    emit m_controller->toastMessage("视频信息不完整");
+    if (!silent) emit m_controller->toastMessage("视频信息不完整");
     return;
   }
 
   page = qBound(1, page, 1000);
+  if (page == 1 && m_commentBvid == currentBvid && m_commentFirstPageLoaded) {
+    return;
+  }
+
   m_commentPage = page;
   if (page == 1) {
+    const bool wasReady = commentsReady();
+    m_commentBvid = currentBvid;
+    m_commentFirstPageLoaded = false;
+    if (wasReady) emit commentsReadyChanged();
     m_commentNextOffset.clear();
     m_commentHasMore = true;
     m_controller->commentListModel()->clear();
@@ -199,18 +215,27 @@ void BiliCommentModule::fetchComments(int page) {
 
   QPointer<BiliController> self(m_controller);
   const int requestPage = page;
+  const QString requestBvid = currentBvid;
   m_controller->apiGet(
       "/video/comments", params,
-      [this, self, requestPage](const QJsonObject &data) {
+      [this, self, requestPage, requestBvid](const QJsonObject &data) {
         if (!self)
           return;
         biliRunInWorker(
             self, [data, requestPage]() {
               return parseCommentsPayload(data, requestPage);
             },
-            [this, self](ParsedComments result) {
-              if (!self || m_commentPage != result.page)
+            [this, self, requestBvid](ParsedComments result) {
+              if (!self || m_commentPage != result.page || m_commentBvid != requestBvid)
                 return;
+              if (self->videoBvid() != requestBvid) {
+                self->commentListModel()->setLoading(false);
+                return;
+              }
+              if (result.page == 1) {
+                m_commentFirstPageLoaded = true;
+                emit commentsReadyChanged();
+              }
               m_commentNextOffset = result.nextOffset;
               m_commentHasMore = result.hasMore;
               self->commentListModel()->setTotalCount(result.total);
@@ -222,13 +247,21 @@ void BiliCommentModule::fetchComments(int page) {
               }
             });
       },
-      [this](int code, const QString &msg) {
-        m_controller->commentListModel()->setLoading(false);
+      [this, self, requestBvid, silent](int code, const QString &msg) {
+        if (!self || m_commentBvid != requestBvid)
+          return;
+        if (self->videoBvid() != requestBvid) {
+          self->commentListModel()->setLoading(false);
+          return;
+        }
+        self->commentListModel()->setLoading(false);
         if (code == -404 || msg == "啥都木有") {
-          m_controller->commentListModel()->setErrorMessage("暂无评论");
+          m_commentFirstPageLoaded = true;
+          emit commentsReadyChanged();
+          self->commentListModel()->setErrorMessage("暂无评论");
         } else {
-          m_controller->commentListModel()->setErrorMessage(msg);
-          emit m_controller->toastMessage(QString("评论加载失败：%1").arg(msg));
+          self->commentListModel()->setErrorMessage(msg);
+          if (!silent) emit self->toastMessage(QString("评论加载失败：%1").arg(msg));
         }
       });
 }

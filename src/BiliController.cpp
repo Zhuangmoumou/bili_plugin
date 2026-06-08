@@ -89,6 +89,7 @@ BiliController::BiliController(QObject *parent)
   m_subtitleBackgroundEnabled = settings.value("subtitleBackgroundEnabled", m_subtitleBackgroundEnabled).toBool();
   m_subtitleBackgroundOpacity = settings.value("subtitleBackgroundOpacity", m_subtitleBackgroundOpacity).toDouble();
   m_videoCardOffscreenPlaceholderEnabled = settings.value("videoCardOffscreenPlaceholderEnabled", m_videoCardOffscreenPlaceholderEnabled).toBool();
+  m_videoDetailPreloadEnabled = settings.value("videoDetailPreloadEnabled", m_videoDetailPreloadEnabled).toBool();
 }
 
 BiliController::~BiliController() {
@@ -302,6 +303,8 @@ void BiliController::setAcceptQualities(const QVector<int> &qualities) {
 }
 
 void BiliController::clearSubtitleItems() {
+  m_subtitleItemsKey.clear();
+  m_subtitleItemsLoadingKey.clear();
   setSubtitleItems(QJsonArray());
 }
 

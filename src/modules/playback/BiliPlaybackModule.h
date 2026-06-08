@@ -21,7 +21,7 @@ public:
   Q_INVOKABLE void launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath);
   Q_INVOKABLE void launchExternalPlayerWithAudioUrl(const QString &videoUrl, const QString &audioUrl);
   Q_INVOKABLE void launchExternalPlayerWithAudioUrlAndSubtitle(const QString &videoUrl, const QString &audioUrl, const QString &subtitlePath);
-  Q_INVOKABLE void fetchSubtitleList();
+  Q_INVOKABLE void fetchSubtitleList(bool silent = false);
   Q_INVOKABLE void selectSubtitle(qint64 subtitleId, const QString &label);
   Q_INVOKABLE void clearSelectedSubtitle();
   Q_INVOKABLE void setSubtitleFontSize(int value);
@@ -34,6 +34,7 @@ public:
   Q_INVOKABLE void setSubtitleBackgroundEnabled(bool enabled);
   Q_INVOKABLE void setSubtitleBackgroundOpacity(double value);
   Q_INVOKABLE void setVideoCardOffscreenPlaceholderEnabled(bool enabled);
+  Q_INVOKABLE void setVideoDetailPreloadEnabled(bool enabled);
   Q_INVOKABLE void launchExternalPlayerCurrentSelection();
 
 private:
