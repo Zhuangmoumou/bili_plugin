@@ -148,7 +148,7 @@ Rectangle {
         delegate: Components.VideoCardCompact {
             height: rankList.height
             titleScale: 0.9
-            titleBold: false
+            titleBold: true
             subScale: 0.86
             // 减少标题与UP信息的空隙 3px（默认 infoSpacing=2）
             infoSpacing: -1
@@ -177,7 +177,7 @@ Rectangle {
                     height: rankList.height
                     placeholder: true
                     titleScale: 0.9
-                    titleBold: false
+                    titleBold: true
                     subScale: 0.86
                     infoSpacing: -1
                     subYOffset: -10
