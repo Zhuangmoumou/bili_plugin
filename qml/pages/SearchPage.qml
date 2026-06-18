@@ -13,7 +13,6 @@ Rectangle {
     property var controller: null
     // 由 main.qml 传入，用于跨页面（即使 SearchPage 被销毁重建也能恢复滚动位置）
     property var rootRef: null
-    readonly property string fontFamily: "Microsoft YaHei"  // 微软雅黑
 
     signal backClicked()
     signal videoSelected(string bvid)
@@ -75,7 +74,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "‹"
                         color: Theme.primary
-                        font.family: searchPage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 22
                         font.weight: Font.Bold
                     }
@@ -130,7 +129,7 @@ Rectangle {
                         color: searchInput.text.length > 0
                         ? Theme.textPrimary
                         : Theme.textTertiary
-                        font.family: searchPage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 13
                         elide: Text.ElideRight
                     }
@@ -153,7 +152,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "×"
                         color: Theme.textSecondary
-                        font.family: searchPage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 13
                         font.weight: Font.Bold
                     }
@@ -209,7 +208,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "搜索"
                     color: "#FFFFFF"
-                    font.family: searchPage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 13
                     font.weight: Font.Bold
                 }
@@ -326,7 +325,7 @@ Rectangle {
                         Text {
                             text: "搜索历史"
                             color: Theme.textSecondary
-                            font.family: searchPage.fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                             anchors.verticalCenter: parent.verticalCenter
@@ -351,7 +350,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: "🗑清空"
                             color: Theme.textSecondary
-                            font.family: searchPage.fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                         }
                 
@@ -399,7 +398,7 @@ Rectangle {
                                     id: historyText
                                     text: model.display
                                     color: Theme.textSecondary
-                                    font.family: searchPage.fontFamily
+                                    font.family: Theme.fontFamily
                                     font.pixelSize: 12
                                 }
 
@@ -460,7 +459,7 @@ Rectangle {
                 Text {
                     text: "热搜榜"
                     color: Theme.textSecondary
-                    font.family: searchPage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
                 }
@@ -505,7 +504,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: (index + 1).toString()
                                 color: index < 3 ? "#FFFFFF" : Theme.textTertiary
-                                font.family: searchPage.fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 10
                                 font.weight: Font.Bold
                             }
@@ -515,7 +514,7 @@ Rectangle {
                         Text {
                             text: model.keyword || ""
                             color: Theme.textPrimary
-                            font.family: searchPage.fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 13
                             elide: Text.ElideRight
                             width: hotSearchCol.width - 44
@@ -569,7 +568,6 @@ Rectangle {
             durationText: model.durationText || ""
             bvid: model.bvid || ""
             showCollection: model.partCount > 1
-            fontFamily: searchPage.fontFamily
 
             // 标题稍微更小 + 标题与 UP 信息间距更小
             titleScale: 0.95
@@ -596,8 +594,7 @@ Rectangle {
                 Components.VideoCardCompact {
                     height: searchResultList.height
                     placeholder: true
-                    fontFamily: searchPage.fontFamily
-                    titleScale: 0.95
+                            titleScale: 0.95
                     infoSpacing: 0.5
                 }
             }
@@ -640,7 +637,7 @@ Rectangle {
                     return "未找到相关视频";
                 }
                 color: Theme.textTertiary
-                font.family: searchPage.fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 12
             }
 
@@ -660,7 +657,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "返回热搜"
                     color: Theme.textSecondary
-                    font.family: searchPage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 11
                 }
 

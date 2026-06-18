@@ -224,7 +224,6 @@ Rectangle {
         })
     }
 
-    readonly property string fontFamily: "Microsoft YaHei"
     readonly property color primaryColor: "#3b82f6"
     readonly property color primaryLight: "#60a5fa"
     readonly property color primaryDark: "#2563eb"
@@ -477,7 +476,7 @@ Rectangle {
                         text: controller ? controller.videoDuration : "00:00"
                         color: "white"
                         font.pixelSize: 9
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.bold: true
                         style: Text.Outline
                         styleColor: Qt.rgba(0, 0, 0, 0.6)
@@ -503,7 +502,7 @@ Rectangle {
                             text: "选集 " + (controller && controller.video.videoPartModel() ? controller.video.videoPartModel().count : 0) + "P"
                             color: "#F8FAFC"
                             font.pixelSize: 8
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.bold: true
                         }
                     }
@@ -585,7 +584,7 @@ Rectangle {
                         width: parent.width
                         text: controller ? controller.videoTitle : ""
                         color: "#f1f5f9"
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 12
                         font.bold: true
                         wrapMode: Text.Wrap
@@ -624,7 +623,7 @@ Rectangle {
                                 delegate: Rectangle {
                                     id: upChip
                                     property var staffItem: modelData
-                                    property int staffMid: Number(staffItem.mid || 0)
+                                    property var staffMid: Number(staffItem.mid || 0)
                                     height: upStaffFlick.height
                                     width: Math.min(upRow.implicitWidth + 10, upStaffFlick.width)
                                     radius: height / 2
@@ -677,7 +676,7 @@ Rectangle {
                                         Text {
                                             text: staffItem.name || "UP主"
                                             color: primaryLight
-                                            font.family: fontFamily
+                                            font.family: Theme.fontFamily
                                             font.pixelSize: 9
                                             font.bold: true
                                             anchors.verticalCenter: parent.verticalCenter
@@ -728,7 +727,7 @@ Rectangle {
                             Text {
                                 text: controller ? controller.videoViews : "0"
                                 color: "#94a3b8"
-                                font.family: fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 9
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -758,7 +757,7 @@ Rectangle {
                             Text {
                                 text: controller ? controller.videoDanmaku : "0"
                                 color: "#94a3b8"
-                                font.family: fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 9
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -767,7 +766,7 @@ Rectangle {
                         Text {
                             text: controller ? controller.videoPubDate : ""
                             color: "#64748b"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 9
                             anchors.verticalCenter: parent.verticalCenter
                             elide: Text.ElideRight
@@ -1045,7 +1044,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     text: "清晰度"
                     color: primaryLight
-                    font.family: fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 10
                     font.bold: true
                 }
@@ -1069,7 +1068,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "刷新"
                         color: "#cbd5e1"
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 9
                         font.bold: true
                     }
@@ -1129,7 +1128,7 @@ Rectangle {
                                     color: detailPage.selectedQuality === modelData
                                            ? "white"
                                            : "#cbd5e1"
-                                    font.family: fontFamily
+                                    font.family: Theme.fontFamily
                                     font.pixelSize: 9
                                     font.bold: detailPage.selectedQuality === modelData
                                 }
@@ -1192,7 +1191,7 @@ Rectangle {
                     Text {
                         text: "选集"
                         color: primaryLight
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 10
                         font.bold: true
                         anchors.verticalCenter: parent.verticalCenter
@@ -1203,7 +1202,7 @@ Rectangle {
                               ? controller.video.videoPartModel().count + "P"
                               : ""
                         color: "#64748b"
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 9
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -1341,7 +1340,7 @@ Rectangle {
                         Text {
                             text: "简介"
                             color: primaryLight
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                             font.bold: true
                             anchors.verticalCenter: parent.verticalCenter
@@ -1352,7 +1351,7 @@ Rectangle {
                                   ? "· " + detailPage.bvid
                                   : ""
                             color: "#64748b"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 9
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -1380,7 +1379,7 @@ Rectangle {
                                   ? controller.videoDesc : "暂无简介")
                             textFormat: Text.RichText
                             color: "#94a3b8"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                             wrapMode: Text.Wrap
                             lineHeight: 1.35
@@ -1455,7 +1454,7 @@ Rectangle {
                             width: parent.width
                             text: "合集·" + (controller && controller.videoSeasonTitle ? controller.videoSeasonTitle : "合集")
                             color: "#f1f5f9"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 11
                             font.bold: true
                             elide: Text.ElideRight
@@ -1467,7 +1466,7 @@ Rectangle {
                                   ? "共 " + controller.videoSeasonTotal + " 个视频"
                                   : "点击查看合集视频"
                             color: "#94a3b8"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 9
                             elide: Text.ElideRight
                         }
@@ -1476,7 +1475,7 @@ Rectangle {
                     Text {
                         text: "›"
                         color: primaryLight
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 18
                         font.bold: true
                         anchors.verticalCenter: parent.verticalCenter
@@ -1565,7 +1564,7 @@ Rectangle {
                                 width: parent.width
                                 text: "更多推荐"
                                 color: "#f1f5f9"
-                                font.family: fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 11
                                 font.bold: true
                                 elide: Text.ElideRight
@@ -1579,7 +1578,7 @@ Rectangle {
                                          ? "为你找到 " + relatedSection.relatedModel.count + " 个相关视频"
                                          : (detailPage.relatedExpanded ? "暂无推荐" : "点击加载相关视频"))
                                 color: "#94a3b8"
-                                font.family: fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 9
                                 elide: Text.ElideRight
                             }
@@ -1656,7 +1655,6 @@ Rectangle {
                             durationText: model.durationText || ""
                             bvid: model.bvid || ""
                             showCollection: model.partCount > 1
-                            fontFamily: detailPage.fontFamily
                             titleScale: 0.9
                             subScale: 0.85
                             onClicked: {
@@ -1677,8 +1675,7 @@ Rectangle {
                                 width: 105
                                 height: 135
                                 placeholder: true
-                                fontFamily: detailPage.fontFamily
-                                titleScale: 0.9
+                                    titleScale: 0.9
                                 subScale: 0.85
                             }
                         }
@@ -1689,7 +1686,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "暂无推荐"
                         color: "#64748b"
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 9
                     }
                 }
@@ -1749,14 +1746,25 @@ Rectangle {
                     var col = _active ? _activeColor : "#cbd5e1"
 
                     if (_type === "like") {
-                        ctx.fillStyle = col
+                        ctx.save()
+                        ctx.scale(width / 11, height / 11)
+                        ctx.strokeStyle = col
+                        ctx.lineWidth = 1.4
+                        ctx.lineCap = "round"
+                        ctx.lineJoin = "round"
                         ctx.beginPath()
-                        ctx.moveTo(7, 13)
-                        ctx.bezierCurveTo(1, 8, 0, 4, 3, 2)
-                        ctx.bezierCurveTo(5, 1, 7, 2, 7, 4.5)
-                        ctx.bezierCurveTo(7, 2, 9, 1, 11, 2)
-                        ctx.bezierCurveTo(14, 4, 13, 8, 7, 13)
-                        ctx.fill()
+                        ctx.moveTo(2, 5.3)
+                        ctx.lineTo(4.2, 5.3)
+                        ctx.lineTo(5.6, 2.4)
+                        ctx.quadraticCurveTo(6.2, 1.4, 7.0, 2.0)
+                        ctx.lineTo(6.6, 5.0)
+                        ctx.lineTo(9.4, 5.0)
+                        ctx.lineTo(8.4, 9.1)
+                        ctx.lineTo(4.0, 9.1)
+                        ctx.lineTo(2.0, 8.2)
+                        ctx.closePath()
+                        ctx.stroke()
+                        ctx.restore()
                     } else if (_type === "coin") {
                         ctx.strokeStyle = col
                         ctx.lineWidth = 1.4
@@ -1797,7 +1805,7 @@ Rectangle {
             Text {
                 text: actionBtn.label
                 color: actionBtn.active ? actionBtn.activeColor : "#cbd5e1"
-                font.family: fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 9
                 font.bold: actionBtn.active
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1888,7 +1896,7 @@ Rectangle {
             Text {
                 text: toolBtn.label
                 color: "white"
-                font.family: fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 8
                 font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
@@ -1921,7 +1929,7 @@ Rectangle {
             width: parent.width - 40
             text: controller ? controller.videoTitle : ""
             color: "white"
-            font.family: fontFamily
+            font.family: Theme.fontFamily
             font.pixelSize: 14
             font.bold: true
             wrapMode: Text.Wrap
@@ -1948,7 +1956,7 @@ Rectangle {
             width: parent.width - 40
             text: detailPage.fullPartTitleText
             color: "white"
-            font.family: fontFamily
+            font.family: Theme.fontFamily
             font.pixelSize: 14
             font.bold: true
             wrapMode: Text.Wrap
@@ -1994,7 +2002,7 @@ Rectangle {
                 Text {
                     text: "选择字幕"
                     color: "white"
-                    font.family: fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 11
                     font.bold: true
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -2004,7 +2012,7 @@ Rectangle {
                     text: "当前字幕已选中 ✅"
                     visible: controller && controller.selectedSubtitleId > 0
                     color: "#9ae6b4"
-                    font.family: fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 9
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
@@ -2023,7 +2031,7 @@ Rectangle {
                         text: "没有字幕"
                         visible: !controller || controller.subtitleList.length === 0
                         color: "#94a3b8"
-                        font.family: fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 10
                     }
 
@@ -2048,7 +2056,7 @@ Rectangle {
                                 width: parent.width - 12
                                 text: "不使用字幕"
                                 color: "white"
-                                font.family: fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 10
                                 elide: Text.ElideRight
                                 horizontalAlignment: Text.AlignHCenter
@@ -2086,7 +2094,7 @@ Rectangle {
                                 return label;
                             }
                             color: "white"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                             elide: Text.ElideRight
                             horizontalAlignment: Text.AlignHCenter
@@ -2152,7 +2160,7 @@ Rectangle {
                 Text {
                     text: "选择投币数量"
                     color: "white"
-                    font.family: fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 11
                     font.bold: true
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -2192,7 +2200,7 @@ Rectangle {
                         Text {
                             text: "同时点赞"
                             color: "#cbd5e1"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                         }
                     }
@@ -2225,7 +2233,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 text: modelData + "币"
                                 color: "white"
-                                font.family: fontFamily
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 10
                                 font.bold: true
                             }
@@ -2288,7 +2296,7 @@ Rectangle {
                 Text {
                     text: "选择收藏夹"
                     color: "white"
-                    font.family: fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 11
                     font.bold: true
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -2318,7 +2326,7 @@ Rectangle {
                             width: parent.width - 12
                             text: model.title || "未命名收藏夹"
                             color: "white"
-                            font.family: fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                             elide: Text.ElideRight
                             horizontalAlignment: Text.AlignHCenter
@@ -2369,7 +2377,7 @@ Rectangle {
             Text {
                 text: controller ? controller.downloadStatus : "准备下载..."
                 color: "#FFFFFF"
-                font.family: fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 12
                 anchors.horizontalCenter: parent.horizontalCenter
                 wrapMode: Text.WordWrap

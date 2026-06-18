@@ -94,6 +94,16 @@ Rectangle {
         }
     }
 
+    function upFansMedalLabel() {
+        if (!controller || !controller.upFansMedalName) return ""
+        var levelText = controller.upFansMedalLevel > 0 ? " Lv" + controller.upFansMedalLevel : ""
+        return controller.upFansMedalName + levelText
+    }
+
+    function hasUpBadges() {
+        return !!(controller && (controller.upOfficialLabel || controller.upVipLabel || upFansMedalLabel()))
+    }
+
     function doUpSearch() {
         var kw = upSearchKeyword.trim()
         if (kw.length === 0) return
@@ -483,6 +493,83 @@ Rectangle {
                                 onClicked: {
                                     if (controller) controller.up.toggleUpFollow()
                                 }
+                            }
+                        }
+                    }
+
+                    Row {
+                        width: parent.width
+                        height: visible ? 16 : 0
+                        spacing: 4
+                        visible: upPage.hasUpBadges()
+                        clip: true
+
+                        Rectangle {
+                            visible: controller && controller.upOfficialLabel !== ""
+                            height: 16
+                            radius: Theme.radiusRound
+                            color: Theme.withAlpha(Theme.primary, 0.16)
+                            border.color: Theme.withAlpha(Theme.primary, 0.36)
+                            border.width: 1
+                            width: Math.min(84, officialBadgeText.implicitWidth + 12)
+
+                            Text {
+                                id: officialBadgeText
+                                anchors.centerIn: parent
+                                width: parent.width - 8
+                                text: controller ? controller.upOfficialLabel : ""
+                                color: Theme.primaryLight
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTiny
+                                font.bold: true
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+
+                        Rectangle {
+                            visible: controller && controller.upVipLabel !== ""
+                            height: 16
+                            radius: Theme.radiusRound
+                            color: Theme.withAlpha(Theme.accent, 0.18)
+                            border.color: Theme.withAlpha(Theme.accent, 0.38)
+                            border.width: 1
+                            width: Math.min(64, vipBadgeText.implicitWidth + 12)
+
+                            Text {
+                                id: vipBadgeText
+                                anchors.centerIn: parent
+                                width: parent.width - 8
+                                text: controller ? controller.upVipLabel : ""
+                                color: "#FB7299"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTiny
+                                font.bold: true
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+
+                        Rectangle {
+                            visible: upPage.upFansMedalLabel() !== ""
+                            height: 16
+                            radius: Theme.radiusRound
+                            color: Theme.withAlpha(Theme.warning, 0.16)
+                            border.color: Theme.withAlpha(Theme.warning, 0.36)
+                            border.width: 1
+                            width: Math.min(70, medalBadgeText.implicitWidth + 12)
+
+                            Text {
+                                id: medalBadgeText
+                                anchors.centerIn: parent
+                                width: parent.width - 8
+                                text: upPage.upFansMedalLabel()
+                                color: Theme.warning
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTiny
+                                font.bold: true
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
                             }
                         }
                     }
@@ -916,7 +1003,6 @@ Rectangle {
                                        || model.isLastWatchedArc === true
                                        || index === upPage.locatedLastWatchedIndex
                         showCollection: model.partCount > 1
-                        fontFamily: Theme.fontFamily
                         titleScale: 0.9
                         subScale: 0.85
                         onClicked: upPage.videoSelected(bvid)
@@ -933,8 +1019,7 @@ Rectangle {
                             Components.VideoCardCompact {
                                 height: upVideoList.height
                                 placeholder: true
-                                fontFamily: Theme.fontFamily
-                                titleScale: 0.9
+                                        titleScale: 0.9
                                 subScale: 0.85
                             }
                         }
@@ -969,7 +1054,6 @@ Rectangle {
                         durationText: model.durationText || ""
                         bvid: model.bvid || ""
                         showCollection: model.partCount > 1
-                        fontFamily: Theme.fontFamily
                         titleScale: 0.9
                         subScale: 0.85
                         onClicked: {
@@ -992,8 +1076,7 @@ Rectangle {
                             Components.VideoCardCompact {
                                 height: upSearchResultList.height
                                 placeholder: true
-                                fontFamily: Theme.fontFamily
-                                titleScale: 0.9
+                                        titleScale: 0.9
                                 subScale: 0.85
                             }
                         }
@@ -1274,7 +1357,6 @@ Rectangle {
                     Components.VideoCardCompact {
                         height: 135
                         placeholder: true
-                        fontFamily: Theme.fontFamily
                         titleScale: 0.9
                         subScale: 0.85
                     }

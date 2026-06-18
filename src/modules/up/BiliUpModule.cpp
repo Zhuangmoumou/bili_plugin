@@ -52,6 +52,22 @@ struct ParsedUpVideos {
   bool hasPrevious = false;
 };
 
+bool jsonBoolValue(const QJsonValue &value) {
+  if (value.isBool()) return value.toBool();
+  if (value.isDouble()) return value.toInt() != 0;
+  if (value.isString()) {
+    const QString text = value.toString().trimmed().toLower();
+    return text == "1" || text == "true" || text == "yes";
+  }
+  return false;
+}
+
+QString upOfficialFallbackLabel(int type) {
+  if (type == 1) return QStringLiteral("机构认证");
+  if (type == 0) return QStringLiteral("认证 UP");
+  return QString();
+}
+
 ParsedUpVideos parseUpVideosPayload(const QJsonObject &data, qint64 mid,
                                     int page, int pageSize) {
   ParsedUpVideos result;
@@ -230,6 +246,14 @@ void BiliUpModule::fetchUpInfo(qint64 mid) {
       m_controller->m_upVideoModel->setHasMore(true);
     }
     clearUpSearch();
+    m_controller->m_upOfficialLabel.clear();
+    m_controller->m_upOfficialDesc.clear();
+    m_controller->m_upOfficialType = -1;
+    m_controller->m_upVipLabel.clear();
+    m_controller->m_upIsVip = false;
+    m_controller->m_upNameplateName.clear();
+    m_controller->m_upFansMedalName.clear();
+    m_controller->m_upFansMedalLevel = 0;
     if (m_controller->m_upIsFollowing) {
       m_controller->m_upIsFollowing = false;
       emit m_controller->upFollowChanged();
@@ -271,6 +295,77 @@ void BiliUpModule::fetchUpInfo(qint64 mid) {
           level = levelInfo.value("current_level").toInt(0);
         }
         m_controller->m_upUserLevel = level;
+
+        QJsonObject official = obj.value("official").toObject();
+        if (official.isEmpty()) {
+          official = obj.value("Official").toObject();
+        }
+        QJsonObject officialVerify = obj.value("official_verify").toObject();
+        bool officialTypeKnown = false;
+        int officialType = BiliJson::intValue(official.value("type"), &officialTypeKnown);
+        if (!officialTypeKnown) {
+          bool verifyTypeKnown = false;
+          const int verifyType = BiliJson::intValue(officialVerify.value("type"), &verifyTypeKnown);
+          if (verifyTypeKnown) {
+            officialType = verifyType;
+            officialTypeKnown = true;
+          }
+        }
+        bool officialRoleKnown = false;
+        const int officialRole = BiliJson::intValue(official.value("role"), &officialRoleKnown);
+        QString officialTitle = official.value("title").toString().trimmed();
+        QString officialDesc = official.value("desc").toString().trimmed();
+        if (officialDesc.isEmpty()) {
+          officialDesc = officialVerify.value("desc").toString().trimmed();
+        }
+        QString officialLabel = officialTitle;
+        const bool hasOfficial = (officialTypeKnown && officialType >= 0) ||
+                                 (officialRoleKnown && officialRole > 0) ||
+                                 !officialTitle.isEmpty() || !officialDesc.isEmpty();
+        if (officialLabel.isEmpty() && hasOfficial) {
+          officialLabel = upOfficialFallbackLabel(officialType);
+          if (officialLabel.isEmpty()) officialLabel = QStringLiteral("认证 UP");
+        }
+        if (!hasOfficial) {
+          officialType = -1;
+        }
+        m_controller->m_upOfficialType = officialType;
+        m_controller->m_upOfficialLabel = officialLabel;
+        m_controller->m_upOfficialDesc = officialDesc;
+
+        QJsonObject vip = obj.value("vip").toObject();
+        QJsonObject vipLabelObj = vip.value("label").toObject();
+        if (vipLabelObj.isEmpty()) {
+          vipLabelObj = obj.value("vip_label").toObject();
+        }
+        bool vipStatusKnown = false;
+        int vipStatus = BiliJson::intValue(vip.value("status"), &vipStatusKnown);
+        if (!vipStatusKnown) {
+          vipStatus = BiliJson::intValue(vip.value("vipStatus"), &vipStatusKnown);
+        }
+        const int vipType = qMax(BiliJson::intValue(vip.value("type")),
+                                 BiliJson::intValue(vip.value("vipType")));
+        m_controller->m_upIsVip = vipStatusKnown ? (vipStatus == 1) : (vipType > 0);
+        m_controller->m_upVipLabel = vipLabelObj.value("text").toString().trimmed();
+        if (m_controller->m_upIsVip && m_controller->m_upVipLabel.isEmpty()) {
+          m_controller->m_upVipLabel = QStringLiteral("大会员");
+        }
+
+        QJsonObject nameplate = obj.value("nameplate").toObject();
+        m_controller->m_upNameplateName = nameplate.value("name").toString().trimmed();
+
+        QJsonObject fansMedal = obj.value("fans_medal").toObject();
+        QJsonObject medal = fansMedal.value("medal").toObject();
+        const bool medalVisible = jsonBoolValue(fansMedal.value("show")) &&
+                                  jsonBoolValue(fansMedal.value("wear")) &&
+                                  !medal.isEmpty();
+        if (medalVisible) {
+          m_controller->m_upFansMedalName = medal.value("medal_name").toString().trimmed();
+          m_controller->m_upFansMedalLevel = BiliJson::intValue(medal.value("level"));
+        } else {
+          m_controller->m_upFansMedalName.clear();
+          m_controller->m_upFansMedalLevel = 0;
+        }
 
         auto toIntSafe = [](const QJsonValue &v) -> int {
           if (v.isDouble())

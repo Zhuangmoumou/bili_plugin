@@ -181,7 +181,6 @@ Rectangle {
                     subScale: 0.86
                     infoSpacing: -1
                     subYOffset: -10
-                    fontFamily: Theme.fontFamily
                 }
             }
         }

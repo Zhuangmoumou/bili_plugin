@@ -115,7 +115,6 @@ Rectangle {
                 durationText: model.durationText || ""
                 bvid: model.bvid || ""
                 showCollection: model.partCount > 1
-                fontFamily: Theme.fontFamily
                 titleScale: 0.9
                 subScale: 0.85
                 onClicked: {
@@ -169,8 +168,7 @@ Rectangle {
                 Components.VideoCardCompact {
                     height: seasonVideoList.height
                     placeholder: true
-                    fontFamily: Theme.fontFamily
-                    titleScale: 0.9
+                        titleScale: 0.9
                     subScale: 0.85
                 }
             }

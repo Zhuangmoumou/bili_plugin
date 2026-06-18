@@ -10,7 +10,6 @@ Rectangle {
     color: Theme.bgPrimary
 
     property var controller: null
-    property string fontFamily: "Microsoft YaHei, 微软雅黑, sans-serif"
     property var rootRef: null
     property int initialTabIndex: 0
 
@@ -135,7 +134,6 @@ Rectangle {
                     durationText: model.durationText || ""
                     bvid: model.bvid || ""
                     showCollection: model.partCount > 1
-                    fontFamily: homePage.fontFamily
                     onClicked: homePage.videoSelected(bvid)
                 }
 
@@ -158,8 +156,7 @@ Rectangle {
                         VideoCardCompact {
                             height: popularList.height
                             placeholder: true
-                            fontFamily: homePage.fontFamily
-                        }
+                                }
                     }
                 }
 
@@ -168,7 +165,7 @@ Rectangle {
                     visible: initialPopularRequested && popularList.count === 0 && !isLoading
                     text: "暂无推荐视频"
                     color: Theme.textTertiary
-                    font.family: homePage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 12
                     anchors.centerIn: parent
                 }
@@ -208,7 +205,6 @@ Rectangle {
                     showCollection: model.partCount > 1
                     rankIndex: index + 1
                     showRank: true
-                    fontFamily: homePage.fontFamily
                     onClicked: homePage.videoSelected(bvid)
                 }
 
@@ -223,8 +219,7 @@ Rectangle {
                         VideoCardCompact {
                             height: rankingList.height
                             placeholder: true
-                            fontFamily: homePage.fontFamily
-                        }
+                                }
                     }
                 }
 
@@ -232,7 +227,7 @@ Rectangle {
                     visible: rankingList.count === 0 && !isLoading
                     text: "排行榜加载中..."
                     color: Theme.textTertiary
-                    font.family: homePage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 12
                     anchors.centerIn: parent
                 }
@@ -303,7 +298,7 @@ Rectangle {
                         ? controller.userName : "点击登录"
                         color: controller && controller.loggedIn
                         ? Theme.textPrimary : Theme.primary
-                        font.family: homePage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 12
                         font.bold: true
                         anchors.horizontalCenter: parent.horizontalCenter
@@ -326,7 +321,7 @@ Rectangle {
                         Text {
                             text: "已登录"
                             color: Theme.success
-                            font.family: homePage.fontFamily
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
                         }
                     }
@@ -334,7 +329,7 @@ Rectangle {
                     Text {
                         text: "Lv" + (controller ? controller.userLevel : 0)
                         color: Theme.primary
-                        font.family: homePage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 14
                         font.bold: true
                     }
@@ -342,7 +337,7 @@ Rectangle {
                     Text {
                         text: "硬币: " + (controller ? controller.userCoins : 0)
                         color: Theme.textSecondary
-                        font.family: homePage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 10
                     }
                 }
@@ -456,7 +451,7 @@ Rectangle {
                                 ? Theme.primary
                                 : Theme.textSecondary
                         }
-                        font.family: homePage.fontFamily
+                        font.family: Theme.fontFamily
                         font.pixelSize: 11
                         font.bold: tabIndex === modelData.idx && modelData.idx !== 2
                         anchors.centerIn: parent
@@ -522,7 +517,7 @@ Rectangle {
                 Text {
                     text: "加载中"
                     color: Theme.textSecondary
-                    font.family: homePage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 9
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -544,7 +539,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "取消"
                     color: Theme.textSecondary
-                    font.family: homePage.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 8
                 }
 

@@ -123,6 +123,14 @@ class BiliController : public QObject {
   Q_PROPERTY(int upUserFans READ upUserFans NOTIFY upUserChanged)
   Q_PROPERTY(int upUserFollowing READ upUserFollowing NOTIFY upUserChanged)
   Q_PROPERTY(QString upUserSign READ upUserSign NOTIFY upUserChanged)
+  Q_PROPERTY(QString upOfficialLabel READ upOfficialLabel NOTIFY upUserChanged)
+  Q_PROPERTY(QString upOfficialDesc READ upOfficialDesc NOTIFY upUserChanged)
+  Q_PROPERTY(int upOfficialType READ upOfficialType NOTIFY upUserChanged)
+  Q_PROPERTY(QString upVipLabel READ upVipLabel NOTIFY upUserChanged)
+  Q_PROPERTY(bool upIsVip READ upIsVip NOTIFY upUserChanged)
+  Q_PROPERTY(QString upNameplateName READ upNameplateName NOTIFY upUserChanged)
+  Q_PROPERTY(QString upFansMedalName READ upFansMedalName NOTIFY upUserChanged)
+  Q_PROPERTY(int upFansMedalLevel READ upFansMedalLevel NOTIFY upUserChanged)
   Q_PROPERTY(bool upIsFollowing READ upIsFollowing NOTIFY upFollowChanged)
   Q_PROPERTY(int upVideoTotal READ upVideoTotal NOTIFY upVideoTotalChanged)
   Q_PROPERTY(int upLastWatchedRank READ upLastWatchedRank NOTIFY upLastWatchedChanged)
@@ -222,6 +230,14 @@ public:
   int upUserFans() const { return m_upUserFans; }
   int upUserFollowing() const { return m_upUserFollowing; }
   QString upUserSign() const { return m_upUserSign; }
+  QString upOfficialLabel() const { return m_upOfficialLabel; }
+  QString upOfficialDesc() const { return m_upOfficialDesc; }
+  int upOfficialType() const { return m_upOfficialType; }
+  QString upVipLabel() const { return m_upVipLabel; }
+  bool upIsVip() const { return m_upIsVip; }
+  QString upNameplateName() const { return m_upNameplateName; }
+  QString upFansMedalName() const { return m_upFansMedalName; }
+  int upFansMedalLevel() const { return m_upFansMedalLevel; }
   bool upIsFollowing() const { return m_upIsFollowing; }
   int upVideoTotal() const { return m_upVideoTotal; }
   int upLastWatchedRank() const { return m_upLastWatchedRank; }
@@ -496,6 +512,14 @@ private:
   int m_upUserFans = 0;
   int m_upUserFollowing = 0;
   QString m_upUserSign;
+  QString m_upOfficialLabel;
+  QString m_upOfficialDesc;
+  int m_upOfficialType = -1;
+  QString m_upVipLabel;
+  bool m_upIsVip = false;
+  QString m_upNameplateName;
+  QString m_upFansMedalName;
+  int m_upFansMedalLevel = 0;
   bool m_upIsFollowing = false;
   bool m_upFollowLoading = false;
   int m_upVideoTotal = 0;

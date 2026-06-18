@@ -178,7 +178,7 @@ Rectangle {
 
                             Text {
                                 width: parent.width
-                                text: "详情后预准备评论、字幕和更多视频，可能卡顿"
+                                text: "在视频详情提前加载评论、字幕、推荐"
                                 color: Theme.textTertiary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: 9

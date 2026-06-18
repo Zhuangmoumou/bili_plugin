@@ -17,7 +17,6 @@ Item {
     property bool showCollection: false
     property bool showRank: false
     property bool isLastWatched: false
-    property string fontFamily: "Microsoft YaHei"
     property real fontScale: 1.0
     property real titleScale: 1.0
     property real subScale: 1.0
@@ -145,7 +144,7 @@ Item {
                     id: durationLabel
                     text: durationText
                     color: "#FFFFFF"
-                    font.family: card.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 9 * card.fontScale
                     font.bold: true
                     anchors.centerIn: parent
@@ -168,7 +167,7 @@ Item {
                     id: collectionText
                     text: "选集"
                     color: "#F8FAFC"
-                    font.family: card.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 8
                     font.bold: true
                     anchors.centerIn: parent
@@ -192,7 +191,7 @@ Item {
                     anchors.centerIn: parent
                     text: "上次"
                     color: Theme.textOnPrimary
-                    font.family: card.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 8
                     font.bold: true
                 }
@@ -209,7 +208,7 @@ Item {
                 Text {
                     text: rankIndex
                     color: "#FFFFFF"
-                    font.family: card.fontFamily
+                    font.family: Theme.fontFamily
                     font.pixelSize: 9
                     font.bold: true
                     anchors.centerIn: parent
@@ -277,7 +276,7 @@ Item {
                 width: parent.width
                 text: videoTitle
                 color: Theme.textPrimary
-                font.family: card.fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 10 * card.fontScale * card.titleScale
                 font.bold: titleBold
                 maximumLineCount: 2
@@ -293,7 +292,7 @@ Item {
                 y: subYOffset
                 text: upName + (viewCount ? " · " + viewCount : "")
                 color: "#7A7A7A"
-                font.family: card.fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 8 * card.fontScale * card.subScale
                 elide: Text.ElideRight
             }

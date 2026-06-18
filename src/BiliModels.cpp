@@ -1,8 +1,122 @@
 #include "BiliModels.h"
 #include <QDateTime>
 #include <QDebug>
+#include <QJsonArray>
 #include <QSet>
 #include <cmath>
+
+namespace {
+
+QString normalizeCommentEmoteUrl(const QString &rawUrl)
+{
+    QString url = rawUrl.trimmed();
+    if (url.startsWith("//")) {
+        return "https:" + url;
+    }
+    if (url.startsWith("http://")) {
+        return "https://" + url.mid(7);
+    }
+    return url;
+}
+
+QString normalizeCommentEmoteKey(const QString &rawKey)
+{
+    QString key = rawKey.trimmed();
+    if (key.isEmpty()) return QString();
+    if (key.startsWith('[') && key.endsWith(']')) return key;
+    return QString("[%1]").arg(key);
+}
+
+QVariantMap buildCommentEmoteEntry(const QString &rawKey, const QJsonObject &obj)
+{
+    QVariantMap entry;
+    const QString key = normalizeCommentEmoteKey(rawKey);
+    if (key.isEmpty()) return entry;
+
+    const QStringList urlKeys = {
+        "webp_url", "webpUrl", "webp", "gif_url", "gifUrl", "gif", "url"
+    };
+    QString url;
+    for (const QString &urlKey : urlKeys) {
+        url = normalizeCommentEmoteUrl(obj.value(urlKey).toString());
+        if (!url.isEmpty()) break;
+    }
+    if (url.isEmpty()) return entry;
+
+    const QJsonObject meta = obj.value("meta").toObject();
+    int size = meta.value("size").toInt(obj.value("size").toInt(1));
+    size = qBound(1, size, 2);
+    const QString alias = meta.value("alias").toString(obj.value("alias").toString()).trimmed();
+
+    entry.insert("text", key);
+    entry.insert("url", url);
+    entry.insert("size", size);
+    if (!alias.isEmpty()) entry.insert("alias", alias);
+    return entry;
+}
+
+void insertCommentEmoteAlias(QVariantMap &emotes, const QString &rawKey,
+                             const QVariantMap &entry)
+{
+    const QString key = normalizeCommentEmoteKey(rawKey);
+    if (key.isEmpty() || entry.isEmpty()) return;
+    emotes.insert(key, entry);
+
+    const QString bare = key.mid(1, key.size() - 2);
+    if (!bare.isEmpty()) emotes.insert(bare, entry);
+}
+
+void appendCommentEmoteEntry(QVariantMap &emotes, const QString &rawKey,
+                             const QJsonObject &obj)
+{
+    const QVariantMap entry = buildCommentEmoteEntry(rawKey, obj);
+    if (entry.isEmpty()) return;
+
+    insertCommentEmoteAlias(emotes, rawKey, entry);
+    const QString alias = entry.value("alias").toString().trimmed();
+    if (!alias.isEmpty()) insertCommentEmoteAlias(emotes, alias, entry);
+}
+
+void parseCommentEmoteCollection(QVariantMap &emotes, const QJsonValue &value)
+{
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        if (object.contains("url") || object.contains("webp_url") || object.contains("webpUrl") ||
+            object.contains("webp") || object.contains("gif_url") || object.contains("gifUrl") ||
+            object.contains("gif")) {
+            appendCommentEmoteEntry(emotes, object.value("text").toString(), object);
+            return;
+        }
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            if (!it.value().isObject()) continue;
+            QJsonObject emoteObject = it.value().toObject();
+            QString key = emoteObject.value("text").toString();
+            if (key.isEmpty()) key = it.key();
+            appendCommentEmoteEntry(emotes, key, emoteObject);
+        }
+        return;
+    }
+
+    if (!value.isArray()) return;
+    const QJsonArray array = value.toArray();
+    for (const QJsonValue &itemValue : array) {
+        if (!itemValue.isObject()) continue;
+        const QJsonObject emoteObject = itemValue.toObject();
+        QString key = emoteObject.value("text").toString();
+        if (key.isEmpty()) key = emoteObject.value("name").toString();
+        appendCommentEmoteEntry(emotes, key, emoteObject);
+    }
+}
+
+QVariantMap parseCommentEmotes(const QJsonObject &content)
+{
+    QVariantMap emotes;
+    parseCommentEmoteCollection(emotes, content.value("emote"));
+    parseCommentEmoteCollection(emotes, content.value("emotes"));
+    return emotes;
+}
+
+} // namespace
 
 // ============ VideoListModel ============
 
@@ -372,6 +486,7 @@ QVariant CommentListModel::data(const QModelIndex &index, int role) const
     case AvatarRole:   return item.avatar;
     case LevelRole:    return item.level;
     case ContentRole:  return item.content;
+    case EmotesRole:   return item.emotes;
     case PicturesRole: return item.pictures;
     case LikesRole:    return item.likes;
     case RcountRole:   return item.rcount;
@@ -392,6 +507,7 @@ QHash<int, QByteArray> CommentListModel::roleNames() const
         {AvatarRole, "avatar"},
         {LevelRole, "level"},
         {ContentRole, "content"},
+        {EmotesRole, "emotes"},
         {PicturesRole, "pictures"},
         {LikesRole, "likes"},
         {RcountRole, "rcount"},
@@ -489,6 +605,7 @@ CommentItem CommentListModel::parseCommentItem(const QJsonObject &obj)
 
     QJsonObject content = obj.value("content").toObject();
     item.content = content.value("message").toString();
+    item.emotes = parseCommentEmotes(content);
 
     QJsonArray pictures = content.value("pictures").toArray();
     for (const QJsonValue &pv : pictures) {
@@ -547,6 +664,7 @@ QVariant CommentReplyListModel::data(const QModelIndex &index, int role) const
     case AvatarRole: return item.avatar;
     case LevelRole: return item.level;
     case ContentRole: return item.content;
+    case EmotesRole: return item.emotes;
     case PicturesRole: return item.pictures;
     case LikesRole: return item.likes;
     case CtimeRole: return item.ctime;
@@ -565,6 +683,7 @@ QHash<int, QByteArray> CommentReplyListModel::roleNames() const
         {AvatarRole, "avatar"},
         {LevelRole, "level"},
         {ContentRole, "content"},
+        {EmotesRole, "emotes"},
         {PicturesRole, "pictures"},
         {LikesRole, "likes"},
         {CtimeRole, "ctime"},
@@ -640,6 +759,7 @@ CommentReplyItem CommentReplyListModel::parseCommentReplyItem(const QJsonObject 
 
     QJsonObject content = obj.value("content").toObject();
     item.content = content.value("message").toString();
+    item.emotes = parseCommentEmotes(content);
 
     QJsonArray pictures = content.value("pictures").toArray();
     for (const QJsonValue &pv : pictures) {

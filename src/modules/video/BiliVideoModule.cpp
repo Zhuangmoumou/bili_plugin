@@ -37,6 +37,76 @@
 extern bool bili_startApiServer();
 extern void bili_stopApiServer();
 
+namespace {
+
+int currentPlaybackDuration(qint64 currentCid, int fallbackDuration,
+                            VideoPartListModel *partModel) {
+  if (!partModel || partModel->count() <= 0 || currentCid <= 0)
+    return fallbackDuration;
+
+  for (int i = 0; i < partModel->count(); ++i) {
+    QModelIndex idx = partModel->index(i, 0);
+    qint64 cid = partModel->data(idx, VideoPartListModel::CidRole).toLongLong();
+    if (cid != currentCid)
+      continue;
+
+    int partDuration = partModel->data(idx, VideoPartListModel::DurationRole).toInt();
+    return partDuration > 0 ? partDuration : fallbackDuration;
+  }
+
+  return fallbackDuration;
+}
+
+struct PlaybackProgressState {
+  qint64 progressCid = 0;
+  int progressSeconds = 0;
+  int heartbeatPlayedTime = 0;
+};
+
+PlaybackProgressState resolvePlaybackProgressState(const QJsonObject &data,
+                                                   qint64 currentCid,
+                                                   int currentDuration) {
+  PlaybackProgressState state;
+  state.progressCid = currentCid;
+
+  int normalizedPlayedTime = 0;
+  bool playedTimeOk = false;
+  int lastPlayTime = BiliJson::intValue(data.value("last_play_time"), &playedTimeOk);
+  if (playedTimeOk && lastPlayTime >= -1) {
+    if (lastPlayTime > 0 && currentDuration > 0 && lastPlayTime > currentDuration) {
+      int lastPlaySeconds = qRound(lastPlayTime / 1000.0);
+      if (lastPlaySeconds <= currentDuration) {
+        lastPlayTime = lastPlaySeconds;
+      }
+    }
+    if (lastPlayTime == -1 || currentDuration <= 0 || lastPlayTime <= currentDuration) {
+      normalizedPlayedTime = lastPlayTime;
+    }
+  }
+
+  qint64 lastPlayCid = data.value("last_play_cid").toVariant().toLongLong();
+  if (lastPlayCid > 0) {
+    state.progressCid = lastPlayCid;
+  }
+  state.progressSeconds = qMax(0, normalizedPlayedTime);
+
+  if (state.progressCid != currentCid)
+    return state;
+
+  if (normalizedPlayedTime == -1) {
+    state.heartbeatPlayedTime = -1;
+  } else if (normalizedPlayedTime > 0) {
+    if (currentDuration > 0 && normalizedPlayedTime >= currentDuration) {
+      state.heartbeatPlayedTime = -1;
+    } else {
+      state.heartbeatPlayedTime = normalizedPlayedTime;
+    }
+  }
+  return state;
+}
+
+} // namespace
+
 BiliVideoModule::BiliVideoModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
 
@@ -218,7 +288,8 @@ void BiliVideoModule::refreshCurrentPlaybackProgress() {
   const qint64 aid = m_controller->m_currentVideo.aid;
   const qint64 currentCid = m_controller->m_currentVideo.cid;
   const QString bvid = m_controller->m_currentVideo.bvid;
-  const int duration = m_controller->m_currentVideo.duration;
+  const int currentDuration = currentPlaybackDuration(
+      currentCid, m_controller->m_currentVideo.duration, m_controller->m_videoPartModel);
 
   QMap<QString, QString> params;
   params["aid"] = QString::number(aid);
@@ -228,31 +299,14 @@ void BiliVideoModule::refreshCurrentPlaybackProgress() {
   QPointer<BiliController> self(m_controller);
   m_controller->m_network->get(
       "/video/player/info", params,
-      [self, currentCid, duration](const QJsonObject &data) {
+      [self, currentCid, currentDuration](const QJsonObject &data) {
         if (!self || self->m_currentVideo.cid != currentCid)
           return;
 
-        int playedTime = 0;
-        qint64 reportCid = currentCid;
-        bool playedTimeOk = false;
-        int lastPlayTime = BiliJson::intValue(data.value("last_play_time"), &playedTimeOk);
-        if (playedTimeOk && lastPlayTime >= -1) {
-          if (lastPlayTime > 0 && duration > 0 && lastPlayTime > duration) {
-            int lastPlaySeconds = qRound(lastPlayTime / 1000.0);
-            if (lastPlaySeconds <= duration) {
-              lastPlayTime = lastPlaySeconds;
-            }
-          }
-          if (lastPlayTime == -1 || duration <= 0 || lastPlayTime <= duration) {
-            playedTime = lastPlayTime;
-          }
-        }
-        qint64 lastPlayCid = data.value("last_play_cid").toVariant().toLongLong();
-        if (lastPlayCid > 0) {
-          reportCid = lastPlayCid;
-        }
-        self->m_playbackProgressCid = reportCid;
-        self->m_playbackProgressSeconds = qMax(0, playedTime);
+        PlaybackProgressState state =
+            resolvePlaybackProgressState(data, currentCid, currentDuration);
+        self->m_playbackProgressCid = state.progressCid;
+        self->m_playbackProgressSeconds = state.progressSeconds;
         emit self->playbackProgressChanged();
       },
       [](int, const QString &) {});
@@ -267,7 +321,8 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
   const qint64 aid = m_controller->m_currentVideo.aid;
   const qint64 currentCid = m_controller->m_currentVideo.cid;
   const QString bvid = m_controller->m_currentVideo.bvid;
-  const int duration = m_controller->m_currentVideo.duration;
+  const int currentDuration = currentPlaybackDuration(
+      currentCid, m_controller->m_currentVideo.duration, m_controller->m_videoPartModel);
   QString reportKey = bvid + "#" + QString::number(currentCid);
   if (m_controller->m_lastRecentViewReportKey == reportKey) {
     refreshCurrentPlaybackProgress();
@@ -283,38 +338,21 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
   QPointer<BiliController> self(m_controller);
   m_controller->m_network->get(
       "/video/player/info", playerInfoParams,
-      [self, reportKey, aid, currentCid, bvid, duration](const QJsonObject &data) {
+      [self, reportKey, aid, currentCid, bvid, currentDuration](const QJsonObject &data) {
         if (!self)
           return;
 
-        int playedTime = 0;
-        qint64 reportCid = currentCid;
-        bool playedTimeOk = false;
-        int lastPlayTime = BiliJson::intValue(data.value("last_play_time"), &playedTimeOk);
-        if (playedTimeOk && lastPlayTime >= -1) {
-          if (lastPlayTime > 0 && duration > 0 && lastPlayTime > duration) {
-            int lastPlaySeconds = qRound(lastPlayTime / 1000.0);
-            if (lastPlaySeconds <= duration) {
-              lastPlayTime = lastPlaySeconds;
-            }
-          }
-          if (lastPlayTime == -1 || duration <= 0 || lastPlayTime <= duration) {
-            playedTime = lastPlayTime;
-          }
-        }
-        qint64 lastPlayCid = data.value("last_play_cid").toVariant().toLongLong();
-        if (lastPlayCid > 0) {
-          reportCid = lastPlayCid;
-        }
-        self->m_playbackProgressCid = reportCid;
-        self->m_playbackProgressSeconds = qMax(0, playedTime);
+        PlaybackProgressState state =
+            resolvePlaybackProgressState(data, currentCid, currentDuration);
+        self->m_playbackProgressCid = state.progressCid;
+        self->m_playbackProgressSeconds = state.progressSeconds;
         emit self->playbackProgressChanged();
 
         QMap<QString, QString> params;
         params["aid"] = QString::number(aid);
-        params["cid"] = QString::number(reportCid);
+        params["cid"] = QString::number(currentCid);
         params["bvid"] = bvid;
-        params["played_time"] = QString::number(playedTime);
+        params["played_time"] = QString::number(state.heartbeatPlayedTime);
 
         self->m_network->get(
             "/player/heartbeat", params,

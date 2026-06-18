@@ -24,7 +24,6 @@ Rectangle {
     readonly property int iconSize: 20
     readonly property int barHeight: 36
     readonly property color accentColor: "#00A1D6"
-    readonly property string fontFamily: "Microsoft YaHei"
 
     function launchExternalPlayer(path) {
         if (!path || path.length === 0) return;
@@ -94,7 +93,7 @@ Rectangle {
                 return "正在初始化...";
             }
             color: "#999999"
-            font.family: fontFamily
+            font.family: Theme.fontFamily
             font.pixelSize: 13
             horizontalAlignment: Text.AlignHCenter
             lineHeight: 1.4
@@ -182,7 +181,7 @@ Rectangle {
             Text {
                 text: controller ? controller.videoTitle : ""
                 color: "#FFFFFF"
-                font.family: fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 13
                 font.bold: true
                 elide: Text.ElideRight
@@ -278,7 +277,7 @@ Rectangle {
                 id: currentTimeText
                 text: controller ? controller.playbackProgressText : "00:00 / 00:00"
                 color: "#FFFFFF"
-                font.family: fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 12
                 anchors.verticalCenter: parent.verticalCenter
                 width: 112
@@ -309,7 +308,7 @@ Rectangle {
             Text {
                 text: controller ? controller.downloadStatus : "正在下载..."
                 color: "#FFFFFF"
-                font.family: fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 12
                 anchors.horizontalCenter: parent.horizontalCenter
                 wrapMode: Text.WordWrap

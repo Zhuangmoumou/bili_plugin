@@ -7,6 +7,7 @@
 #include <QVector>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 
 // ============ 数据结构 ============
 
@@ -51,6 +52,7 @@ struct CommentItem {
     QString avatar;
     int level = 0;
     QString content;
+    QVariantMap emotes;
     QStringList pictures;
     qint64 likes = 0;
     qint64 rcount = 0;
@@ -66,6 +68,7 @@ struct CommentReplyItem {
     QString avatar;
     int level = 0;
     QString content;
+    QVariantMap emotes;
     QStringList pictures;
     qint64 likes = 0;
     qint64 ctime = 0;
@@ -197,6 +200,7 @@ public:
         AvatarRole,
         LevelRole,
         ContentRole,
+        EmotesRole,
         PicturesRole,
         LikesRole,
         RcountRole,
@@ -257,6 +261,7 @@ public:
         AvatarRole,
         LevelRole,
         ContentRole,
+        EmotesRole,
         PicturesRole,
         LikesRole,
         CtimeRole,

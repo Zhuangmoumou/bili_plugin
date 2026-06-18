@@ -9,7 +9,6 @@ Item {
     property string partTitle: "分P标题"
     property string durationText: "00:00"
     property bool isCurrent: false
-    property string fontFamily: "Microsoft YaHei"
 
     signal clicked()
 
@@ -36,7 +35,7 @@ Item {
             Text {
                 text: "P" + card.pNumber
                 color: card.isCurrent ? "white" : "#60a5fa"
-                font.family: card.fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 10
                 font.bold: true
             }
@@ -45,7 +44,7 @@ Item {
                 width: parent.width
                 text: card.partTitle
                 color: card.isCurrent ? "white" : "#e2e8f0"
-                font.family: card.fontFamily
+                font.family: Theme.fontFamily
                 font.pixelSize: 11
                 elide: Text.ElideRight
                 maximumLineCount: 2
@@ -57,7 +56,7 @@ Item {
         Text {
             text: card.durationText
             color: card.isCurrent ? Qt.rgba(255,255,255,0.7) : "#94a3b8"
-            font.family: card.fontFamily
+            font.family: Theme.fontFamily
             font.pixelSize: 9
             anchors.right: parent.right
             anchors.bottom: parent.bottom

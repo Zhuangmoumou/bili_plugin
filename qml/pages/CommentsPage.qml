@@ -97,29 +97,28 @@ Rectangle {
         })
     }
 
+    function hasReusableCurrentComments() {
+        return !!(controller && controller.comments && controller.comments.commentsReady)
+    }
+
     function showInitialCommentLoadingIfNeeded() {
         if (!controller || viewMode !== 0 || initialCommentsRequested) return
-        if (controller.videoDetailPreloadEnabled || controller.comments.commentsReady) return
+        if (controller.videoDetailPreloadEnabled || hasReusableCurrentComments()) return
         showCommentLoadingMask()
     }
 
     function updateCommentLoadingMask() {
-        if (viewMode === 0) {
-            if (controller && controller.comments.commentsReady) {
-                commentLoadingMaskVisible = false
-                return
-            }
-            var cm = controller ? controller.comments.commentModel() : null
-            if ((!initialCommentsRequested && controller && !controller.videoDetailPreloadEnabled) ||
-                    (cm && cm.loading && commentList.count === 0)) {
-                showCommentLoadingMask()
-            } else {
-                hideCommentLoadingMaskSoon()
-            }
+        if (viewMode !== 0) {
+            commentLoadingMaskVisible = false
             return
         }
-        var rm = controller ? controller.comments.commentReplyModel() : null
-        if (rm && rm.loading && rm.count === 0) {
+        if (hasReusableCurrentComments()) {
+            commentLoadingMaskVisible = false
+            return
+        }
+        var cm = controller ? controller.comments.commentModel() : null
+        if ((!initialCommentsRequested && controller && !controller.videoDetailPreloadEnabled) ||
+                (cm && cm.loading && commentList.count === 0)) {
             showCommentLoadingMask()
         } else {
             hideCommentLoadingMaskSoon()
@@ -133,9 +132,7 @@ Rectangle {
         if (!controller || initialCommentsRequested) return
         initialCommentsRequested = true
         commentsModelAttached = true
-        var cm = controller.comments.commentModel()
-        if (controller.comments.commentsReady ||
-                (cm && !cm.loading && (cm.count > 0 || (cm.errorMessage && cm.errorMessage.length > 0)))) {
+        if (hasReusableCurrentComments()) {
             commentLoadingMaskVisible = false
             return
         }
@@ -154,7 +151,6 @@ Rectangle {
     function openCommentDetail(commentObj) {
         selectedComment = commentObj
         mainCommentContentY = commentList.contentY
-        showCommentLoadingMask()
         viewMode = 1
         if (controller) controller.comments.fetchCommentReplies(commentObj.rpid)
     }
@@ -175,6 +171,80 @@ Rectangle {
         if (!url) return ""
         if (url.indexOf("data:image/") === 0) return url
         return "image://bili/" + encodeURIComponent(url)
+    }
+
+    function escapeCommentRichText(text) {
+        if (!text) return ""
+        var s = String(text)
+        s = s.replace(/&/g, "&amp;")
+        s = s.replace(/</g, "&lt;")
+        s = s.replace(/>/g, "&gt;")
+        return s
+    }
+
+    function escapeHtmlAttribute(text) {
+        if (!text) return ""
+        var s = String(text)
+        s = s.replace(/&/g, "&amp;")
+        s = s.replace(/"/g, "&quot;")
+        s = s.replace(/</g, "&lt;")
+        s = s.replace(/>/g, "&gt;")
+        return s
+    }
+
+    function normalizeCommentEmoteUrl(url) {
+        if (!url) return ""
+        var s = String(url)
+        if (s.indexOf("//") === 0) {
+            s = "https:" + s
+        } else if (s.indexOf("http://") === 0) {
+            s = "https://" + s.slice(7)
+        }
+
+        if (s.indexOf("/bfs/emote/") < 0) return s
+
+        var queryIndex = s.indexOf("?")
+        var base = queryIndex >= 0 ? s.slice(0, queryIndex) : s
+        var query = queryIndex >= 0 ? s.slice(queryIndex) : ""
+        if (base.indexOf("@") >= 0) return s
+        return base + "@80w_80h" + query
+    }
+
+    function findCommentEmote(emotes, token) {
+        if (!emotes || !token) return null
+        if (emotes[token]) return emotes[token]
+        if (token.length > 2 && token.charAt(0) === "[" && token.charAt(token.length - 1) === "]") {
+            var bare = token.slice(1, -1)
+            if (emotes[bare]) return emotes[bare]
+        }
+        return null
+    }
+
+    function commentEmoteDisplaySize(emote) {
+        var base = Number(commentsPage._commentBodyFontSize || Theme.fontBody)
+        var metaSize = Number(emote && emote.size ? emote.size : 1)
+        var scale = metaSize >= 2 ? 1.35 : 1.15
+        var size = Math.round(base * scale)
+        var minSize = base
+        var maxSize = base + 5
+        return Math.max(minSize, Math.min(size, maxSize))
+    }
+
+    function commentRichText(content, emotes) {
+        var raw = content && content.length > 0 ? String(content) : ""
+        if (!raw) return ""
+
+        var rich = escapeCommentRichText(raw)
+        rich = rich.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+        rich = rich.replace(/\[[^\[\]\r\n]{1,40}\]/g, function(match) {
+            var emote = commentsPage.findCommentEmote(emotes, match)
+            if (!emote || !emote.url) return match
+            var size = commentsPage.commentEmoteDisplaySize(emote)
+            var src = commentsPage.escapeHtmlAttribute(commentsPage.normalizeCommentEmoteUrl(emote.url))
+            var alt = commentsPage.escapeHtmlAttribute(match)
+            return "<img src=\"" + src + "\" width=\"" + size + "\" height=\"" + size + "\" alt=\"" + alt + "\" />"
+        })
+        return rich.replace(/\n/g, "<br>")
     }
 
     function firstPicture(pictures) {
@@ -607,7 +677,8 @@ Rectangle {
 
                             Text {
                                 width: parent.width
-                                text: model.content || ""
+                                text: commentsPage.commentRichText(model.content || "", model.emotes || ({}))
+                                textFormat: Text.RichText
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: commentsPage._commentBodyFontSize
@@ -775,6 +846,7 @@ Rectangle {
                                                     avatar: model.avatar || "",
                                                     level: model.level || 0,
                                                     content: model.content || "",
+                                                    emotes: model.emotes || ({}),
                                                     pictures: model.pictures || [],
                                                     likes: model.likes || 0,
                                                     ctimeText: model.ctimeText || "",
@@ -977,7 +1049,8 @@ Rectangle {
 
                             Text {
                                 width: parent.width
-                                text: selectedComment ? selectedComment.content : ""
+                                text: selectedComment ? commentsPage.commentRichText(selectedComment.content || "", selectedComment.emotes || ({})) : ""
+                                textFormat: Text.RichText
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: commentsPage._commentBodyFontSize
@@ -1167,7 +1240,8 @@ Rectangle {
 
                         Text {
                             width: parent.width
-                            text: model.content || ""
+                            text: commentsPage.commentRichText(model.content || "", model.emotes || ({}))
+                            textFormat: Text.RichText
                             color: Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: commentsPage._commentBodyFontSize

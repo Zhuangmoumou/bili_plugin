@@ -1,7 +1,12 @@
 pragma Singleton
 import QtQuick 2.12
 
-QtObject {
+Item {
+    FontLoader {
+        id: appFont
+        source: "LXGWWenKai-Regular.ttf"
+    }
+
     // ── 主题色 ──
     readonly property color primary: "#00A1D6"
     readonly property color primaryLight: "#23ADE5"
@@ -77,7 +82,7 @@ QtObject {
     readonly property int animPage: 300
 
     // ── 字体族 ──
-    readonly property string fontFamily: "Microsoft YaHei"
+    readonly property string fontFamily: appFont.name !== "" ? appFont.name : "Microsoft YaHei"
 
     // ── 工具函数 ──
     function withAlpha(c, a) {
