@@ -4,7 +4,6 @@ module BiliPlugin
 singleton Theme 1.0 Theme.qml
 
 # Components
-VideoCard 1.0 components/VideoCard.qml
 VideoCardCompact 1.0 components/VideoCardCompact.qml
 TitleBar 1.0 components/TitleBar.qml
 LoadingIndicator 1.0 components/LoadingIndicator.qml

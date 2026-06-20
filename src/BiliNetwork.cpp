@@ -114,19 +114,9 @@ BiliNetwork *BiliNetwork::instance() {
   return s_instance;
 }
 
-void BiliNetwork::destroyInstance() {
-  QMutexLocker locker(&s_instanceMutex);
-  if (s_instance) {
-    s_instance->cancelAllRequests();
-    delete s_instance;
-    s_instance = nullptr;
-  }
-}
-
 BiliNetwork::BiliNetwork(QObject *parent)
     : QObject(parent), m_nam(new QNetworkAccessManager(this)),
-      m_apiBase("http://127.0.0.1:8000"), m_online(true),
-      m_requestTimeout(10000) {
+      m_apiBase("http://127.0.0.1:8000"), m_requestTimeout(10000) {
   m_nam->setTransferTimeout(m_requestTimeout);
   // JSON 解析线程池：适当提高并发，避免多个列表响应排队过久
   m_jsonPool.setMaxThreadCount(4);
@@ -150,13 +140,6 @@ void BiliNetwork::cancelVideoDownload() {
   }
 }
 
-void BiliNetwork::setApiBase(const QString &base) {
-  m_apiBase = base;
-  if (m_apiBase.endsWith('/')) {
-    m_apiBase.chop(1);
-  }
-}
-
 QString BiliNetwork::apiBase() const { return m_apiBase; }
 
 void BiliNetwork::applyCommonHeaders(QNetworkRequest &request) {
@@ -164,14 +147,8 @@ void BiliNetwork::applyCommonHeaders(QNetworkRequest &request) {
   request.setRawHeader("User-Agent",
                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
   request.setRawHeader("Referer", "https://www.bilibili.com");
-  request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
-}
-
-bool BiliNetwork::isOnline() const { return m_online; }
-
-int BiliNetwork::activeRequestCount() const {
-  QMutexLocker locker(const_cast<QMutex *>(&m_replyMutex));
-  return m_activeReplies.size();
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
 }
 
 bool BiliNetwork::checkRateLimit() {

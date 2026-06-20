@@ -27,7 +27,6 @@ public:
   using RawCallback = std::function<void(const QByteArray &data)>;
 
   static BiliNetwork *instance();
-  static void destroyInstance();
 
   // 基础请求
   void get(const QString &path, const QMap<QString, QString> &params,
@@ -43,24 +42,16 @@ public:
                      std::function<void(int code, const QString &msg)> onError,
                      std::function<void(qint64 received, qint64 total)> onProgress = nullptr);
 
-  // 设置/获取 API 地址
-  void setApiBase(const QString &base);
+  // 获取 API 地址
   QString apiBase() const;
-
-  // 网络状态
-  bool isOnline() const;
 
   // 取消所有正在进行的请求
   Q_INVOKABLE void cancelAllRequests();
   // 单独取消视频下载
   void cancelVideoDownload();
 
-  // 并发请求限制
-  int activeRequestCount() const;
-
 signals:
   void networkError(const QString &message);
-  void onlineStateChanged(bool online);
 
 private:
   explicit BiliNetwork(QObject *parent = nullptr);
@@ -82,7 +73,6 @@ private:
 
   QNetworkAccessManager *m_nam;
   QString m_apiBase;
-  bool m_online;
   int m_requestTimeout;
 
   // 请求跟踪（用于取消和防止泄漏）

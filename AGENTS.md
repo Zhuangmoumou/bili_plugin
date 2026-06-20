@@ -60,6 +60,9 @@ Ports used by the repo:
 
 No dedicated lint target, test suite, or single-test command was found in this repository.
 There are no committed `*_test.go`, `tests/`, or xmake test targets at the repo root.
+For Go-side build verification, use the repository script:
+
+- `./go_server/build.sh`
 
 ## High-level architecture
 

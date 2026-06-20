@@ -32,10 +32,6 @@
 #include <algorithm>
 #include <functional>
 
-// 由插件文件提供的 Go 服务控制函数
-extern bool bili_startApiServer();
-extern void bili_stopApiServer();
-
 namespace {
 
 struct ParsedSearchResults {

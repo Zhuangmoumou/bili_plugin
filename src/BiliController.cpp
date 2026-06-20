@@ -25,10 +25,6 @@
 #include <QNetworkReply>
 #include <QTcpSocket>
 
-// 安全回调包装宏 - 在回调执行前检查对象是否仍存在
-#define SAFE_CALLBACK(controller, ...)                                         \
-  [ guard = QPointer<BiliController>(controller), __VA_ARGS__ ]
-
 namespace {
 
 bool isChineseSubtitleItem(const QJsonObject &item) {

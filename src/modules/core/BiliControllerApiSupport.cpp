@@ -31,10 +31,6 @@
 #include <functional>
 #include <memory>
 
-// 由插件文件提供的 Go 服务控制函数
-extern bool bili_startApiServer();
-extern void bili_stopApiServer();
-
 // ====== 内部辅助方法 ======
 
 void BiliController::apiGet(const QString &path,
@@ -327,4 +323,3 @@ void BiliController::startDownloadTask(const QString &videoUrl,
         emit self->downloadStateChanged();
       });
 }
-

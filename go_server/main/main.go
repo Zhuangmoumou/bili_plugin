@@ -330,10 +330,6 @@ var startupEndpoints = []string{
 
 // ==================== 工具函数 ====================
 
-func getMixinKey(orig string) string {
-	return mixinKeyConcat(orig, "")
-}
-
 // mixinKeyConcat 直接基于两个字符串视图按 MIXIN_KEY_ENC_TAB 挑选最多 32 字节，
 // 既避免了 `imgKey + subKey` 这次 64 字节左右的拼接分配，也用栈上 [32]byte
 // 替代了 strings.Builder。结果与 "原拼接后取 i 字节、最后截到 32" 完全等价。
@@ -358,10 +354,6 @@ func mixinKeyConcat(a, b string) string {
 		}
 	}
 	return string(buf[:n])
-}
-
-func md5Hash(s string) string {
-	return md5HashBytes([]byte(s))
 }
 
 // md5HashBytes 用 md5.Sum 直接拿到 [16]byte，再 hex.Encode 到栈上 [32]byte，
@@ -1038,9 +1030,6 @@ func (c *BilibiliClient) ensureBuvid3() {
 		logWarn("buvid3 获取失败，响应未包含该字段")
 	}
 }
-
-// 仅启动时刷新一次，避免高频刷新触发风控
-func (c *BilibiliClient) startCookieRefreshLoop() {}
 
 func (c *BilibiliClient) doRequest(ctx context.Context, apiURL string, params map[string]string, method string) (json.RawMessage, error) {
 	startTime := time.Now()
@@ -2539,26 +2528,6 @@ func joinIntParams(values []int) string {
 		}
 	}
 	return strings.Join(parts, ",")
-}
-
-func getCookie(r *http.Request, name string) string {
-	c, err := r.Cookie(name)
-	if err != nil {
-		return ""
-	}
-	return c.Value
-}
-
-func getAuthFromRequest(r *http.Request) (string, string) {
-	sessdata := getCookie(r, "SESSDATA")
-	buvid3 := getCookie(r, "buvid3")
-	if sessdata == "" {
-		sessdata = r.Header.Get("X-SESSDATA")
-	}
-	if buvid3 == "" {
-		buvid3 = r.Header.Get("X-BUVID3")
-	}
-	return sessdata, buvid3
 }
 
 func intParam(val string, min int, defaultVal int, hasMin bool) (int, error) {
