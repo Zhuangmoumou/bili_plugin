@@ -111,6 +111,7 @@ class BiliController : public QObject {
   Q_PROPERTY(double subtitleBackgroundOpacity READ subtitleBackgroundOpacity NOTIFY subtitleStyleChanged)
   Q_PROPERTY(bool videoCardOffscreenPlaceholderEnabled READ videoCardOffscreenPlaceholderEnabled NOTIFY preferenceSettingsChanged)
   Q_PROPERTY(bool videoDetailPreloadEnabled READ videoDetailPreloadEnabled NOTIFY preferenceSettingsChanged)
+  Q_PROPERTY(bool defaultSubtitleEnabled READ defaultSubtitleEnabled NOTIFY preferenceSettingsChanged)
 
   // 登录状态
   Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loginStateChanged)
@@ -221,6 +222,7 @@ public:
   double subtitleBackgroundOpacity() const { return m_subtitleBackgroundOpacity; }
   bool videoCardOffscreenPlaceholderEnabled() const { return m_videoCardOffscreenPlaceholderEnabled; }
   bool videoDetailPreloadEnabled() const { return m_videoDetailPreloadEnabled; }
+  bool defaultSubtitleEnabled() const { return m_defaultSubtitleEnabled; }
 
   bool loggedIn() const;
   qint64 upUserMid() const { return m_upUserMid; }
@@ -304,6 +306,9 @@ public:
   void setSubtitleItems(const QJsonArray &items);
   void clearSelectedSubtitle();
   void setSelectedSubtitle(qint64 subtitleId, const QString &label);
+  bool applyDefaultSubtitleSelection();
+  QString currentSubtitleRequestKey() const;
+  QString selectedSubtitleAssUrl() const;
   void apiGet(const QString &path, const QMap<QString, QString> &params,
               std::function<void(const QJsonObject &)> onSuccess,
               std::function<void(int, const QString &)> onError = nullptr,
@@ -408,6 +413,7 @@ private:
     QJsonArray subtitleItems;
     qint64 selectedSubtitleId = 0;
     QString selectedSubtitleLabel;
+    bool subtitleSelectionOverridden = false;
     bool valid = false;
   };
 
@@ -423,6 +429,7 @@ private:
   QString m_downloadStatus;
   QString m_tempVideoPath;
   QString m_tempAudioPath;
+  QString m_tempSubtitlePath;
   QString m_dashVideoUrl;
   QString m_dashAudioUrl;
   QJsonArray m_subtitleItems;
@@ -441,6 +448,8 @@ private:
   double m_subtitleBackgroundOpacity = 0.5;
   bool m_videoCardOffscreenPlaceholderEnabled = false;
   bool m_videoDetailPreloadEnabled = false;
+  bool m_defaultSubtitleEnabled = false;
+  bool m_subtitleSelectionOverridden = false;
   QPointer<QNetworkReply> m_downloadReply;
   QPointer<QProcess> m_externalPlayerProcess;
 
@@ -541,6 +550,7 @@ private:
   qint64 m_seasonVideoSeasonId = 0;
   int m_seasonVideoPage = 1;
   bool m_seasonVideoHasMore = true;
+  bool m_seasonVideoOldestFirst = false;
   int m_seasonVideoTotal = 0;
   QString m_videoDetailLoadingBvid;
   QString m_relatedVideoBvid;

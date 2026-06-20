@@ -78,6 +78,7 @@ struct ParsedSeasonVideos {
   qint64 mid = 0;
   qint64 seasonId = 0;
   int page = 1;
+  bool oldestFirst = false;
   QVector<VideoItem> items;
   bool totalKnown = false;
   int total = 0;
@@ -103,11 +104,13 @@ QVector<VideoItem> parseRelatedVideosPayload(const QJsonObject &data,
 ParsedSeasonVideos parseSeasonVideosPayload(const QJsonObject &data,
                                             qint64 mid, qint64 seasonId,
                                             int page, int pageSize,
+                                            bool oldestFirst,
                                             const QString &ownerName) {
   ParsedSeasonVideos result;
   result.mid = mid;
   result.seasonId = seasonId;
   result.page = page;
+  result.oldestFirst = oldestFirst;
   QJsonArray archives = data.value("archives").toArray();
   if (archives.isEmpty()) archives = data.value("item").toArray();
   if (archives.isEmpty()) archives = data.value("list").toArray();
@@ -234,7 +237,7 @@ void BiliSeasonModule::fetchUpSeasonVideos(int page, int pageSize) {
             self,
             [data, mid, seasonId, page, pageSize, ownerName]() {
               return parseSeasonVideosPayload(data, mid, seasonId, page,
-                                              pageSize, ownerName);
+                                              pageSize, false, ownerName);
             },
             [self](ParsedSeasonVideos result) {
               if (!self || !self->m_upVideoModel) return;
@@ -300,7 +303,7 @@ void BiliSeasonModule::fetchUpSeriesVideos(int page, int pageSize) {
             self,
             [data, mid, seriesId, page, pageSize, ownerName]() {
               return parseSeasonVideosPayload(data, mid, seriesId, page,
-                                              pageSize, ownerName);
+                                              pageSize, false, ownerName);
             },
             [self](ParsedSeasonVideos result) {
               if (!self || !self->m_upVideoModel) return;
@@ -345,7 +348,8 @@ void BiliSeasonModule::fetchMoreUpSeasonVideos() {
   }
 }
 
-void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, int pageSize) {
+void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page,
+                                         int pageSize, bool oldestFirst) {
   BiliController *controller = m_controller;
   if (!controller) return;
   if (mid <= 0 || seasonId <= 0) return;
@@ -355,9 +359,12 @@ void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, 
   page = qBound(1, page, 9999);
   pageSize = qBound(1, pageSize, 100);
 
-  bool reset = page == 1 || controller->m_seasonVideoMid != mid || controller->m_seasonVideoSeasonId != seasonId;
+  bool reset = page == 1 || controller->m_seasonVideoMid != mid ||
+               controller->m_seasonVideoSeasonId != seasonId ||
+               controller->m_seasonVideoOldestFirst != oldestFirst;
   controller->m_seasonVideoMid = mid;
   controller->m_seasonVideoSeasonId = seasonId;
+  controller->m_seasonVideoOldestFirst = oldestFirst;
 
   if (reset) {
     controller->m_seasonVideoModel->clear();
@@ -372,7 +379,7 @@ void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, 
   QMap<QString, QString> params;
   params["mid"] = QString::number(mid);
   params["season_id"] = QString::number(seasonId);
-  params["sort_reverse"] = "false";
+  params["sort_reverse"] = oldestFirst ? "true" : "false";
   params["pn"] = QString::number(page);
   params["ps"] = QString::number(pageSize);
 
@@ -380,19 +387,21 @@ void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, 
   QPointer<BiliController> self(controller);
   controller->apiGet(
       "/user/season/videos", params,
-      [self, mid, seasonId, page, pageSize, ownerName](const QJsonObject &data) {
+      [self, mid, seasonId, page, pageSize, oldestFirst, ownerName](const QJsonObject &data) {
         if (!self || !self->m_seasonVideoModel) return;
-        if (self->m_seasonVideoMid != mid || self->m_seasonVideoSeasonId != seasonId) return;
+        if (self->m_seasonVideoMid != mid || self->m_seasonVideoSeasonId != seasonId ||
+            self->m_seasonVideoOldestFirst != oldestFirst) return;
         biliRunInWorker(
             self,
-            [data, mid, seasonId, page, pageSize, ownerName]() {
+            [data, mid, seasonId, page, pageSize, oldestFirst, ownerName]() {
               return parseSeasonVideosPayload(data, mid, seasonId, page,
-                                              pageSize, ownerName);
+                                              pageSize, oldestFirst, ownerName);
             },
             [self](ParsedSeasonVideos result) {
               if (!self || !self->m_seasonVideoModel) return;
               if (self->m_seasonVideoMid != result.mid ||
-                  self->m_seasonVideoSeasonId != result.seasonId) {
+                  self->m_seasonVideoSeasonId != result.seasonId ||
+                  self->m_seasonVideoOldestFirst != result.oldestFirst) {
                 return;
               }
 
@@ -408,9 +417,10 @@ void BiliSeasonModule::fetchSeasonVideos(qint64 mid, qint64 seasonId, int page, 
               }
             });
       },
-      [self, mid, seasonId](int, const QString &msg) {
+      [self, mid, seasonId, oldestFirst](int, const QString &msg) {
         if (!self || !self->m_seasonVideoModel) return;
-        if (self->m_seasonVideoMid != mid || self->m_seasonVideoSeasonId != seasonId) return;
+        if (self->m_seasonVideoMid != mid || self->m_seasonVideoSeasonId != seasonId ||
+            self->m_seasonVideoOldestFirst != oldestFirst) return;
         self->m_seasonVideoModel->setLoading(false);
         self->m_seasonVideoModel->setErrorMessage(msg);
         emit self->toastMessage(QString("加载合集失败：%1").arg(msg));
@@ -424,5 +434,6 @@ void BiliSeasonModule::fetchMoreSeasonVideos() {
   if (!controller->m_seasonVideoHasMore) return;
   if (!controller->m_seasonVideoModel || controller->m_seasonVideoModel->loading()) return;
   fetchSeasonVideos(controller->m_seasonVideoMid, controller->m_seasonVideoSeasonId,
-                    controller->m_seasonVideoPage + 1, 30);
+                    controller->m_seasonVideoPage + 1, 30,
+                    controller->m_seasonVideoOldestFirst);
 }

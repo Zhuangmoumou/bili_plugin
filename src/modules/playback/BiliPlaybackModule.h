@@ -4,6 +4,8 @@
 #include <QtGlobal>
 #include <QString>
 #include <QStringList>
+#include <functional>
+#include <vector>
 
 class BiliController;
 
@@ -35,13 +37,23 @@ public:
   Q_INVOKABLE void setSubtitleBackgroundOpacity(double value);
   Q_INVOKABLE void setVideoCardOffscreenPlaceholderEnabled(bool enabled);
   Q_INVOKABLE void setVideoDetailPreloadEnabled(bool enabled);
+  Q_INVOKABLE void setDefaultSubtitleEnabled(bool enabled);
   Q_INVOKABLE void launchExternalPlayerCurrentSelection();
+  bool ensureDefaultSubtitleForCurrentVideo(std::function<void()> onFinished);
 
 private:
+  void fetchSubtitleListInternal(bool silent, std::function<void()> onFinished = nullptr);
+  void runSubtitleListCallbacks(const QString &requestKey);
+  bool shouldLoadDefaultSubtitle() const;
   bool isExternalPlayerRunning() const;
   QString externalPlayerTitle() const;
   int resumeStartSeconds() const;
   void appendResumeStartArg(QStringList &args) const;
   bool startExternalPlayer(const QStringList &args);
+  void launchExternalPlayerWithSubtitle(const QString &path, const QString &subtitlePath);
+  void downloadSelectedSubtitle(std::function<void(const QString &subtitlePath)> onFinished);
   BiliController *m_controller;
+  QString m_subtitleCallbackKey;
+  QString m_defaultSubtitleAttemptedKey;
+  std::vector<std::function<void()>> m_subtitleCallbacks;
 };

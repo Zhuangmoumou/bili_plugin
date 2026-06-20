@@ -500,6 +500,7 @@ Rectangle {
         }
 
         Loader {
+            id: seasonPageLoader
             active: currentPage === "season" || root.stackContains("season")
             visible: currentPage === "season"
             enabled: visible
@@ -533,7 +534,9 @@ Rectangle {
             controller.clearError();
             if (currentPage === "home") controller.feed.fetchPopular();
             else if (currentPage === "detail") controller.video.fetchVideoDetail(root.detailBvid);
-            else if (currentPage === "season") controller.season.fetchSeasonVideos(root.seasonMid, root.seasonId, 1, 30);
+            else if (currentPage === "season") controller.season.fetchSeasonVideos(
+                root.seasonMid, root.seasonId, 1, 30,
+                seasonPageLoader.item ? seasonPageLoader.item.seasonSortOldestFirst : false);
         }
         onDismissed: controller.clearError()
     }

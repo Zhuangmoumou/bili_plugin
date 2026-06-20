@@ -18,6 +18,9 @@ Rectangle {
     property string currentBvid: ""
     property string loadedKey: ""
     property bool seasonLoadingMore: false
+    property bool seasonSortOldestFirst: false
+    property var seasonModel: controller ? controller.season.seasonVideoModel() : null
+    readonly property bool sortBusy: seasonModel ? seasonModel.loading : false
 
     signal backClicked()
     signal videoSelected(string bvid)
@@ -33,10 +36,23 @@ Rectangle {
         var midVal = Number(seasonMid)
         var sidVal = Number(seasonId)
         if (!controller || !midVal || !sidVal || midVal <= 0 || sidVal <= 0) return
-        var key = midVal + "#" + sidVal
+        if (seasonModel && seasonModel.loading) return
+        var key = midVal + "#" + sidVal + "#" + (seasonSortOldestFirst ? "old" : "new")
         if (loadedKey === key) return
         loadedKey = key
-        controller.season.fetchSeasonVideos(midVal, sidVal, 1, 30)
+        controller.season.fetchSeasonVideos(midVal, sidVal, 1, 30, seasonSortOldestFirst)
+    }
+
+    function selectSort(oldestFirst) {
+        if (sortBusy || seasonSortOldestFirst === oldestFirst) return
+        seasonSortOldestFirst = oldestFirst
+        loadedKey = ""
+        seasonLoadingMore = false
+        seasonVideoList.contentX = 0
+    }
+
+    function toggleSort() {
+        selectSort(!seasonSortOldestFirst)
     }
 
     onSeasonMidChanged: {
@@ -45,6 +61,11 @@ Rectangle {
     }
 
     onSeasonIdChanged: {
+        loadedKey = ""
+        Qt.callLater(refresh)
+    }
+
+    onSeasonSortOldestFirstChanged: {
         loadedKey = ""
         Qt.callLater(refresh)
     }
@@ -70,10 +91,91 @@ Rectangle {
         onBackClicked: seasonPage.backClicked()
     }
 
+    Rectangle {
+        id: sortTitleButton
+        width: 42
+        height: titleBar.height
+        anchors.top: titleBar.top
+        anchors.right: titleBar.right
+        anchors.rightMargin: 6
+        color: "transparent"
+        z: titleBar.z + 1
+        opacity: seasonPage.sortBusy ? 0.55 : 1.0
+
+        Rectangle {
+            id: sortTitleButtonCore
+            anchors.centerIn: parent
+            width: 30
+            height: 24
+            radius: Theme.radiusMedium
+            color: sortTitleButtonArea.pressed && !seasonPage.sortBusy
+                   ? Theme.withAlpha(Theme.primary, 0.22) : "transparent"
+
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+            Canvas {
+                id: sortTitleIcon
+                anchors.centerIn: parent
+                width: 18
+                height: 18
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    ctx.lineWidth = 1.7
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    ctx.strokeStyle = Theme.primary
+                    ctx.fillStyle = Theme.primary
+
+                    ctx.beginPath()
+                    ctx.moveTo(2.5, 4.5)
+                    ctx.lineTo(10.5, 4.5)
+                    ctx.moveTo(2.5, 9)
+                    ctx.lineTo(8.5, 9)
+                    ctx.moveTo(2.5, 13.5)
+                    ctx.lineTo(6.5, 13.5)
+                    ctx.stroke()
+
+                    ctx.beginPath()
+                    if (seasonPage.seasonSortOldestFirst) {
+                        ctx.moveTo(14, 4)
+                        ctx.lineTo(14, 14)
+                        ctx.moveTo(10.5, 10.5)
+                        ctx.lineTo(14, 14)
+                        ctx.lineTo(17.5, 10.5)
+                    } else {
+                        ctx.moveTo(14, 14)
+                        ctx.lineTo(14, 4)
+                        ctx.moveTo(10.5, 7.5)
+                        ctx.lineTo(14, 4)
+                        ctx.lineTo(17.5, 7.5)
+                    }
+                    ctx.stroke()
+                }
+
+                Component.onCompleted: requestPaint()
+            }
+        }
+
+        MouseArea {
+            id: sortTitleButtonArea
+            anchors.fill: parent
+            enabled: !seasonPage.sortBusy
+            onClicked: seasonPage.toggleSort()
+        }
+    }
+
+    Connections {
+        target: seasonPage
+        function onSeasonSortOldestFirstChanged() {
+            sortTitleIcon.requestPaint()
+        }
+    }
+
     ListView {
         id: seasonVideoList
         anchors.top: titleBar.bottom
-        anchors.topMargin: 7
+        anchors.topMargin: 4
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -86,7 +188,7 @@ Rectangle {
         displayMarginEnd: 160
         leftMargin: 8
         rightMargin: 8
-        model: controller ? controller.season.seasonVideoModel() : null
+        model: seasonPage.seasonModel
 
         onAtXEndChanged: {
             if (!controller) return
@@ -176,9 +278,10 @@ Rectangle {
     }
 
     Connections {
-        target: controller ? controller.season.seasonVideoModel() : null
+        target: seasonPage.seasonModel
         function onLoadingChanged() {
             if (!target || !target.loading) seasonPage.seasonLoadingMore = false
+            if (target && !target.loading) Qt.callLater(seasonPage.refresh)
         }
         function onCountChanged() {
             seasonPage.seasonLoadingMore = false

@@ -3132,19 +3132,41 @@ func floatParam(val string, defaultVal float64) (float64, error) {
 	return f, nil
 }
 
+func normalizeSubtitleURL(url string) string {
+	if strings.HasPrefix(url, "//") {
+		return "https:" + url
+	}
+	return url
+}
+
 func getSubtitleURL(subs []interface{}, sid int) string {
 	for _, item := range subs {
 		obj, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		idVal, _ := obj["id"].(float64)
-		if int(idVal) == sid {
-			url, _ := obj["subtitle_url"].(string)
-			if strings.HasPrefix(url, "//") {
-				url = "https:" + url
+		matches := false
+		for _, key := range []string{"id", "subtitle_id", "id_str"} {
+			switch idVal := obj[key].(type) {
+			case float64:
+				if int(idVal) == sid {
+					matches = true
+				}
+			case string:
+				if parsed, err := strconv.Atoi(idVal); err == nil && parsed == sid {
+					matches = true
+				}
 			}
-			return url
+			if matches {
+				break
+			}
+		}
+		if matches {
+			url, _ := obj["subtitle_url"].(string)
+			if url == "" {
+				url, _ = obj["url"].(string)
+			}
+			return normalizeSubtitleURL(url)
 		}
 	}
 	return ""
@@ -4262,14 +4284,16 @@ func handleVideoSubtitleASS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := getClient()
-	subs, err := fetchPlayerSubtitleList(r.Context(), client, aid, cid, bvid)
-	if err != nil {
-		logError("处理 /video/subtitle/ass 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
+	subtitleURL := normalizeSubtitleURL(q.Get("subtitle_url"))
+	if subtitleURL == "" {
+		subs, err := fetchPlayerSubtitleList(r.Context(), client, aid, cid, bvid)
+		if err != nil {
+			logError("处理 /video/subtitle/ass 请求失败: %s", err.Error())
+			writeError(w, 500, err.Error())
+			return
+		}
+		subtitleURL = getSubtitleURL(subs, sid)
 	}
-
-	subtitleURL := getSubtitleURL(subs, sid)
 	if subtitleURL == "" {
 		writeError(w, 404, "未找到指定字幕")
 		return
@@ -4323,14 +4347,16 @@ func handleVideoSubtitleASSFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := getClient()
-	subs, err := fetchPlayerSubtitleList(r.Context(), client, aid, cid, bvid)
-	if err != nil {
-		logError("处理 /video/subtitle/ass/file 请求失败: %s", err.Error())
-		writeError(w, 500, err.Error())
-		return
+	subtitleURL := normalizeSubtitleURL(q.Get("subtitle_url"))
+	if subtitleURL == "" {
+		subs, err := fetchPlayerSubtitleList(r.Context(), client, aid, cid, bvid)
+		if err != nil {
+			logError("处理 /video/subtitle/ass/file 请求失败: %s", err.Error())
+			writeError(w, 500, err.Error())
+			return
+		}
+		subtitleURL = getSubtitleURL(subs, sid)
 	}
-
-	subtitleURL := getSubtitleURL(subs, sid)
 	if subtitleURL == "" {
 		writeError(w, 404, "未找到指定字幕")
 		return

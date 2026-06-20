@@ -168,6 +168,7 @@ void BiliVideoModule::captureCurrentVideoDetail() {
   snapshot.subtitleItems = m_controller->subtitleItemValues();
   snapshot.selectedSubtitleId = m_controller->selectedSubtitleId();
   snapshot.selectedSubtitleLabel = m_controller->selectedSubtitleLabel();
+  snapshot.subtitleSelectionOverridden = m_controller->m_subtitleSelectionOverridden;
   snapshot.valid = true;
 
   m_controller->m_videoDetailSnapshots.insert(bvid, snapshot);
@@ -215,9 +216,11 @@ bool BiliVideoModule::restoreCachedVideoDetail(const QString &bvid) {
   m_controller->setCoinState(snapshot.isCoined);
   m_controller->setLikeState(snapshot.isLiked);
   m_controller->setWatchLaterState(snapshot.isWatchLater);
-  m_controller->setSubtitleItems(snapshot.subtitleItems);
+  m_controller->m_subtitleSelectionOverridden = snapshot.subtitleSelectionOverridden;
   m_controller->setSelectedSubtitle(snapshot.selectedSubtitleId,
                                     snapshot.selectedSubtitleLabel);
+  m_controller->setSubtitleItems(snapshot.subtitleItems);
+  m_controller->applyDefaultSubtitleSelection();
 
   emit m_controller->videoDetailChanged();
   emit m_controller->videoStatsChanged();

@@ -2088,7 +2088,8 @@ Rectangle {
                             width: parent.width - 12
                             text: {
                                 var label = modelData.lan_doc || modelData.lan || ("字幕" + (index + 1));
-                                if (controller && controller.selectedSubtitleId === (modelData.id || 0)) {
+                                var subtitleId = modelData.subtitleId || modelData.id || 0;
+                                if (controller && controller.selectedSubtitleId === subtitleId) {
                                     return label + " ✅";
                                 }
                                 return label;
@@ -2106,7 +2107,7 @@ Rectangle {
                             onClicked: {
                                 if (controller) {
                                     var label = modelData.lan_doc || modelData.lan || ("字幕" + (index + 1));
-                                    controller.playback.selectSubtitle(modelData.id || 0, label);
+                                    controller.playback.selectSubtitle(modelData.subtitleId || modelData.id || 0, label);
                                 }
                                 detailPage.subtitlePickerVisible = false;
                             }

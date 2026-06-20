@@ -26,10 +26,10 @@
 #include <QStringListModel>
 #include <QTimer>
 #include <QUrl>
-#include <QUrlQuery>
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
+#include <utility>
 
 // 由插件文件提供的 Go 服务控制函数
 extern bool bili_startApiServer();
@@ -387,6 +387,13 @@ void BiliPlaybackModule::cleanupTempVideo() {
     }
     m_controller->m_tempAudioPath.clear();
   }
+  if (!m_controller->m_tempSubtitlePath.isEmpty()) {
+    QFile file(m_controller->m_tempSubtitlePath);
+    if (file.exists()) {
+      file.remove();
+    }
+    m_controller->m_tempSubtitlePath.clear();
+  }
   m_controller->clearPlayResult();
 }
 
@@ -499,6 +506,78 @@ void BiliPlaybackModule::launchExternalPlayer(const QString &path) {
   startExternalPlayer(args);
 }
 
+void BiliPlaybackModule::launchExternalPlayerWithSubtitle(const QString &path, const QString &subtitlePath) {
+  if (path.isEmpty()) {
+    emit m_controller->toastMessage("播放路径为空");
+    return;
+  }
+
+  QString filePath = path;
+  QString sub = subtitlePath;
+  if (filePath.startsWith("file://")) {
+    filePath = filePath.mid(7);
+  }
+  if (sub.startsWith("file://")) {
+    sub = sub.mid(7);
+  }
+
+  QStringList args;
+  args << ("--force-media-title=" + externalPlayerTitle());
+  appendResumeStartArg(args);
+  args << filePath;
+  if (!sub.isEmpty()) {
+    args << ("--sub-file=" + sub);
+  }
+  if (filePath.startsWith("http")) {
+    args << "--referrer=https://www.bilibili.com"
+         << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+         << biliHeartbeatScriptOpts(m_controller->videoAid(), m_controller->m_currentVideo.cid,
+                                  m_controller->m_currentVideo.bvid, m_controller->m_currentVideo.duration,
+                                  m_controller->m_videoPartModel);
+  }
+  startExternalPlayer(args);
+}
+
+void BiliPlaybackModule::downloadSelectedSubtitle(std::function<void(const QString &subtitlePath)> onFinished) {
+  const QString subtitleUrl = m_controller->selectedSubtitleAssUrl();
+  if (subtitleUrl.isEmpty()) {
+    if (onFinished) onFinished(QString());
+    return;
+  }
+
+  if (!m_controller->m_tempSubtitlePath.isEmpty()) {
+    QFile oldSubtitle(m_controller->m_tempSubtitlePath);
+    if (oldSubtitle.exists()) {
+      oldSubtitle.remove();
+    }
+    m_controller->m_tempSubtitlePath.clear();
+  }
+
+  const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+  const QString baseName = QString("bili_sub_%1_%2_%3_%4")
+                               .arg(m_controller->m_currentVideo.bvid)
+                               .arg(m_controller->m_currentVideo.cid)
+                               .arg(m_controller->m_selectedSubtitleId)
+                               .arg(QDateTime::currentMSecsSinceEpoch());
+  const QString subtitlePath = QDir(tempDir).filePath(baseName + ".ass");
+  m_controller->m_tempSubtitlePath = subtitlePath;
+
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->downloadVideo(
+      subtitleUrl, subtitlePath,
+      [self, onFinished](const QString &path) {
+        if (!self) return;
+        if (onFinished) onFinished(path);
+      },
+      [self, onFinished](int, const QString &msg) {
+        if (self) {
+          self->m_tempSubtitlePath.clear();
+          emit self->toastMessage(QString("字幕加载失败：%1").arg(msg));
+        }
+        if (onFinished) onFinished(QString());
+      });
+}
+
 void BiliPlaybackModule::launchExternalPlayerWithAudio(const QString &videoPath, const QString &audioPath) {
   if (videoPath.isEmpty() || audioPath.isEmpty()) {
     emit m_controller->toastMessage("播放路径不完整");
@@ -567,21 +646,40 @@ void BiliPlaybackModule::launchExternalPlayerWithAudioUrlAndSubtitle(const QStri
 }
 
 void BiliPlaybackModule::fetchSubtitleList(bool silent) {
+  fetchSubtitleListInternal(silent);
+}
+
+void BiliPlaybackModule::fetchSubtitleListInternal(bool silent, std::function<void()> onFinished) {
   if (m_controller->m_currentVideo.aid <= 0 || m_controller->m_currentVideo.cid <= 0) {
     if (!silent) emit m_controller->toastMessage("视频信息不完整，无法获取字幕");
+    if (onFinished) onFinished();
     return;
   }
 
   const qint64 requestAid = m_controller->m_currentVideo.aid;
   const qint64 requestCid = m_controller->m_currentVideo.cid;
   const QString requestBvid = m_controller->m_currentVideo.bvid;
-  const QString requestKey = QString("%1:%2:%3")
-                                 .arg(requestBvid)
-                                 .arg(requestAid)
-                                 .arg(requestCid);
-  if (m_controller->m_subtitleItemsKey == requestKey ||
-      m_controller->m_subtitleItemsLoadingKey == requestKey) {
+  const QString requestKey = m_controller->currentSubtitleRequestKey();
+  if (m_controller->m_subtitleItemsKey == requestKey) {
+    m_controller->applyDefaultSubtitleSelection();
+    if (onFinished) onFinished();
     return;
+  }
+  if (m_controller->m_subtitleItemsLoadingKey == requestKey) {
+    if (onFinished) {
+      if (m_subtitleCallbackKey != requestKey) {
+        m_subtitleCallbacks.clear();
+        m_subtitleCallbackKey = requestKey;
+      }
+      m_subtitleCallbacks.push_back(std::move(onFinished));
+    }
+    return;
+  }
+
+  if (onFinished) {
+    m_subtitleCallbackKey = requestKey;
+    m_subtitleCallbacks.clear();
+    m_subtitleCallbacks.push_back(std::move(onFinished));
   }
 
   QMap<QString, QString> params;
@@ -607,6 +705,10 @@ void BiliPlaybackModule::fetchSubtitleList(bool silent) {
         self->m_subtitleItemsLoadingKey.clear();
         self->m_subtitleItemsKey = requestKey;
         self->setSubtitleItems(data.value("subtitles").toArray());
+        self->applyDefaultSubtitleSelection();
+        if (self->m_playbackModule) {
+          self->m_playbackModule->runSubtitleListCallbacks(requestKey);
+        }
       },
       [self, requestAid, requestCid, requestBvid, requestKey, silent](int, const QString &msg) {
         if (!self)
@@ -621,15 +723,20 @@ void BiliPlaybackModule::fetchSubtitleList(bool silent) {
         }
         self->clearSubtitleItems();
         if (!silent) emit self->toastMessage(QString("获取字幕列表失败：%1").arg(msg));
+        if (self->m_playbackModule) {
+          self->m_playbackModule->runSubtitleListCallbacks(requestKey);
+        }
       });
 }
 
 void BiliPlaybackModule::selectSubtitle(qint64 subtitleId, const QString &label) {
+  m_controller->m_subtitleSelectionOverridden = true;
   m_controller->setSelectedSubtitle(subtitleId, label);
 }
 
 void BiliPlaybackModule::clearSelectedSubtitle() {
-  m_controller->clearSelectedSubtitle();
+  m_controller->m_subtitleSelectionOverridden = true;
+  m_controller->setSelectedSubtitle(0, QString());
 }
 
 void BiliPlaybackModule::setSubtitleFontSize(int value) {
@@ -743,10 +850,97 @@ void BiliPlaybackModule::setVideoDetailPreloadEnabled(bool enabled) {
   emit m_controller->preferenceSettingsChanged();
 }
 
+void BiliPlaybackModule::setDefaultSubtitleEnabled(bool enabled) {
+  if (m_controller->m_defaultSubtitleEnabled == enabled) return;
+  m_controller->m_defaultSubtitleEnabled = enabled;
+  QSettings settings("BiliPocket", "BiliPlugin");
+  settings.setValue("defaultSubtitleEnabled", m_controller->m_defaultSubtitleEnabled);
+  settings.sync();
+  if (enabled) {
+    m_defaultSubtitleAttemptedKey.clear();
+    m_controller->m_subtitleSelectionOverridden = false;
+    if (!m_controller->applyDefaultSubtitleSelection()) {
+      fetchSubtitleList(true);
+    }
+  }
+  emit m_controller->preferenceSettingsChanged();
+}
+
+void BiliPlaybackModule::runSubtitleListCallbacks(const QString &requestKey) {
+  if (m_subtitleCallbackKey != requestKey) {
+    return;
+  }
+  auto callbacks = std::move(m_subtitleCallbacks);
+  m_subtitleCallbacks.clear();
+  m_subtitleCallbackKey.clear();
+  for (const auto &callback : callbacks) {
+    if (callback) {
+      callback();
+    }
+  }
+}
+
+bool BiliPlaybackModule::shouldLoadDefaultSubtitle() const {
+  if (!m_controller->m_defaultSubtitleEnabled ||
+      m_controller->m_subtitleSelectionOverridden ||
+      m_controller->m_selectedSubtitleId > 0) {
+    return false;
+  }
+
+  const QString requestKey = m_controller->currentSubtitleRequestKey();
+  if (requestKey.isEmpty()) {
+    return false;
+  }
+
+  if (m_controller->m_subtitleItemsKey == requestKey) {
+    m_controller->applyDefaultSubtitleSelection();
+    return false;
+  }
+  if (m_controller->m_subtitleItemsLoadingKey == requestKey) {
+    return true;
+  }
+  if (m_defaultSubtitleAttemptedKey == requestKey) {
+    return false;
+  }
+  return true;
+}
+
+bool BiliPlaybackModule::ensureDefaultSubtitleForCurrentVideo(std::function<void()> onFinished) {
+  if (!shouldLoadDefaultSubtitle()) {
+    return false;
+  }
+  m_defaultSubtitleAttemptedKey = m_controller->currentSubtitleRequestKey();
+  fetchSubtitleListInternal(true, std::move(onFinished));
+  return true;
+}
+
 void BiliPlaybackModule::launchExternalPlayerCurrentSelection() {
+  if (shouldLoadDefaultSubtitle()) {
+    m_defaultSubtitleAttemptedKey = m_controller->currentSubtitleRequestKey();
+    QPointer<BiliController> self(m_controller);
+    fetchSubtitleListInternal(true, [self]() {
+      if (!self || !self->m_playbackModule) return;
+      self->m_playbackModule->launchExternalPlayerCurrentSelection();
+    });
+    return;
+  }
+
   if (m_controller->m_dashVideoUrl.isEmpty() || m_controller->m_dashAudioUrl.isEmpty()) {
     if (!m_controller->m_playUrl.isEmpty()) {
-      launchExternalPlayer(m_controller->m_playUrl);
+      if (m_controller->m_selectedSubtitleId <= 0) {
+        launchExternalPlayer(m_controller->m_playUrl);
+      } else {
+        const QString playUrl = m_controller->m_playUrl;
+        QPointer<BiliController> self(m_controller);
+        downloadSelectedSubtitle([self, playUrl](const QString &subtitlePath) {
+          if (!self || !self->m_playbackModule) return;
+          if (subtitlePath.isEmpty()) {
+            self->m_playbackModule->launchExternalPlayer(playUrl);
+          } else {
+            self->m_playbackModule->launchExternalPlayerWithSubtitle(playUrl, subtitlePath);
+          }
+        });
+      }
       return;
     }
     emit m_controller->toastMessage("播放地址尚未准备好");
@@ -758,23 +952,16 @@ void BiliPlaybackModule::launchExternalPlayerCurrentSelection() {
     return;
   }
 
-  QUrl subtitleUrl(m_controller->m_network->apiBase() + "/video/subtitle/ass/file");
-  QUrlQuery subtitleQuery;
-  subtitleQuery.addQueryItem("aid", QString::number(m_controller->m_currentVideo.aid));
-  subtitleQuery.addQueryItem("cid", QString::number(m_controller->m_currentVideo.cid));
-  subtitleQuery.addQueryItem("bvid", m_controller->m_currentVideo.bvid);
-  subtitleQuery.addQueryItem("sid", QString::number(m_controller->m_selectedSubtitleId));
-  subtitleQuery.addQueryItem("font_size", QString::number(m_controller->m_subtitleFontSize));
-  subtitleQuery.addQueryItem("margin_v", QString::number(m_controller->m_subtitleMarginV));
-  subtitleQuery.addQueryItem("spacing", QString::number(m_controller->m_subtitleSpacing, 'f', 2));
-  subtitleQuery.addQueryItem("weight", QString::number(m_controller->m_subtitleWeight));
-  subtitleQuery.addQueryItem("color_preset", m_controller->m_subtitleColorPreset);
-  subtitleQuery.addQueryItem("outline_enabled", m_controller->m_subtitleOutlineEnabled ? "1" : "0");
-  subtitleQuery.addQueryItem("outline_width", QString::number(m_controller->m_subtitleOutlineWidth));
-  subtitleQuery.addQueryItem("background_enabled", m_controller->m_subtitleBackgroundEnabled ? "1" : "0");
-  subtitleQuery.addQueryItem("background_opacity", QString::number(m_controller->m_subtitleBackgroundOpacity, 'f', 2));
-  subtitleUrl.setQuery(subtitleQuery);
-
-  launchExternalPlayerWithAudioUrlAndSubtitle(
-      m_controller->m_dashVideoUrl, m_controller->m_dashAudioUrl, subtitleUrl.toString());
+  const QString videoUrl = m_controller->m_dashVideoUrl;
+  const QString audioUrl = m_controller->m_dashAudioUrl;
+  QPointer<BiliController> self(m_controller);
+  downloadSelectedSubtitle([self, videoUrl, audioUrl](const QString &subtitlePath) {
+    if (!self || !self->m_playbackModule) return;
+    if (subtitlePath.isEmpty()) {
+      self->m_playbackModule->launchExternalPlayerWithAudioUrl(videoUrl, audioUrl);
+    } else {
+      self->m_playbackModule->launchExternalPlayerWithAudioUrlAndSubtitle(
+          videoUrl, audioUrl, subtitlePath);
+    }
+  });
 }

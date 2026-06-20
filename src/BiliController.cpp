@@ -19,6 +19,8 @@
 #include <QSettings>
 #include <QStringListModel>
 #include <QTimer>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QDebug>
 #include <QNetworkReply>
 #include <QTcpSocket>
@@ -26,6 +28,57 @@
 // 安全回调包装宏 - 在回调执行前检查对象是否仍存在
 #define SAFE_CALLBACK(controller, ...)                                         \
   [ guard = QPointer<BiliController>(controller), __VA_ARGS__ ]
+
+namespace {
+
+bool isChineseSubtitleItem(const QJsonObject &item) {
+  const QString lan = item.value("lan").toString().toLower();
+  const QString lanDoc = item.value("lan_doc").toString().toLower();
+  const QString combined = lan + " " + lanDoc;
+  return combined.contains("中文") || combined.contains("简体") ||
+         combined.contains("繁体") || combined.contains("zh") ||
+         combined.contains("chinese");
+}
+
+qint64 subtitleItemId(const QJsonObject &item) {
+  qint64 id = item.value("id").toVariant().toLongLong();
+  if (id <= 0) {
+    id = item.value("subtitle_id").toVariant().toLongLong();
+  }
+  if (id <= 0) {
+    id = item.value("id_str").toString().toLongLong();
+  }
+  return id;
+}
+
+bool hasSubtitleUrl(const QJsonObject &item) {
+  QString url = item.value("subtitle_url").toString().trimmed();
+  if (url.isEmpty()) {
+    url = item.value("url").toString().trimmed();
+  }
+  return !url.isEmpty();
+}
+
+QString subtitleItemUrl(const QJsonObject &item) {
+  QString url = item.value("subtitle_url").toString().trimmed();
+  if (url.isEmpty()) {
+    url = item.value("url").toString().trimmed();
+  }
+  return url;
+}
+
+QString subtitleItemLabel(const QJsonObject &item, int index) {
+  QString label = item.value("lan_doc").toString().trimmed();
+  if (label.isEmpty()) {
+    label = item.value("lan").toString().trimmed();
+  }
+  if (label.isEmpty()) {
+    label = QString("字幕%1").arg(index + 1);
+  }
+  return label;
+}
+
+} // namespace
 
 BiliController::BiliController(QObject *parent)
     : QObject(parent), m_network(BiliNetwork::instance()),
@@ -90,6 +143,7 @@ BiliController::BiliController(QObject *parent)
   m_subtitleBackgroundOpacity = settings.value("subtitleBackgroundOpacity", m_subtitleBackgroundOpacity).toDouble();
   m_videoCardOffscreenPlaceholderEnabled = settings.value("videoCardOffscreenPlaceholderEnabled", m_videoCardOffscreenPlaceholderEnabled).toBool();
   m_videoDetailPreloadEnabled = settings.value("videoDetailPreloadEnabled", m_videoDetailPreloadEnabled).toBool();
+  m_defaultSubtitleEnabled = settings.value("defaultSubtitleEnabled", m_defaultSubtitleEnabled).toBool();
 }
 
 BiliController::~BiliController() {
@@ -196,7 +250,10 @@ QVariantList BiliController::subtitleList() const {
   QVariantList list;
   for (const QJsonValue &v : m_subtitleItems) {
     if (v.isObject()) {
-      list << v.toObject().toVariantMap();
+      const QJsonObject item = v.toObject();
+      QVariantMap map = item.toVariantMap();
+      map["subtitleId"] = subtitleItemId(item);
+      list << map;
     }
   }
   return list;
@@ -312,10 +369,12 @@ void BiliController::setSubtitleItems(const QJsonArray &items) {
   if (m_subtitleItems == items) return;
   m_subtitleItems = items;
   emit subtitleListChanged();
+  applyDefaultSubtitleSelection();
 }
 
 void BiliController::clearSelectedSubtitle() {
   setSelectedSubtitle(0, QString());
+  m_subtitleSelectionOverridden = false;
 }
 
 void BiliController::setSelectedSubtitle(qint64 subtitleId,
@@ -324,6 +383,71 @@ void BiliController::setSelectedSubtitle(qint64 subtitleId,
   m_selectedSubtitleId = subtitleId;
   m_selectedSubtitleLabel = label;
   emit selectedSubtitleChanged();
+}
+
+bool BiliController::applyDefaultSubtitleSelection() {
+  if (!m_defaultSubtitleEnabled || m_subtitleSelectionOverridden ||
+      m_selectedSubtitleId > 0 || m_subtitleItems.isEmpty()) {
+    return false;
+  }
+
+  for (int i = 0; i < m_subtitleItems.size(); ++i) {
+    const QJsonObject item = m_subtitleItems.at(i).toObject();
+    if (!isChineseSubtitleItem(item) || !hasSubtitleUrl(item)) {
+      continue;
+    }
+    const qint64 subtitleId = subtitleItemId(item);
+    if (subtitleId <= 0) {
+      continue;
+    }
+    setSelectedSubtitle(subtitleId, subtitleItemLabel(item, i));
+    return true;
+  }
+  return false;
+}
+
+QString BiliController::currentSubtitleRequestKey() const {
+  if (m_currentVideo.aid <= 0 || m_currentVideo.cid <= 0) {
+    return QString();
+  }
+  return QString("%1:%2:%3")
+      .arg(m_currentVideo.bvid)
+      .arg(m_currentVideo.aid)
+      .arg(m_currentVideo.cid);
+}
+
+QString BiliController::selectedSubtitleAssUrl() const {
+  if (m_selectedSubtitleId <= 0) {
+    return QString();
+  }
+
+  QUrl subtitleUrl(m_network->apiBase() + "/video/subtitle/ass/file");
+  QUrlQuery query;
+  query.addQueryItem("aid", QString::number(m_currentVideo.aid));
+  query.addQueryItem("cid", QString::number(m_currentVideo.cid));
+  query.addQueryItem("bvid", m_currentVideo.bvid);
+  query.addQueryItem("sid", QString::number(m_selectedSubtitleId));
+  for (const QJsonValue &value : m_subtitleItems) {
+    const QJsonObject item = value.toObject();
+    if (subtitleItemId(item) == m_selectedSubtitleId) {
+      const QString url = subtitleItemUrl(item);
+      if (!url.isEmpty()) {
+        query.addQueryItem("subtitle_url", url);
+      }
+      break;
+    }
+  }
+  query.addQueryItem("font_size", QString::number(m_subtitleFontSize));
+  query.addQueryItem("margin_v", QString::number(m_subtitleMarginV));
+  query.addQueryItem("spacing", QString::number(m_subtitleSpacing, 'f', 2));
+  query.addQueryItem("weight", QString::number(m_subtitleWeight));
+  query.addQueryItem("color_preset", m_subtitleColorPreset);
+  query.addQueryItem("outline_enabled", m_subtitleOutlineEnabled ? "1" : "0");
+  query.addQueryItem("outline_width", QString::number(m_subtitleOutlineWidth));
+  query.addQueryItem("background_enabled", m_subtitleBackgroundEnabled ? "1" : "0");
+  query.addQueryItem("background_opacity", QString::number(m_subtitleBackgroundOpacity, 'f', 2));
+  subtitleUrl.setQuery(query);
+  return subtitleUrl.toString();
 }
 
 // ====== Models ======

@@ -967,6 +967,15 @@ void BiliUpModule::downloadVideoToDisk(int quality) {
     return;
   }
 
+  if (m_controller->m_playbackModule &&
+      m_controller->m_playbackModule->ensureDefaultSubtitleForCurrentVideo(
+          [self = QPointer<BiliUpModule>(this), quality]() {
+            if (!self) return;
+            self->downloadVideoToDisk(quality);
+          })) {
+    return;
+  }
+
   const bool audioOnly = (quality == 0);
   const int requestQuality = audioOnly ? 16 : qBound(16, quality, 127);
   quality = requestQuality;
@@ -1011,27 +1020,39 @@ void BiliUpModule::downloadVideoToDisk(int quality) {
   QString subtitleUrl;
   QString subtitlePath;
   if (m_controller->m_selectedSubtitleId > 0) {
-      QUrl url(m_controller->m_network->apiBase() + "/video/subtitle/ass/file");
-      QUrlQuery query;
-      query.addQueryItem("aid", QString::number(m_controller->m_currentVideo.aid));
-      query.addQueryItem("cid", QString::number(m_controller->m_currentVideo.cid));
-      query.addQueryItem("bvid", m_controller->m_currentVideo.bvid);
-      query.addQueryItem("sid", QString::number(m_controller->m_selectedSubtitleId));
-      query.addQueryItem("font_size", QString::number(m_controller->m_subtitleFontSize));
-      query.addQueryItem("margin_v", QString::number(m_controller->m_subtitleMarginV));
-      query.addQueryItem("spacing", QString::number(m_controller->m_subtitleSpacing, 'f', 2));
-      query.addQueryItem("weight", QString::number(m_controller->m_subtitleWeight));
-      query.addQueryItem("color_preset", m_controller->m_subtitleColorPreset);
-      query.addQueryItem("outline_enabled", m_controller->m_subtitleOutlineEnabled ? "1" : "0");
-      query.addQueryItem("outline_width", QString::number(m_controller->m_subtitleOutlineWidth));
-      query.addQueryItem("background_enabled", m_controller->m_subtitleBackgroundEnabled ? "1" : "0");
-      url.setQuery(query);
-      subtitleUrl = url.toString();
+      subtitleUrl = m_controller->selectedSubtitleAssUrl();
       subtitlePath = dir.filePath(QFileInfo(targetPath).completeBaseName() + ".ass");
   }
 
   // 3. 检查文件是否已存在
   if (QFile::exists(targetPath)) {
+      if (!subtitleUrl.isEmpty() && !subtitlePath.isEmpty() && !QFile::exists(subtitlePath)) {
+          m_controller->m_isDownloading = true;
+          m_controller->m_downloadProgress = 0;
+          m_controller->m_downloadStatus = "正在保存字幕...";
+          emit m_controller->downloadStateChanged();
+
+          QPointer<BiliController> self(m_controller);
+          m_controller->m_network->downloadVideo(
+              subtitleUrl, subtitlePath,
+              [self, subtitlePath](const QString &) {
+                if (!self) return;
+                self->m_isDownloading = false;
+                self->m_downloadProgress = 1.0;
+                self->m_downloadStatus = "字幕保存完成";
+                emit self->downloadStateChanged();
+                emit self->toastMessage("字幕下载完成: " + subtitlePath);
+              },
+              [self](int, const QString &msg) {
+                if (!self) return;
+                self->m_isDownloading = false;
+                self->m_downloadProgress = 0;
+                self->m_downloadStatus.clear();
+                emit self->downloadStateChanged();
+                emit self->toastMessage("字幕下载失败: " + msg);
+              });
+          return;
+      }
       emit m_controller->toastMessage("文件已存在");
       return;
   }
