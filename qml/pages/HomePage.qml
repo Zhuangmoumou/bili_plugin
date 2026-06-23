@@ -21,6 +21,7 @@ Rectangle {
 
     // ── 内容区状态 ──
     property int tabIndex: 0
+    property bool moreMenuVisible: false
     property bool isLoading: controller ? controller.isLoading : false
     property int recommendDebounceMs: 3500
     property double lastRecommendRefreshMs: 0
@@ -52,7 +53,14 @@ Rectangle {
     }
 
     function switchTab(index) {
-        // index: 0=推荐, 1=排行, 2=搜索, 3=我的
+        // index: 0=推荐, 1=排行, 2=搜索, 3=我的, 4=更多
+        if (index === 4) {
+            moreMenuVisible = !moreMenuVisible
+            return
+        }
+
+        moreMenuVisible = false
+
         if (index === 1) {
             rankingRequested()
             return
@@ -345,6 +353,62 @@ Rectangle {
         }
     }
 
+    // ── 更多菜单：从底部“更多”按钮淡入，后续功能继续纵向追加 ──
+    Rectangle {
+        id: moreMenu
+        width: 68
+        height: moreMenuColumn.implicitHeight + 8
+        anchors.right: parent.right
+        anchors.rightMargin: 8
+        anchors.bottom: tabBar.top
+        anchors.bottomMargin: 4
+        radius: 10
+        z: 30
+        opacity: moreMenuVisible ? 1 : 0
+        visible: moreMenuVisible || opacity > 0.01
+        scale: moreMenuVisible ? 1.0 : 0.96
+        transformOrigin: Item.BottomRight
+        color: Theme.withAlpha(Theme.bgSecondary, 0.96)
+        border.color: Theme.withAlpha(Theme.primary, 0.22)
+        border.width: 1
+
+        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+        Column {
+            id: moreMenuColumn
+            anchors.fill: parent
+            anchors.margins: 4
+            spacing: 4
+
+            Rectangle {
+                width: parent.width
+                height: 20
+                radius: 8
+                color: rankingMoreArea.pressed ? Theme.withAlpha(Theme.primary, 0.22) : "transparent"
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "排行"
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    font.bold: true
+                }
+
+                MouseArea {
+                    id: rankingMoreArea
+                    anchors.fill: parent
+                    anchors.margins: -3
+                    onClicked: {
+                        moreMenuVisible = false
+                        rankingRequested()
+                    }
+                }
+            }
+        }
+    }
+
     // ── 底部标签栏 (含搜索) ──
     Rectangle {
         id: tabBar
@@ -422,9 +486,9 @@ Rectangle {
             Repeater {
                 model: [
                     { label: "推荐", idx: 0 },
-                    { label: "排行", idx: 1 },
                     { label: "搜索", idx: 2 },
-                    { label: "我的", idx: 3 }
+                    { label: "我的", idx: 3 },
+                    { label: "更多", idx: 4 }
                 ]
 
                 Rectangle {
@@ -434,7 +498,8 @@ Rectangle {
                     color: {
                         if (tabMouseArea.pressed) return Theme.withAlpha(Theme.primary, 0.2)
                         if (modelData.idx === 2) return Theme.bgTertiary
-                        return (tabIndex === modelData.idx || (modelData.idx === 3 && tabIndex === 3))
+                        if (modelData.idx === 4 && moreMenuVisible) return Theme.withAlpha(Theme.primary, 0.15)
+                        return tabIndex === modelData.idx
                         ? Theme.withAlpha(Theme.primary, 0.15)
                         : "transparent"
                     }
@@ -447,13 +512,13 @@ Rectangle {
                         text: modelData.label
                         color: {
                             if (modelData.idx === 2) return Theme.textSecondary
-                                return (tabIndex === modelData.idx)
+                            return (tabIndex === modelData.idx || (modelData.idx === 4 && moreMenuVisible))
                                 ? Theme.primary
                                 : Theme.textSecondary
                         }
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
-                        font.bold: tabIndex === modelData.idx && modelData.idx !== 2
+                        font.bold: (tabIndex === modelData.idx || (modelData.idx === 4 && moreMenuVisible)) && modelData.idx !== 2
                         anchors.centerIn: parent
 
                         Behavior on color { ColorAnimation { duration: 100 } }

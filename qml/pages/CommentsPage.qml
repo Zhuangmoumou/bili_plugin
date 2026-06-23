@@ -170,7 +170,12 @@ Rectangle {
     function avatarImageSource(url) {
         if (!url) return ""
         if (url.indexOf("data:image/") === 0) return url
-        return "image://bili/" + encodeURIComponent(url)
+        var s = String(url)
+        var queryIndex = s.indexOf("?")
+        var base = queryIndex >= 0 ? s.slice(0, queryIndex) : s
+        var query = queryIndex >= 0 ? s.slice(queryIndex) : ""
+        if (base.indexOf("@") < 0) s = base + "@50w_50h" + query
+        return "image://bili/" + encodeURIComponent(s)
     }
 
     function escapeCommentRichText(text) {
@@ -190,6 +195,22 @@ Rectangle {
         s = s.replace(/</g, "&lt;")
         s = s.replace(/>/g, "&gt;")
         return s
+    }
+
+    function videoLinkAnchor(token) {
+        return "<a href=\"" + escapeHtmlAttribute(token) + "\" style=\"color:#60a5fa;text-decoration:none;\">" +
+                escapeCommentRichText(token) + "</a>"
+    }
+
+    function isCommentVideoLinkToken(token) {
+        if (!token) return false
+        return /^(?:https?:\/\/)?(?:[Ww][Ww][Ww]\.)?[Bb]23\.[Tt][Vv]\/[0-9A-Za-z]+$/.test(token) ||
+                /^[Bb][Vv]1[1-9A-HJ-NP-Za-km-z]{9}$/.test(token)
+    }
+
+    function openVideoLink(link) {
+        if (!link || !controller || !controller.video || !controller.video.resolveVideoLink) return
+        controller.video.resolveVideoLink(link)
     }
 
     function normalizeCommentEmoteUrl(url) {
@@ -234,16 +255,35 @@ Rectangle {
         var raw = content && content.length > 0 ? String(content) : ""
         if (!raw) return ""
 
-        var rich = escapeCommentRichText(raw)
-        rich = rich.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-        rich = rich.replace(/\[[^\[\]\r\n]{1,40}\]/g, function(match) {
-            var emote = commentsPage.findCommentEmote(emotes, match)
-            if (!emote || !emote.url) return match
-            var size = commentsPage.commentEmoteDisplaySize(emote)
-            var src = commentsPage.escapeHtmlAttribute(commentsPage.normalizeCommentEmoteUrl(emote.url))
-            var alt = commentsPage.escapeHtmlAttribute(match)
-            return "<img src=\"" + src + "\" width=\"" + size + "\" height=\"" + size + "\" alt=\"" + alt + "\" />"
-        })
+        raw = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+        var tokenPattern = /(?:https?:\/\/)?(?:[Ww][Ww][Ww]\.)?[Bb]23\.[Tt][Vv]\/[0-9A-Za-z]+|[Bb][Vv]1[1-9A-HJ-NP-Za-km-z]{9}|\[[^\[\]\r\n]{1,40}\]/g
+        var rich = ""
+        var lastIndex = 0
+        var match
+
+        while ((match = tokenPattern.exec(raw)) !== null) {
+            var start = match.index
+            var token = match[0]
+            rich += escapeCommentRichText(raw.slice(lastIndex, start))
+
+            if (commentsPage.isCommentVideoLinkToken(token)) {
+                rich += commentsPage.videoLinkAnchor(token)
+            } else {
+                var emote = commentsPage.findCommentEmote(emotes, token)
+                if (!emote || !emote.url) {
+                    rich += escapeCommentRichText(token)
+                } else {
+                    var size = commentsPage.commentEmoteDisplaySize(emote)
+                    var src = commentsPage.escapeHtmlAttribute(commentsPage.normalizeCommentEmoteUrl(emote.url))
+                    var alt = commentsPage.escapeHtmlAttribute(token)
+                    rich += "<img src=\"" + src + "\" width=\"" + size + "\" height=\"" + size + "\" alt=\"" + alt + "\" />"
+                }
+            }
+
+            lastIndex = start + token.length
+        }
+
+        rich += escapeCommentRichText(raw.slice(lastIndex))
         return rich.replace(/\n/g, "<br>")
     }
 
@@ -683,12 +723,14 @@ Rectangle {
                                 font.family: Theme.fontFamily
                                 font.pixelSize: commentsPage._commentBodyFontSize
                                 wrapMode: Text.Wrap
-                                maximumLineCount: 3
+                                maximumLineCount: 5
                                 elide: Text.ElideRight
                                 lineHeight: 1.22
+                                linkColor: "#60a5fa"
                                 renderType: commentsPage._textRenderType
                                 font.hintingPreference: commentsPage._hinting
                                 antialiasing: commentsPage._textAA
+                                onLinkActivated: commentsPage.openVideoLink(link)
                             }
 
                             Row {
@@ -1056,9 +1098,11 @@ Rectangle {
                                 font.pixelSize: commentsPage._commentBodyFontSize
                                 wrapMode: Text.Wrap
                                 lineHeight: 1.24
+                                linkColor: "#60a5fa"
                                 renderType: commentsPage._textRenderType
                                 font.hintingPreference: commentsPage._hinting
                                 antialiasing: commentsPage._textAA
+                                onLinkActivated: commentsPage.openVideoLink(link)
                             }
 
                             Rectangle {
@@ -1247,9 +1291,11 @@ Rectangle {
                             font.pixelSize: commentsPage._commentBodyFontSize
                             wrapMode: Text.Wrap
                             lineHeight: 1.22
+                            linkColor: "#60a5fa"
                             renderType: commentsPage._textRenderType
                             font.hintingPreference: commentsPage._hinting
                             antialiasing: commentsPage._textAA
+                            onLinkActivated: commentsPage.openVideoLink(link)
                         }
 
                         Row {

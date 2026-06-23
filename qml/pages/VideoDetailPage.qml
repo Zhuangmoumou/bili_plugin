@@ -50,30 +50,53 @@ Rectangle {
         return s
     }
 
-    function descRichText(text) {
-        var raw = text && text.length > 0 ? String(text) : "暂无简介"
-        var pattern = /BV[0-9A-Za-z]{10}/g
+    function escapeHtmlAttribute(text) {
+        if (!text) return ""
+        var s = String(text)
+        s = s.replace(/&/g, "&amp;")
+        s = s.replace(/"/g, "&quot;")
+        s = s.replace(/</g, "&lt;")
+        s = s.replace(/>/g, "&gt;")
+        return s
+    }
+
+    function videoLinkRichText(text, fallbackText) {
+        var raw = text && text.length > 0 ? String(text) : fallbackText
+        var pattern = /(?:https?:\/\/)?(?:[Ww][Ww][Ww]\.)?[Bb]23\.[Tt][Vv]\/[0-9A-Za-z]+|[Bb][Vv]1[1-9A-HJ-NP-Za-km-z]{9}/g
         var lastIndex = 0
         var result = ""
         var match
 
         while ((match = pattern.exec(raw)) !== null) {
             var start = match.index
-            var end = start + match[0].length
+            var token = match[0]
             result += escapeRichText(raw.slice(lastIndex, start))
-            result += "<a href=\"" + match[0] + "\" style=\"color:#60a5fa;text-decoration:none;\">" + match[0] + "</a>"
-            lastIndex = end
+            result += "<a href=\"" + escapeHtmlAttribute(token) + "\" style=\"color:#60a5fa;text-decoration:none;\">" + escapeRichText(token) + "</a>"
+            lastIndex = start + token.length
         }
 
         result += escapeRichText(raw.slice(lastIndex))
         return result.replace(/\r\n/g, "<br>").replace(/\n/g, "<br>").replace(/\r/g, "<br>")
     }
 
-    function openBvidFromDesc(bvid) {
-        if (!bvid || bvid === detailPage.bvid) return
-        if (rootRef) {
-            rootRef.navigateTo("detail", { bvid: bvid })
-        }
+    function descRichText(text) {
+        return videoLinkRichText(text, "暂无简介")
+    }
+
+    function openVideoLink(link) {
+        if (!link || !controller || !controller.video || !controller.video.resolveVideoLink) return
+        controller.video.resolveVideoLink(link)
+    }
+
+    function avatarImageSource(url) {
+        if (!url) return ""
+        if (url.indexOf("data:image/") === 0) return url
+        var s = String(url)
+        var queryIndex = s.indexOf("?")
+        var base = queryIndex >= 0 ? s.slice(0, queryIndex) : s
+        var query = queryIndex >= 0 ? s.slice(queryIndex) : ""
+        if (base.indexOf("@") < 0) s = base + "@50w_50h" + query
+        return "image://bili/" + encodeURIComponent(s)
     }
 
     function updateQualities() {
@@ -655,7 +678,7 @@ Rectangle {
                                                 smooth: true
                                                 mipmap: true
                                                 source: staffItem.face && detailPage.heroImagesActive
-                                                        ? "image://bili/" + encodeURIComponent(staffItem.face) : ""
+                                                        ? detailPage.avatarImageSource(staffItem.face) : ""
                                                 fillMode: Image.PreserveAspectCrop
                                                 asynchronous: true
                                                 visible: false
@@ -1384,7 +1407,7 @@ Rectangle {
                             wrapMode: Text.Wrap
                             lineHeight: 1.35
                             linkColor: "#60a5fa"
-                            onLinkActivated: detailPage.openBvidFromDesc(link)
+                            onLinkActivated: detailPage.openVideoLink(link)
                         }
                     }
                 }

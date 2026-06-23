@@ -23,6 +23,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QRegExp>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringListModel>
@@ -34,6 +35,71 @@
 #include <functional>
 
 namespace {
+
+QString normalizeBvid(const QString &bvid) {
+  if (bvid.size() < 2)
+    return bvid;
+  QString normalized = bvid;
+  normalized[0] = QLatin1Char('B');
+  normalized[1] = QLatin1Char('V');
+  return normalized;
+}
+
+QString avToBvid(qulonglong aid) {
+  static constexpr qulonglong XOR_CODE = 23442827791579ULL;
+  static constexpr qulonglong MAX_AID = 1ULL << 51;
+  static constexpr int BASE = 58;
+  static const QString alphabet =
+      QStringLiteral("FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf");
+
+  QChar bytes[12] = {
+      QLatin1Char('B'), QLatin1Char('V'), QLatin1Char('1'), QLatin1Char('0'),
+      QLatin1Char('0'), QLatin1Char('0'), QLatin1Char('0'), QLatin1Char('0'),
+      QLatin1Char('0'), QLatin1Char('0'), QLatin1Char('0'), QLatin1Char('0')};
+
+  qulonglong tmp = (MAX_AID | aid) ^ XOR_CODE;
+  int bvIndex = 11;
+  while (tmp > 0 && bvIndex >= 0) {
+    bytes[bvIndex] = alphabet.at(static_cast<int>(tmp % BASE));
+    tmp /= BASE;
+    --bvIndex;
+  }
+
+  std::swap(bytes[3], bytes[9]);
+  std::swap(bytes[4], bytes[7]);
+  return QString(bytes, 12);
+}
+
+QString extractBvid(const QString &text) {
+  static const QRegularExpression bvidRe(
+      QStringLiteral("\\b[Bb][Vv]1[1-9A-HJ-NP-Za-km-z]{9}\\b"));
+  const QRegularExpressionMatch match = bvidRe.match(text);
+  if (!match.hasMatch())
+    return QString();
+  return normalizeBvid(match.captured(0));
+}
+
+QString extractAvAsBvid(const QString &text) {
+  static const QRegularExpression avRe(
+      QStringLiteral("(?:^|[^A-Za-z0-9])av(\\d{1,20})(?=$|[^A-Za-z0-9])"),
+      QRegularExpression::CaseInsensitiveOption);
+  const QRegularExpressionMatch match = avRe.match(text);
+  if (!match.hasMatch())
+    return QString();
+
+  bool ok = false;
+  const qulonglong aid = match.captured(1).toULongLong(&ok);
+  if (!ok || aid == 0)
+    return QString();
+  return avToBvid(aid);
+}
+
+QString extractVideoBvid(const QString &text) {
+  QString bvid = extractBvid(text);
+  if (!bvid.isEmpty())
+    return bvid;
+  return extractAvAsBvid(text);
+}
 
 int currentPlaybackDuration(qint64 currentCid, int fallbackDuration,
                             VideoPartListModel *partModel) {
@@ -107,6 +173,99 @@ BiliVideoModule::BiliVideoModule(BiliController *controller)
     : QObject(controller), m_controller(controller) {}
 
 QObject *BiliVideoModule::videoPartModel() { return m_controller->m_videoPartModel; }
+
+void BiliVideoModule::resolveVideoLink(const QString &link) {
+  const QString trimmed = link.trimmed();
+  if (trimmed.isEmpty())
+    return;
+
+  const QString directBvid = extractVideoBvid(trimmed);
+  if (!directBvid.isEmpty()) {
+    emit videoLinkResolved(directBvid);
+    return;
+  }
+
+  QUrl url = QUrl::fromUserInput(trimmed);
+  if (!url.isValid() || url.host().isEmpty()) {
+    emit m_controller->toastMessage(QStringLiteral("无法识别视频链接"));
+    return;
+  }
+
+  const QString host = url.host().toLower();
+  if (host == QStringLiteral("b23.tv") || host == QStringLiteral("www.b23.tv")) {
+    if (url.scheme().isEmpty())
+      url.setScheme(QStringLiteral("https"));
+    resolveShortVideoLink(url, false);
+    return;
+  }
+
+  emit m_controller->toastMessage(QStringLiteral("无法识别视频链接"));
+}
+
+void BiliVideoModule::resolveShortVideoLink(const QUrl &url, bool useGet) {
+  if (!url.isValid())
+    return;
+
+  QNetworkAccessManager *nam = new QNetworkAccessManager(this);
+  nam->setTransferTimeout(8000);
+
+  QNetworkRequest request(url);
+  request.setRawHeader("User-Agent",
+                       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+  request.setRawHeader("Referer", "https://www.bilibili.com");
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setMaximumRedirectsAllowed(5);
+
+  QNetworkReply *reply = useGet ? nam->get(request) : nam->head(request);
+  if (!reply) {
+    nam->deleteLater();
+    emit m_controller->toastMessage(QStringLiteral("无法解析短链"));
+    return;
+  }
+
+  QPointer<QNetworkReply> safeReply(reply);
+  QTimer *timer = new QTimer(nam);
+  timer->setSingleShot(true);
+  connect(timer, &QTimer::timeout, nam, [safeReply]() {
+    if (safeReply && safeReply->isRunning())
+      safeReply->abort();
+  });
+  timer->start(8000);
+
+  connect(reply, &QNetworkReply::finished, this,
+          [this, reply, nam, timer, url, useGet]() {
+            timer->stop();
+
+            QUrl finalUrl = reply->url();
+            const QVariant redirectTarget =
+                reply->attribute(QNetworkRequest::RedirectionTargetAttribute);
+            if (redirectTarget.isValid()) {
+              finalUrl = finalUrl.resolved(redirectTarget.toUrl());
+            }
+
+            const QString resolvedBvid = extractVideoBvid(finalUrl.toString());
+            const bool hadError = reply->error() != QNetworkReply::NoError;
+            reply->deleteLater();
+            nam->deleteLater();
+
+            if (!resolvedBvid.isEmpty()) {
+              emit videoLinkResolved(resolvedBvid);
+              return;
+            }
+
+            if (!useGet) {
+              resolveShortVideoLink(url, true);
+              return;
+            }
+
+            if (hadError) {
+              emit m_controller->toastMessage(QStringLiteral("短链解析失败"));
+            } else {
+              emit m_controller->toastMessage(QStringLiteral("短链不是视频链接"));
+            }
+          });
+}
 
 void BiliVideoModule::scheduleVideoDetailPreload(const QString &bvid, qint64 aid, qint64 cid) {
   if (!m_controller || !m_controller->m_videoDetailPreloadEnabled ||

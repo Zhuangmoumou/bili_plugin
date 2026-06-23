@@ -575,6 +575,19 @@ Rectangle {
         }
     }
 
+    Connections {
+        target: controller && controller.video ? controller.video : null
+        function onVideoLinkResolved(bvid) {
+            if (!bvid || bvid.length < 2) return
+            if (root.currentPage === "detail" && bvid === root.detailBvid) return
+            if (root.currentPage === "comments" && bvid === root.detailBvid) {
+                root.goBack()
+                return
+            }
+            root.navigateTo("detail", { bvid: bvid })
+        }
+    }
+
     Component.onCompleted: {
         console.log("=== BiliPlugin Loaded ===", width, "x", height);
     }
