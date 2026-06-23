@@ -1,4 +1,5 @@
 .xmake
+.claude
 build
 go_server/server
 go_server/bili-sms
