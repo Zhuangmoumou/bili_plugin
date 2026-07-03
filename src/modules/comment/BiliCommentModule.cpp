@@ -164,6 +164,36 @@ void BiliCommentModule::resetReplyState() {
   emit replyHasMoreChanged();
 }
 
+void BiliCommentModule::resetForVideoChange() {
+  const bool wasReady = commentsReady();
+  const bool replyHadMore = m_commentReplyHasMore;
+
+  m_commentPage = 1;
+  m_commentBvid.clear();
+  m_commentNextOffset.clear();
+  m_commentFirstPageLoaded = false;
+  m_commentHasMore = true;
+  m_commentReplyPage = 1;
+  m_commentReplyHasMore = false;
+  m_currentCommentRootRpid = 0;
+
+  if (m_controller) {
+    if (m_controller->commentListModel()) {
+      m_controller->commentListModel()->setLoading(false);
+      m_controller->commentListModel()->clear();
+    }
+    if (m_controller->commentReplyListModel()) {
+      m_controller->commentReplyListModel()->setLoading(false);
+      m_controller->commentReplyListModel()->clear();
+    }
+  }
+
+  if (wasReady)
+    emit commentsReadyChanged();
+  if (replyHadMore)
+    emit replyHasMoreChanged();
+}
+
 // ====== API: 评论 ======
 
 void BiliCommentModule::fetchComments(int page, bool silent) {
@@ -263,7 +293,9 @@ void BiliCommentModule::fetchComments(int page, bool silent) {
 }
 
 void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
-  if (m_controller->videoAid() <= 0 || rootRpid <= 0) {
+  const QString requestBvid = m_controller->videoBvid();
+  const qint64 requestAid = m_controller->videoAid();
+  if (requestBvid.isEmpty() || requestAid <= 0 || rootRpid <= 0) {
     emit m_controller->toastMessage("评论信息不完整");
     return;
   }
@@ -279,7 +311,7 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
   m_controller->commentReplyListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(m_controller->videoAid());
+  params["oid"] = QString::number(requestAid);
   params["type"] = "1";
   params["root"] = QString::number(rootRpid);
   params["ps"] = "20";
@@ -290,15 +322,16 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
   const int requestPage = m_commentReplyPage;
   m_controller->apiGet(
       "/video/comments/replies", params,
-      [this, self, requestRootRpid, requestPage](const QJsonObject &data) {
-        if (!self)
+      [this, self, requestRootRpid, requestPage, requestBvid, requestAid](const QJsonObject &data) {
+        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
           return;
         biliRunInWorker(
             self, [data, requestPage]() {
               return parseCommentRepliesPayload(data, requestPage);
             },
-            [this, self, requestRootRpid](ParsedCommentReplies result) {
-              if (!self || m_currentCommentRootRpid != requestRootRpid ||
+            [this, self, requestRootRpid, requestBvid, requestAid](ParsedCommentReplies result) {
+              if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid ||
+                  m_currentCommentRootRpid != requestRootRpid ||
                   m_commentReplyPage != result.page)
                 return;
 
@@ -312,12 +345,14 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
               }
             });
       },
-      [this](int, const QString &msg) {
+      [this, self, requestBvid, requestAid](int, const QString &msg) {
+        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
+          return;
         m_commentReplyHasMore = false;
         emit replyHasMoreChanged();
-        m_controller->commentReplyListModel()->setLoading(false);
-        m_controller->commentReplyListModel()->setErrorMessage(msg);
-        emit m_controller->toastMessage(QString("回复加载失败：%1").arg(msg));
+        self->commentReplyListModel()->setLoading(false);
+        self->commentReplyListModel()->setErrorMessage(msg);
+        emit self->toastMessage(QString("回复加载失败：%1").arg(msg));
       });
 }
 
@@ -326,11 +361,15 @@ void BiliCommentModule::fetchMoreCommentReplies() {
   if (!m_commentReplyHasMore) return;
   if (m_controller->commentReplyListModel()->loading()) return;
 
+  const QString requestBvid = m_controller->videoBvid();
+  const qint64 requestAid = m_controller->videoAid();
+  if (requestBvid.isEmpty() || requestAid <= 0) return;
+
   m_commentReplyPage++;
   m_controller->commentReplyListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(m_controller->videoAid());
+  params["oid"] = QString::number(requestAid);
   params["type"] = "1";
   params["root"] = QString::number(m_currentCommentRootRpid);
   params["ps"] = "20";
@@ -341,15 +380,16 @@ void BiliCommentModule::fetchMoreCommentReplies() {
   const int requestPage = m_commentReplyPage;
   m_controller->apiGet(
       "/video/comments/replies", params,
-      [this, self, requestRootRpid, requestPage](const QJsonObject &data) {
-        if (!self)
+      [this, self, requestRootRpid, requestPage, requestBvid, requestAid](const QJsonObject &data) {
+        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
           return;
         biliRunInWorker(
             self, [data, requestPage]() {
               return parseCommentRepliesPayload(data, requestPage);
             },
-            [this, self, requestRootRpid](ParsedCommentReplies result) {
-              if (!self || m_currentCommentRootRpid != requestRootRpid ||
+            [this, self, requestRootRpid, requestBvid, requestAid](ParsedCommentReplies result) {
+              if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid ||
+                  m_currentCommentRootRpid != requestRootRpid ||
                   m_commentReplyPage != result.page)
                 return;
 
@@ -360,9 +400,11 @@ void BiliCommentModule::fetchMoreCommentReplies() {
               self->commentReplyListModel()->setLoading(false);
             });
       },
-      [this](int, const QString &msg) {
-        m_controller->commentReplyListModel()->setLoading(false);
-        emit m_controller->toastMessage(QString("回复加载失败：%1").arg(msg));
+      [this, self, requestBvid, requestAid](int, const QString &msg) {
+        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
+          return;
+        self->commentReplyListModel()->setLoading(false);
+        emit self->toastMessage(QString("回复加载失败：%1").arg(msg));
       },
       true);
 }

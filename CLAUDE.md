@@ -8,13 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project expects xmake to be configured explicitly before building.
 
 - Configure xmake for the normal release build used in this repo:
-  - `xmake f --qt="/home/zhuang/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
+  - `xmake f --qt="/home/haiku/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
 - Build after configuration:
   - `xmake`
 
 If `xmake` starts failing with missing-file or stale-config style errors, the known recovery flow is:
 - `xmake f -c`
-- re-run the full `xmake f --qt="/home/zhuang/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
+- re-run the full `xmake f --qt="/home/haiku/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
 - `xmake`
 
 The main shared library target is `bili_plugin`, defined in `xmake.lua`.
@@ -47,7 +47,7 @@ The plugin normally starts the main Go server itself from C++.
 
 Ports used by the repo:
 - Main local API: `127.0.0.1:8000`
-- SMS login helper: `127.0.0.1:8666`
+- SMS login helper: `0.0.0.0:8666`
 
 ### Tests and linting
 No dedicated lint target, test suite, or single-test command was found in this repository.

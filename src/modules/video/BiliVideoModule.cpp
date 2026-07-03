@@ -347,6 +347,10 @@ bool BiliVideoModule::restoreCachedVideoDetail(const QString &bvid) {
   }
 
   const BiliController::VideoDetailSnapshot snapshot = it.value();
+  const QString oldBvid = m_controller->m_currentVideo.bvid;
+  if (oldBvid != snapshot.video.bvid && m_controller->m_commentModule) {
+    m_controller->m_commentModule->resetForVideoChange();
+  }
   m_controller->m_currentVideo = snapshot.video;
   m_controller->m_playbackProgressCid = snapshot.playbackProgressCid;
   m_controller->m_playbackProgressSeconds = snapshot.playbackProgressSeconds;
@@ -403,6 +407,9 @@ void BiliVideoModule::dropCachedVideoDetail(const QString &bvid) {
   if (m_controller->m_currentVideo.bvid != bvid)
     return;
 
+  if (m_controller->m_commentModule) {
+    m_controller->m_commentModule->resetForVideoChange();
+  }
   m_controller->m_currentVideo = VideoItem();
   m_controller->m_playbackProgressCid = 0;
   m_controller->m_playbackProgressSeconds = 0;
@@ -603,8 +610,13 @@ void BiliVideoModule::fetchVideoDetail(const QString &bvid) {
           return;
 
         self->m_videoDetailLoadingBvid.clear();
-        self->m_currentVideo = VideoListModel::parseVideoItem(data);
-        self->m_currentVideo.aid = data.value("aid").toVariant().toLongLong();
+        const QString oldBvid = self->m_currentVideo.bvid;
+        VideoItem parsedVideo = VideoListModel::parseVideoItem(data);
+        parsedVideo.aid = data.value("aid").toVariant().toLongLong();
+        if (oldBvid != parsedVideo.bvid && self->m_commentModule) {
+          self->m_commentModule->resetForVideoChange();
+        }
+        self->m_currentVideo = parsedVideo;
 
         self->m_videoSeasonId = 0;
         self->m_videoSeasonTitle.clear();

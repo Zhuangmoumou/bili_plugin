@@ -22,6 +22,7 @@ Rectangle {
     property string currentPage: "home"
     property var pageStack: []
     property string detailBvid: ""
+    property string commentsBvid: ""
     property int detailSessionId: 0
     property int nextDetailSessionId: 1
     property var reportedDetailSessions: ({})
@@ -70,6 +71,9 @@ Rectangle {
             captureCurrentDetailSnapshot()
             return { bvid: detailBvid, sessionId: detailSessionId }
         }
+        if (page === "comments") {
+            return { bvid: commentsBvid || controller.videoBvid || detailBvid }
+        }
         if (page === "up") {
             return { mid: upUserMid, fromViewAid: upFromViewAid }
         }
@@ -91,6 +95,12 @@ Rectangle {
         if (page === "detail" && props.bvid) {
             detailSessionId = props.sessionId || nextDetailSessionId++
             detailBvid = props.bvid
+        }
+        if (page === "comments") {
+            commentsBvid = (props && props.bvid) ? props.bvid : (controller.videoBvid || detailBvid)
+            if (commentsBvid && controller && controller.video && controller.videoBvid !== commentsBvid) {
+                controller.video.restoreCachedVideoDetail(commentsBvid)
+            }
         }
         if (page === "up") {
             upUserMid = props.mid || 0
@@ -370,7 +380,7 @@ Rectangle {
                         root.playQualitySelected = quality;
                         root.navigateTo("player")
                     }
-                    onCommentsRequested: root.navigateTo("comments")
+                    onCommentsRequested: root.navigateTo("comments", { bvid: root.detailBvid || controller.videoBvid })
                     onUpRequested: {
                         if (mid > 0) root.navigateTo("up", { mid: mid, fromViewAid: aid });
                     }
@@ -399,13 +409,14 @@ Rectangle {
         }
 
         Loader {
-            active: currentPage === "comments"
+            active: currentPage === "comments" || root.stackContains("comments")
             visible: currentPage === "comments"
             enabled: visible
             anchors.fill: parent
             sourceComponent: Component {
                 Pages.CommentsPage {
                     controller: root.rootController
+                    contextBvid: root.commentsBvid
                     onBackClicked: root.goBack()
                 }
             }

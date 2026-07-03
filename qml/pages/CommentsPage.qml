@@ -30,6 +30,8 @@ Rectangle {
     readonly property int _commentPictureHeight: 51
 
     property var controller: null
+    property string contextBvid: ""
+    property string loadedCommentsBvid: ""
     property int viewMode: 0 // 0=主评论列表,1=子评论详情
     property real mainCommentContentY: 0
     property var selectedComment: null
@@ -97,12 +99,54 @@ Rectangle {
         })
     }
 
+    function currentContextBvid() {
+        if (contextBvid && contextBvid.length > 0) return contextBvid
+        return controller ? (controller.videoBvid || "") : ""
+    }
+
+    function syncCommentContext() {
+        var bvid = currentContextBvid()
+        if (!bvid || bvid.length === 0) return false
+        if (loadedCommentsBvid === bvid) return true
+
+        viewMode = 0
+        selectedComment = null
+        mainCommentContentY = 0
+        autoLoadingComments = false
+        autoLoadingReplies = false
+        commentLoadMoreCooling = false
+        replyLoadMoreCooling = false
+        initialCommentsRequested = false
+        commentsModelAttached = false
+        commentLoadingMaskVisible = false
+        loadedCommentsBvid = bvid
+        return true
+    }
+
+    function queueInitialCommentsIfNeeded() {
+        if (!syncCommentContext()) return
+        var bvid = currentContextBvid()
+        if (initialCommentsRequested && controller && controller.videoBvid === bvid && !hasReusableCurrentComments()) {
+            var cm = controller.comments.commentModel()
+            if (!cm || (!cm.loading && cm.count === 0)) {
+                initialCommentsRequested = false
+                commentsModelAttached = false
+            }
+        }
+        if (initialCommentsRequested) return
+        showInitialCommentLoadingIfNeeded()
+        initialCommentsTimer.restart()
+    }
+
     function hasReusableCurrentComments() {
         return !!(controller && controller.comments && controller.comments.commentsReady)
     }
 
     function showInitialCommentLoadingIfNeeded() {
         if (!controller || viewMode !== 0 || initialCommentsRequested) return
+        var bvid = currentContextBvid()
+        if (!bvid || bvid.length === 0) return
+        if (controller.videoBvid !== bvid) return
         if (controller.videoDetailPreloadEnabled || hasReusableCurrentComments()) return
         showCommentLoadingMask()
     }
@@ -126,10 +170,16 @@ Rectangle {
     }
 
     onViewModeChanged: updateCommentLoadingMask()
-    onControllerChanged: showInitialCommentLoadingIfNeeded()
+    onControllerChanged: queueInitialCommentsIfNeeded()
+    onContextBvidChanged: {
+        if (visible) queueInitialCommentsIfNeeded()
+    }
 
     function requestInitialComments() {
         if (!controller || initialCommentsRequested) return
+        var bvid = currentContextBvid()
+        if (!bvid || bvid.length === 0) return
+        if (controller.videoBvid !== bvid) return
         initialCommentsRequested = true
         commentsModelAttached = true
         if (hasReusableCurrentComments()) {
@@ -553,6 +603,7 @@ Rectangle {
                                   || (!!model && !!model.is_top)
             property bool maybeHasPicture: !!(model.pictures && model.pictures.length > 0)
             property string cachedAvatarSource: model.avatar ? commentsPage.avatarImageSource(model.avatar) : ""
+            property bool bodyExpanded: false
             property string cachedPictureUrl: commentsPage.firstPicture(model.pictures)
             property string cachedPictureSource: cachedPictureUrl ? commentsPage.commentThumbSource(cachedPictureUrl) : ""
 
@@ -715,22 +766,73 @@ Rectangle {
                                 antialiasing: commentsPage._textAA
                             }
 
-                            Text {
+                            Column {
+                                id: commentBodyPreview
+                                property string richContent: commentsPage.commentRichText(model.content || "", model.emotes || ({}))
+                                property real previewHeight: Math.ceil(commentsPage._commentBodyFontSize * 1.22 * 5 + 2)
+                                property bool hasMore: commentBodyMeasure.paintedHeight > previewHeight + 1
                                 width: parent.width
-                                text: commentsPage.commentRichText(model.content || "", model.emotes || ({}))
-                                textFormat: Text.RichText
-                                color: Theme.textPrimary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: commentsPage._commentBodyFontSize
-                                wrapMode: Text.Wrap
-                                maximumLineCount: 5
-                                elide: Text.ElideRight
-                                lineHeight: 1.22
-                                linkColor: "#60a5fa"
-                                renderType: commentsPage._textRenderType
-                                font.hintingPreference: commentsPage._hinting
-                                antialiasing: commentsPage._textAA
-                                onLinkActivated: commentsPage.openVideoLink(link)
+                                spacing: 2
+
+                                Text {
+                                    id: commentBodyMeasure
+                                    width: parent.width
+                                    height: 0
+                                    visible: false
+                                    text: commentBodyPreview.richContent
+                                    textFormat: Text.RichText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: commentsPage._commentBodyFontSize
+                                    wrapMode: Text.Wrap
+                                    lineHeight: 1.22
+                                    renderType: commentsPage._textRenderType
+                                    font.hintingPreference: commentsPage._hinting
+                                    antialiasing: commentsPage._textAA
+                                }
+
+                                Item {
+                                    width: parent.width
+                                    height: commentDelegate.bodyExpanded || !commentBodyPreview.hasMore
+                                            ? commentBodyText.paintedHeight
+                                            : commentBodyPreview.previewHeight
+                                    clip: !commentDelegate.bodyExpanded && commentBodyPreview.hasMore
+
+                                    Text {
+                                        id: commentBodyText
+                                        width: parent.width
+                                        text: commentBodyPreview.richContent
+                                        textFormat: Text.RichText
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: commentsPage._commentBodyFontSize
+                                        wrapMode: Text.Wrap
+                                        elide: Text.ElideNone
+                                        lineHeight: 1.22
+                                        linkColor: "#60a5fa"
+                                        renderType: commentsPage._textRenderType
+                                        font.hintingPreference: commentsPage._hinting
+                                        antialiasing: commentsPage._textAA
+                                        onLinkActivated: commentsPage.openVideoLink(link)
+                                    }
+                                }
+
+                                Text {
+                                    visible: commentBodyPreview.hasMore
+                                    text: commentDelegate.bodyExpanded ? "收起" : "展开更多..."
+                                    color: Theme.primaryLight
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontTiny
+                                    font.bold: true
+                                    renderType: commentsPage._textRenderType
+                                    font.hintingPreference: commentsPage._hinting
+                                    antialiasing: commentsPage._textAA
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -4
+                                        onClicked: commentDelegate.bodyExpanded = !commentDelegate.bodyExpanded
+                                    }
+                                }
                             }
 
                             Row {
@@ -1617,14 +1719,12 @@ Rectangle {
     }
 
     Component.onCompleted: {
-        showInitialCommentLoadingIfNeeded()
-        initialCommentsTimer.restart()
+        queueInitialCommentsIfNeeded()
     }
 
     onVisibleChanged: {
-        if (visible && !initialCommentsRequested) {
-            showInitialCommentLoadingIfNeeded()
-            initialCommentsTimer.restart()
+        if (visible) {
+            queueInitialCommentsIfNeeded()
         }
     }
 }

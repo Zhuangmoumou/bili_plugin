@@ -21,6 +21,7 @@ public:
   Q_INVOKABLE QObject *commentModel();
   Q_INVOKABLE QObject *commentReplyModel();
   void resetReplyState();
+  void resetForVideoChange();
 
 signals:
   void replyHasMoreChanged();

@@ -9,3 +9,4 @@ go_server/rust
 *.bak
 pak.sh
 screen_watchdog
+CLAUDE.md
