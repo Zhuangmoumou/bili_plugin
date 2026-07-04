@@ -145,6 +145,14 @@ Rectangle {
             _pendingRefreshBvid = ""
             _refreshDispatchQueued = false
             _needRestorePartAfterRefresh = false
+            if (controller.videoCid > 0 && (!controller.acceptQualities || controller.acceptQualities.length === 0)) {
+                controller.playback.fetchAcceptQualities(detailPage.selectedQuality)
+                controller.favorite.fetchFavoriteStatus()
+                controller.favorite.fetchCoinStatus()
+                controller.favorite.fetchLikeStatus()
+                controller.favorite.fetchWatchLaterStatus()
+                detailPage.reportRecentViewForCurrentSession()
+            }
         }
         return restored
     }
@@ -1677,7 +1685,7 @@ Rectangle {
                             viewCount: model.views || ""
                             durationText: model.durationText || ""
                             bvid: model.bvid || ""
-                            showCollection: model.partCount > 1
+                            partCount: model.partCount || 1
                             titleScale: 0.9
                             subScale: 0.85
                             onClicked: {

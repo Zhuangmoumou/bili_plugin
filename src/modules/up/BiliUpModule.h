@@ -22,6 +22,7 @@ public:
   Q_INVOKABLE void fetchUpSeasons(qint64 mid);
   Q_INVOKABLE QObject *upSearchVideoModel();
   Q_INVOKABLE void selectUpSeason(qint64 seasonId, const QString &name = QString(), bool isSeries = false, int total = 0);
+  Q_INVOKABLE void selectUpDynamic();
   Q_INVOKABLE void toggleUpFollow();
   Q_INVOKABLE void playVideoPart(int index);
   Q_INVOKABLE void restartGoServer();

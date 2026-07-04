@@ -23,6 +23,10 @@ Rectangle {
     property var pageStack: []
     property string detailBvid: ""
     property string commentsBvid: ""
+    property string commentsOid: ""
+    property int commentsType: 1
+    property string commentsKey: ""
+    property string commentsTitle: ""
     property int detailSessionId: 0
     property int nextDetailSessionId: 1
     property var reportedDetailSessions: ({})
@@ -30,6 +34,7 @@ Rectangle {
     property string lastPage: "home"
     property var upUserMid: 0
     property var upFromViewAid: 0
+    property var dynamicDetailData: ({})
     property var seasonMid: 0
     property var seasonId: 0
     property string seasonTitle: ""
@@ -39,6 +44,8 @@ Rectangle {
     property bool _animating: false
     property real rankingPageX: 0
     property bool restoreRankingPageOnShow: false
+    property real dynamicPageY: 0
+    property bool restoreDynamicPageOnShow: false
 
     // 播放清晰度（由详情页选择）
     property int playQualitySelected: 16
@@ -72,10 +79,19 @@ Rectangle {
             return { bvid: detailBvid, sessionId: detailSessionId }
         }
         if (page === "comments") {
-            return { bvid: commentsBvid || controller.videoBvid || detailBvid }
+            return {
+                bvid: commentsBvid || controller.videoBvid || detailBvid,
+                oid: commentsOid,
+                type: commentsType,
+                key: commentsKey,
+                title: commentsTitle
+            }
         }
         if (page === "up") {
             return { mid: upUserMid, fromViewAid: upFromViewAid }
+        }
+        if (page === "dynamicDetail") {
+            return { item: dynamicDetailData }
         }
         if (page === "season") {
             return {
@@ -98,13 +114,20 @@ Rectangle {
         }
         if (page === "comments") {
             commentsBvid = (props && props.bvid) ? props.bvid : (controller.videoBvid || detailBvid)
-            if (commentsBvid && controller && controller.video && controller.videoBvid !== commentsBvid) {
+            commentsOid = (props && props.oid) ? String(props.oid) : ""
+            commentsType = (props && props.type) ? props.type : 1
+            commentsKey = (props && props.key) ? props.key : ""
+            commentsTitle = (props && props.title) ? props.title : ""
+            if (commentsBvid && !commentsOid && controller && controller.video && controller.videoBvid !== commentsBvid) {
                 controller.video.restoreCachedVideoDetail(commentsBvid)
             }
         }
         if (page === "up") {
             upUserMid = props.mid || 0
             upFromViewAid = props.fromViewAid || 0
+        }
+        if (page === "dynamicDetail") {
+            dynamicDetailData = (props && props.item) ? props.item : ({})
         }
         if (page === "season") {
             seasonMid = props.mid || 0
@@ -211,7 +234,7 @@ Rectangle {
             syncDetailCacheWithPageStack()
 
             // 从详情页返回时恢复对应页面滚动位置
-            if (fromPage === "detail") {
+            if (fromPage === "detail" || fromPage === "dynamicDetail") {
                 if (prev === "home") {
                     if (root.homeTabIndex === 0) {
                         restoreHomePopularOnShow = true;
@@ -220,6 +243,8 @@ Rectangle {
                     }
                 } else if (prev === "ranking") {
                     restoreRankingPageOnShow = true;
+                } else if (prev === "dynamic") {
+                    restoreDynamicPageOnShow = true;
                 }
             }
 
@@ -325,6 +350,7 @@ Rectangle {
                     onSearchRequested: root.navigateTo("search")
                     onLoginRequested: root.navigateTo("user")
                     onRankingRequested: root.navigateTo("ranking")
+                    onDynamicRequested: root.navigateTo("dynamic")
                     onBackButtonClicked: root.backButtonClicked()
                 }
             }
@@ -417,6 +443,10 @@ Rectangle {
                 Pages.CommentsPage {
                     controller: root.rootController
                     contextBvid: root.commentsBvid
+                    contextOid: root.commentsOid
+                    contextType: root.commentsType
+                    contextKey: root.commentsKey
+                    contextTitle: root.commentsTitle
                     onBackClicked: root.goBack()
                 }
             }
@@ -442,6 +472,68 @@ Rectangle {
                         Qt.callLater(function() {
                             root.navigateTo("detail", { bvid: bvid })
                         });
+                    }
+                }
+            }
+        }
+
+        Loader {
+            id: dynamicLoader
+            active: currentPage === "dynamic" || root.stackContains("dynamic")
+            visible: currentPage === "dynamic"
+            enabled: visible
+            anchors.fill: parent
+            sourceComponent: Component {
+                Pages.DynamicPage {
+                    controller: root.rootController
+                    rootRef: root
+                    onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return;
+                        if (dynamicLoader.item) {
+                            root.dynamicPageY = dynamicLoader.item.contentYValue();
+                        }
+                        Qt.callLater(function() {
+                            root.navigateTo("detail", { bvid: bvid })
+                        });
+                    }
+                    onDynamicSelected: {
+                        if (dynamicLoader.item) {
+                            root.dynamicPageY = dynamicLoader.item.contentYValue();
+                        }
+                        Qt.callLater(function() {
+                            root.navigateTo("dynamicDetail", { item: dynamicData || ({}) })
+                        });
+                    }
+                }
+            }
+        }
+
+        Loader {
+            id: dynamicDetailLoader
+            active: currentPage === "dynamicDetail" || root.stackContains("dynamicDetail")
+            visible: currentPage === "dynamicDetail"
+            enabled: visible
+            anchors.fill: parent
+            sourceComponent: Component {
+                Pages.DynamicDetailPage {
+                    controller: root.rootController
+                    dynamicData: root.dynamicDetailData
+                    onBackClicked: root.goBack()
+                    onVideoSelected: {
+                        if (!bvid || bvid.length < 2) return
+                        root.navigateTo("detail", { bvid: bvid })
+                    }
+                    onUpRequested: {
+                        if (mid > 0) root.navigateTo("up", { mid: mid, fromViewAid: 0 })
+                    }
+                    onCommentsRequested: {
+                        if (context && String(context.oid || "").length > 0
+                                && context.oid !== "0" && context.type > 0) {
+                            root.navigateTo("comments", context)
+                        } else {
+                            controller.toastMessage("暂不支持查看该动态评论")
+                        }
                     }
                 }
             }
@@ -544,6 +636,7 @@ Rectangle {
         onRetryClicked: {
             controller.clearError();
             if (currentPage === "home") controller.feed.fetchPopular();
+            else if (currentPage === "dynamic") controller.feed.fetchDynamic("all");
             else if (currentPage === "detail") controller.video.fetchVideoDetail(root.detailBvid);
             else if (currentPage === "season") controller.season.fetchSeasonVideos(
                 root.seasonMid, root.seasonId, 1, 30,

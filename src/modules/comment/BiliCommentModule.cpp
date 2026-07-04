@@ -152,7 +152,14 @@ BiliCommentModule::BiliCommentModule(BiliController *controller)
 
 bool BiliCommentModule::commentsReady() const {
   return m_controller && m_commentFirstPageLoaded &&
-         m_commentBvid == m_controller->videoBvid();
+         m_commentBvid == m_controller->videoBvid() &&
+         m_commentOid == QString::number(m_controller->videoAid()) &&
+         m_commentType == 1;
+}
+
+bool BiliCommentModule::commentsReadyForContext(const QString &contextKey) const {
+  return m_commentFirstPageLoaded && !contextKey.isEmpty() &&
+         m_commentBvid == contextKey;
 }
 
 QObject *BiliCommentModule::commentModel() { return m_controller->commentListModel(); }
@@ -170,12 +177,17 @@ void BiliCommentModule::resetForVideoChange() {
 
   m_commentPage = 1;
   m_commentBvid.clear();
+  m_commentOid.clear();
+  m_commentType = 1;
   m_commentNextOffset.clear();
   m_commentFirstPageLoaded = false;
   m_commentHasMore = true;
   m_commentReplyPage = 1;
   m_commentReplyHasMore = false;
   m_currentCommentRootRpid = 0;
+  m_replyOid.clear();
+  m_replyType = 1;
+  m_replyContextKey.clear();
 
   if (m_controller) {
     if (m_controller->commentListModel()) {
@@ -211,26 +223,62 @@ void BiliCommentModule::fetchComments(int page, bool silent) {
     return;
   }
 
-  page = qBound(1, page, 1000);
-  if (page == 1 && m_commentBvid == currentBvid && m_commentFirstPageLoaded) {
+  fetchCommentsForContext(QString::number(m_controller->videoAid()), 1, currentBvid,
+                          page, silent);
+}
+
+void BiliCommentModule::fetchCommentsForContext(const QString &oid, int type,
+                                                const QString &contextKey,
+                                                int page, bool silent) {
+  if (!m_controller) return;
+  const QString requestOidString = oid.trimmed();
+  const QString requestContextKey =
+      contextKey.isEmpty() ? QString("%1:%2").arg(type).arg(requestOidString) : contextKey;
+  if (requestOidString.isEmpty() || requestOidString == "0" ||
+      type <= 0 || requestContextKey.isEmpty()) {
+    if (!silent) emit m_controller->toastMessage("评论信息不完整");
     return;
+  }
+  page = qBound(1, page, 1000);
+  if (page == 1 && m_commentBvid == requestContextKey &&
+      m_commentOid == requestOidString && m_commentType == type && m_commentFirstPageLoaded) {
+    return;
+  }
+  if (m_controller->commentListModel()->loading()) {
+    if (m_commentBvid == requestContextKey && m_commentOid == requestOidString &&
+        m_commentType == type) {
+      return;
+    }
+    m_controller->commentListModel()->setLoading(false);
   }
 
   m_commentPage = page;
   if (page == 1) {
-    const bool wasReady = commentsReady();
-    m_commentBvid = currentBvid;
+    const bool wasReady = m_commentFirstPageLoaded;
+    m_commentBvid = requestContextKey;
+    m_commentOid = requestOidString;
+    m_commentType = type;
     m_commentFirstPageLoaded = false;
     if (wasReady) emit commentsReadyChanged();
     m_commentNextOffset.clear();
     m_commentHasMore = true;
     m_controller->commentListModel()->clear();
+    if (m_controller->commentReplyListModel()) {
+      m_controller->commentReplyListModel()->clear();
+    }
+    m_commentReplyPage = 1;
+    m_commentReplyHasMore = false;
+    m_currentCommentRootRpid = 0;
+    m_replyOid.clear();
+    m_replyType = 1;
+    m_replyContextKey.clear();
+    emit replyHasMoreChanged();
   }
   m_controller->commentListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(m_controller->videoAid());
-  params["type"] = "1";
+  params["oid"] = requestOidString;
+  params["type"] = QString::number(type);
   params["sort"] = "2";
   params["mode"] = "4";
   params["pn"] = QString::number(page);
@@ -241,23 +289,22 @@ void BiliCommentModule::fetchComments(int page, bool silent) {
 
   QPointer<BiliController> self(m_controller);
   const int requestPage = page;
-  const QString requestBvid = currentBvid;
+  const QString requestKey = requestContextKey;
+  const QString requestOid = requestOidString;
+  const int requestType = type;
   m_controller->apiGet(
       "/video/comments", params,
-      [this, self, requestPage, requestBvid](const QJsonObject &data) {
+      [this, self, requestPage, requestKey, requestOid, requestType](const QJsonObject &data) {
         if (!self)
           return;
         biliRunInWorker(
             self, [data, requestPage]() {
               return parseCommentsPayload(data, requestPage);
             },
-            [this, self, requestBvid](ParsedComments result) {
-              if (!self || m_commentPage != result.page || m_commentBvid != requestBvid)
+            [this, self, requestKey, requestOid, requestType](ParsedComments result) {
+              if (!self || m_commentPage != result.page || m_commentBvid != requestKey ||
+                  m_commentOid != requestOid || m_commentType != requestType)
                 return;
-              if (self->videoBvid() != requestBvid) {
-                self->commentListModel()->setLoading(false);
-                return;
-              }
               if (result.page == 1) {
                 m_commentFirstPageLoaded = true;
                 emit commentsReadyChanged();
@@ -273,13 +320,10 @@ void BiliCommentModule::fetchComments(int page, bool silent) {
               }
             });
       },
-      [this, self, requestBvid, silent](int code, const QString &msg) {
-        if (!self || m_commentBvid != requestBvid)
+      [this, self, requestKey, requestOid, requestType, silent](int code, const QString &msg) {
+        if (!self || m_commentBvid != requestKey ||
+            m_commentOid != requestOid || m_commentType != requestType)
           return;
-        if (self->videoBvid() != requestBvid) {
-          self->commentListModel()->setLoading(false);
-          return;
-        }
         self->commentListModel()->setLoading(false);
         if (code == -404 || msg == "啥都木有") {
           m_commentFirstPageLoaded = true;
@@ -299,10 +343,28 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
     emit m_controller->toastMessage("评论信息不完整");
     return;
   }
+  fetchCommentRepliesForContext(QString::number(requestAid), 1, requestBvid, rootRpid);
+}
+
+void BiliCommentModule::fetchCommentRepliesForContext(const QString &oid, int type,
+                                                      const QString &contextKey,
+                                                      qint64 rootRpid) {
+  if (!m_controller) return;
+  const QString requestOidString = oid.trimmed();
+  const QString requestContextKey =
+      contextKey.isEmpty() ? QString("%1:%2").arg(type).arg(requestOidString) : contextKey;
+  if (requestOidString.isEmpty() || requestOidString == "0" ||
+      type <= 0 || requestContextKey.isEmpty() || rootRpid <= 0) {
+    emit m_controller->toastMessage("评论信息不完整");
+    return;
+  }
   if (m_controller->commentReplyListModel()->loading())
     return;
 
   m_currentCommentRootRpid = rootRpid;
+  m_replyOid = requestOidString;
+  m_replyType = type;
+  m_replyContextKey = requestContextKey;
   m_commentReplyPage = 1;
   m_commentReplyHasMore = false;
   emit replyHasMoreChanged();
@@ -311,8 +373,8 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
   m_controller->commentReplyListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(requestAid);
-  params["type"] = "1";
+  params["oid"] = requestOidString;
+  params["type"] = QString::number(type);
   params["root"] = QString::number(rootRpid);
   params["ps"] = "20";
   params["pn"] = QString::number(m_commentReplyPage);
@@ -320,18 +382,24 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
   QPointer<BiliController> self(m_controller);
   const qint64 requestRootRpid = rootRpid;
   const int requestPage = m_commentReplyPage;
+  const QString requestOid = requestOidString;
+  const int requestType = type;
+  const QString requestKey = requestContextKey;
   m_controller->apiGet(
       "/video/comments/replies", params,
-      [this, self, requestRootRpid, requestPage, requestBvid, requestAid](const QJsonObject &data) {
-        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
+      [this, self, requestRootRpid, requestPage, requestOid, requestType,
+       requestKey](const QJsonObject &data) {
+        if (!self || m_replyOid != requestOid || m_replyType != requestType ||
+            m_replyContextKey != requestKey)
           return;
         biliRunInWorker(
             self, [data, requestPage]() {
               return parseCommentRepliesPayload(data, requestPage);
             },
-            [this, self, requestRootRpid, requestBvid, requestAid](ParsedCommentReplies result) {
-              if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid ||
-                  m_currentCommentRootRpid != requestRootRpid ||
+            [this, self, requestRootRpid, requestOid, requestType,
+             requestKey](ParsedCommentReplies result) {
+              if (!self || m_replyOid != requestOid || m_replyType != requestType ||
+                  m_replyContextKey != requestKey || m_currentCommentRootRpid != requestRootRpid ||
                   m_commentReplyPage != result.page)
                 return;
 
@@ -345,8 +413,9 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
               }
             });
       },
-      [this, self, requestBvid, requestAid](int, const QString &msg) {
-        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
+      [this, self, requestOid, requestType, requestKey](int, const QString &msg) {
+        if (!self || m_replyOid != requestOid || m_replyType != requestType ||
+            m_replyContextKey != requestKey)
           return;
         m_commentReplyHasMore = false;
         emit replyHasMoreChanged();
@@ -357,20 +426,30 @@ void BiliCommentModule::fetchCommentReplies(qint64 rootRpid) {
 }
 
 void BiliCommentModule::fetchMoreCommentReplies() {
+  fetchMoreCommentRepliesForContext(m_replyOid, m_replyType, m_replyContextKey);
+}
+
+void BiliCommentModule::fetchMoreCommentRepliesForContext(const QString &oid, int type,
+                                                          const QString &contextKey) {
   if (m_currentCommentRootRpid <= 0) return;
   if (!m_commentReplyHasMore) return;
   if (m_controller->commentReplyListModel()->loading()) return;
 
-  const QString requestBvid = m_controller->videoBvid();
-  const qint64 requestAid = m_controller->videoAid();
-  if (requestBvid.isEmpty() || requestAid <= 0) return;
+  const QString requestOidString = oid.trimmed();
+  const QString requestContextKey =
+      contextKey.isEmpty() ? QString("%1:%2").arg(type).arg(requestOidString) : contextKey;
+  if (requestOidString.isEmpty() || requestOidString == "0" ||
+      type <= 0 || requestContextKey.isEmpty()) return;
+  if (m_replyOid != requestOidString || m_replyType != type ||
+      m_replyContextKey != requestContextKey)
+    return;
 
   m_commentReplyPage++;
   m_controller->commentReplyListModel()->setLoading(true);
 
   QMap<QString, QString> params;
-  params["oid"] = QString::number(requestAid);
-  params["type"] = "1";
+  params["oid"] = requestOidString;
+  params["type"] = QString::number(type);
   params["root"] = QString::number(m_currentCommentRootRpid);
   params["ps"] = "20";
   params["pn"] = QString::number(m_commentReplyPage);
@@ -378,18 +457,24 @@ void BiliCommentModule::fetchMoreCommentReplies() {
   QPointer<BiliController> self(m_controller);
   const qint64 requestRootRpid = m_currentCommentRootRpid;
   const int requestPage = m_commentReplyPage;
+  const QString requestOid = requestOidString;
+  const int requestType = type;
+  const QString requestKey = requestContextKey;
   m_controller->apiGet(
       "/video/comments/replies", params,
-      [this, self, requestRootRpid, requestPage, requestBvid, requestAid](const QJsonObject &data) {
-        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
+      [this, self, requestRootRpid, requestPage, requestOid, requestType,
+       requestKey](const QJsonObject &data) {
+        if (!self || m_replyOid != requestOid || m_replyType != requestType ||
+            m_replyContextKey != requestKey)
           return;
         biliRunInWorker(
             self, [data, requestPage]() {
               return parseCommentRepliesPayload(data, requestPage);
             },
-            [this, self, requestRootRpid, requestBvid, requestAid](ParsedCommentReplies result) {
-              if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid ||
-                  m_currentCommentRootRpid != requestRootRpid ||
+            [this, self, requestRootRpid, requestOid, requestType,
+             requestKey](ParsedCommentReplies result) {
+              if (!self || m_replyOid != requestOid || m_replyType != requestType ||
+                  m_replyContextKey != requestKey || m_currentCommentRootRpid != requestRootRpid ||
                   m_commentReplyPage != result.page)
                 return;
 
@@ -400,8 +485,9 @@ void BiliCommentModule::fetchMoreCommentReplies() {
               self->commentReplyListModel()->setLoading(false);
             });
       },
-      [this, self, requestBvid, requestAid](int, const QString &msg) {
-        if (!self || self->videoBvid() != requestBvid || self->videoAid() != requestAid)
+      [this, self, requestOid, requestType, requestKey](int, const QString &msg) {
+        if (!self || m_replyOid != requestOid || m_replyType != requestType ||
+            m_replyContextKey != requestKey)
           return;
         self->commentReplyListModel()->setLoading(false);
         emit self->toastMessage(QString("回复加载失败：%1").arg(msg));
@@ -410,10 +496,24 @@ void BiliCommentModule::fetchMoreCommentReplies() {
 }
 
 void BiliCommentModule::fetchMoreComments() {
+  fetchMoreCommentsForContext(m_commentOid, m_commentType, m_commentBvid);
+}
+
+void BiliCommentModule::fetchMoreCommentsForContext(const QString &oid, int type,
+                                                    const QString &contextKey) {
   if (m_controller->commentListModel()->loading())
     return;
   if (!m_commentHasMore)
     return;
+  const QString requestOidString = oid.trimmed();
+  const QString requestContextKey =
+      contextKey.isEmpty() ? QString("%1:%2").arg(type).arg(requestOidString) : contextKey;
+  if (requestOidString.isEmpty() || requestOidString == "0" ||
+      type <= 0 || requestContextKey.isEmpty()) return;
+  if (m_commentBvid != requestContextKey || m_commentOid != requestOidString ||
+      m_commentType != type) {
+    return;
+  }
   m_commentPage++;
-  fetchComments(m_commentPage);
+  fetchCommentsForContext(requestOidString, type, requestContextKey, m_commentPage);
 }

@@ -17,6 +17,7 @@ Rectangle {
     signal searchRequested()
     signal loginRequested()
     signal rankingRequested()
+    signal dynamicRequested()
     signal backButtonClicked()
 
     // ── 内容区状态 ──
@@ -141,7 +142,7 @@ Rectangle {
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
                     bvid: model.bvid || ""
-                    showCollection: model.partCount > 1
+                    partCount: model.partCount || 1
                     onClicked: homePage.videoSelected(bvid)
                 }
 
@@ -210,7 +211,7 @@ Rectangle {
                     viewCount: model.views || ""
                     durationText: model.durationText || ""
                     bvid: model.bvid || ""
-                    showCollection: model.partCount > 1
+                    partCount: model.partCount || 1
                     rankIndex: index + 1
                     showRank: true
                     onClicked: homePage.videoSelected(bvid)
@@ -380,6 +381,32 @@ Rectangle {
             anchors.fill: parent
             anchors.margins: 4
             spacing: 4
+
+            Rectangle {
+                width: parent.width
+                height: 20
+                radius: 8
+                color: dynamicMoreArea.pressed ? Theme.withAlpha(Theme.primary, 0.22) : "transparent"
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "动态"
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    font.bold: true
+                }
+
+                MouseArea {
+                    id: dynamicMoreArea
+                    anchors.fill: parent
+                    anchors.margins: -3
+                    onClicked: {
+                        moreMenuVisible = false
+                        dynamicRequested()
+                    }
+                }
+            }
 
             Rectangle {
                 width: parent.width

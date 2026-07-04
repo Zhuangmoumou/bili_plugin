@@ -31,6 +31,10 @@ Rectangle {
 
     property var controller: null
     property string contextBvid: ""
+    property var contextOid: 0
+    property int contextType: 1
+    property string contextKey: ""
+    property string contextTitle: ""
     property string loadedCommentsBvid: ""
     property int viewMode: 0 // 0=主评论列表,1=子评论详情
     property real mainCommentContentY: 0
@@ -104,10 +108,34 @@ Rectangle {
         return controller ? (controller.videoBvid || "") : ""
     }
 
-    function syncCommentContext() {
+    function currentCommentOid() {
+        var oid = String(contextOid || "").trim()
+        if (oid.length > 0 && oid !== "0") return oid
+        return controller ? String(controller.videoAid || 0) : ""
+    }
+
+    function currentCommentType() {
+        var typ = Number(contextType || 0)
+        return typ > 0 ? typ : 1
+    }
+
+    function currentCommentKey() {
+        if (contextKey && contextKey.length > 0) return contextKey
         var bvid = currentContextBvid()
-        if (!bvid || bvid.length === 0) return false
-        if (loadedCommentsBvid === bvid) return true
+        if (bvid && bvid.length > 0) return bvid
+        var oid = currentCommentOid()
+        var typ = currentCommentType()
+        return hasValidCommentOid(oid) ? "comment:" + typ + ":" + oid : ""
+    }
+
+    function hasValidCommentOid(oid) {
+        return oid && oid.length > 0 && oid !== "0"
+    }
+
+    function syncCommentContext() {
+        var key = currentCommentKey()
+        if (!key || key.length === 0) return false
+        if (loadedCommentsBvid === key) return true
 
         viewMode = 0
         selectedComment = null
@@ -119,14 +147,13 @@ Rectangle {
         initialCommentsRequested = false
         commentsModelAttached = false
         commentLoadingMaskVisible = false
-        loadedCommentsBvid = bvid
+        loadedCommentsBvid = key
         return true
     }
 
     function queueInitialCommentsIfNeeded() {
         if (!syncCommentContext()) return
-        var bvid = currentContextBvid()
-        if (initialCommentsRequested && controller && controller.videoBvid === bvid && !hasReusableCurrentComments()) {
+        if (initialCommentsRequested && controller && !hasReusableCurrentComments()) {
             var cm = controller.comments.commentModel()
             if (!cm || (!cm.loading && cm.count === 0)) {
                 initialCommentsRequested = false
@@ -139,14 +166,16 @@ Rectangle {
     }
 
     function hasReusableCurrentComments() {
-        return !!(controller && controller.comments && controller.comments.commentsReady)
+        if (!controller || !controller.comments) return false
+        if (controller.comments.commentsReadyForContext) {
+            return controller.comments.commentsReadyForContext(currentCommentKey())
+        }
+        return !!controller.comments.commentsReady
     }
 
     function showInitialCommentLoadingIfNeeded() {
         if (!controller || viewMode !== 0 || initialCommentsRequested) return
-        var bvid = currentContextBvid()
-        if (!bvid || bvid.length === 0) return
-        if (controller.videoBvid !== bvid) return
+        if (!hasValidCommentOid(currentCommentOid()) || currentCommentType() <= 0) return
         if (controller.videoDetailPreloadEnabled || hasReusableCurrentComments()) return
         showCommentLoadingMask()
     }
@@ -174,12 +203,22 @@ Rectangle {
     onContextBvidChanged: {
         if (visible) queueInitialCommentsIfNeeded()
     }
+    onContextOidChanged: {
+        if (visible) queueInitialCommentsIfNeeded()
+    }
+    onContextTypeChanged: {
+        if (visible) queueInitialCommentsIfNeeded()
+    }
+    onContextKeyChanged: {
+        if (visible) queueInitialCommentsIfNeeded()
+    }
 
     function requestInitialComments() {
         if (!controller || initialCommentsRequested) return
-        var bvid = currentContextBvid()
-        if (!bvid || bvid.length === 0) return
-        if (controller.videoBvid !== bvid) return
+        var oid = currentCommentOid()
+        var typ = currentCommentType()
+        var key = currentCommentKey()
+        if (!hasValidCommentOid(oid) || typ <= 0 || key.length === 0) return
         initialCommentsRequested = true
         commentsModelAttached = true
         if (hasReusableCurrentComments()) {
@@ -187,7 +226,11 @@ Rectangle {
             return
         }
         showCommentLoadingMask()
-        controller.comments.fetchComments()
+        if (controller.comments.fetchCommentsForContext) {
+            controller.comments.fetchCommentsForContext(oid, typ, key, 1, false)
+        } else {
+            controller.comments.fetchComments()
+        }
         updateCommentLoadingMask()
     }
 
@@ -202,7 +245,12 @@ Rectangle {
         selectedComment = commentObj
         mainCommentContentY = commentList.contentY
         viewMode = 1
-        if (controller) controller.comments.fetchCommentReplies(commentObj.rpid)
+        if (controller && controller.comments.fetchCommentRepliesForContext) {
+            controller.comments.fetchCommentRepliesForContext(currentCommentOid(), currentCommentType(),
+                                                              currentCommentKey(), commentObj.rpid)
+        } else if (controller) {
+            controller.comments.fetchCommentReplies(commentObj.rpid)
+        }
     }
 
     function commentImageSource(url) {
@@ -368,6 +416,7 @@ Rectangle {
 
     function openCommentImage(url) {
         if (!url) return
+        if (controller) controller.toastMessage("正在打开图片...")
         // 系统 FileManagerImageViewer 只能打开本地文件；让 C++ 先下载到 /tmp 后发回本地路径。
         if (controller && typeof imageViewer !== "undefined" && imageViewer) {
             controller.viewer.prepareImageForViewer(url)
@@ -413,7 +462,12 @@ Rectangle {
         autoLoadingComments = true
         commentLoadMoreCooling = true
         commentLoadMoreCooldownTimer.restart()
-        controller.comments.fetchMoreComments()
+        if (controller.comments.fetchMoreCommentsForContext) {
+            controller.comments.fetchMoreCommentsForContext(currentCommentOid(), currentCommentType(),
+                                                            currentCommentKey())
+        } else {
+            controller.comments.fetchMoreComments()
+        }
     }
 
     function requestMoreRepliesIfNeeded() {
@@ -424,7 +478,12 @@ Rectangle {
         autoLoadingReplies = true
         replyLoadMoreCooling = true
         replyLoadMoreCooldownTimer.restart()
-        controller.comments.fetchMoreCommentReplies()
+        if (controller.comments.fetchMoreCommentRepliesForContext) {
+            controller.comments.fetchMoreCommentRepliesForContext(currentCommentOid(), currentCommentType(),
+                                                                  currentCommentKey())
+        } else {
+            controller.comments.fetchMoreCommentReplies()
+        }
     }
 
     function isAnyCommentLoading() {

@@ -140,7 +140,7 @@ Rectangle {
                 viewCount: ""
                 durationText: model.durationText || ""
                 bvid: model.bvid || ""
-                showCollection: model.partCount > 1
+                partCount: model.partCount || 1
                 onClicked: {
                     watchLaterPage.watchLaterContentX = watchLaterList.contentX
                     watchLaterPage.restoreWatchLaterOnShow = true

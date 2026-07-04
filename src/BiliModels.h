@@ -98,6 +98,46 @@ struct FavoriteFolderItem {
     int attr = 0;
 };
 
+struct DynamicItem {
+    QString idStr;
+    QString type;
+    bool visible = true;
+
+    QString authorName;
+    QString authorFace;
+    qint64 authorMid = 0;
+    QString pubAction;
+    QString pubTime;
+    qint64 pubTs = 0;
+
+    QString text;
+    bool isForward = false;
+    QString origSummary;
+    QString origTitle;
+    QString origCover;
+    QString origBvid;
+    qint64 origAid = 0;
+
+    QString majorType;
+    QString majorTitle;
+    QString majorCover;
+    QString majorBvid;
+    qint64 majorAid = 0;
+    QString majorDurationText;
+    QStringList pictures;
+
+    qint64 repostCount = 0;
+    qint64 commentCount = 0;
+    qint64 likeCount = 0;
+    QString commentOid;
+    int commentType = 0;
+
+    bool isVideo = false;
+    bool isImage = false;
+    bool isArticle = false;
+    bool isLive = false;
+};
+
 // UP 主合集/系列条目
 struct UpSeasonItem {
     qint64 seasonId = 0;
@@ -158,6 +198,7 @@ public:
     Q_INVOKABLE int indexOfAid(qint64 aid) const;
     Q_INVOKABLE int indexOfLastWatched() const;
     Q_INVOKABLE int indexOfLastWatchedRank(int rank) const;
+    Q_INVOKABLE QString bvidAt(int row) const;
     Q_INVOKABLE void removeAt(int row);
     void appendItems(const QVector<VideoItem> &items);
     void prependItems(const QVector<VideoItem> &items);
@@ -335,6 +376,88 @@ signals:
 private:
     QVector<HotSearchItem> m_items;
     bool m_loading;
+};
+
+// ============ 动态列表模型 ============
+
+class DynamicListModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    Q_PROPERTY(bool hasMore READ hasMore NOTIFY hasMoreChanged)
+    Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+
+public:
+    enum Roles {
+        IdStrRole = Qt::UserRole + 1,
+        TypeRole,
+        VisibleRole,
+        AuthorNameRole,
+        AuthorFaceRole,
+        AuthorMidRole,
+        PubActionRole,
+        PubTimeRole,
+        PubTsRole,
+        TextRole,
+        IsForwardRole,
+        OrigSummaryRole,
+        OrigTitleRole,
+        OrigCoverRole,
+        OrigBvidRole,
+        OrigAidRole,
+        MajorTypeRole,
+        MajorTitleRole,
+        MajorCoverRole,
+        MajorBvidRole,
+        MajorAidRole,
+        MajorDurationTextRole,
+        PicturesRole,
+        RepostCountRole,
+        CommentCountRole,
+        LikeCountRole,
+        RepostCountTextRole,
+        CommentCountTextRole,
+        LikeCountTextRole,
+        CommentOidRole,
+        CommentTypeRole,
+        IsVideoRole,
+        IsImageRole,
+        IsArticleRole,
+        IsLiveRole
+    };
+    Q_ENUM(Roles)
+
+    explicit DynamicListModel(QObject *parent = nullptr);
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    int count() const;
+    bool loading() const;
+    bool hasMore() const;
+    QString errorMessage() const;
+
+    Q_INVOKABLE void clear();
+    void appendItems(const QVector<DynamicItem> &items);
+    void setLoading(bool loading);
+    void setHasMore(bool hasMore);
+    void setErrorMessage(const QString &msg);
+
+    static DynamicItem parseDynamicItem(const QJsonObject &obj);
+
+signals:
+    void countChanged();
+    void loadingChanged();
+    void hasMoreChanged();
+    void errorMessageChanged();
+
+private:
+    QVector<DynamicItem> m_items;
+    bool m_loading = false;
+    bool m_hasMore = true;
+    QString m_errorMessage;
 };
 
 // ============ 搜索结果模型（复用 VideoListModel 结构）============

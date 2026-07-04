@@ -6,6 +6,7 @@
 #include "BiliNetwork.h"
 #include "modules/history/BiliHistoryModule.h"
 #include "modules/login/BiliLoginModule.h"
+#include "modules/feed/BiliFeedModule.h"
 #include "modules/playback/BiliPlaybackModule.h"
 #include "modules/season/BiliSeasonModule.h"
 
@@ -262,12 +263,15 @@ void BiliUpModule::fetchUpInfo(qint64 mid) {
     if (m_controller->m_upSeasonModel) m_controller->m_upSeasonModel->clear();
     bool seasonChanged = (m_controller->m_upSelectedSeasonId != 0)
                          || !m_controller->m_upSelectedSeasonName.isEmpty()
-                         || m_controller->m_upSelectedIsSeries;
+                         || m_controller->m_upSelectedIsSeries
+                         || m_controller->m_upSelectedDynamic;
     m_controller->m_upSelectedSeasonId = 0;
     m_controller->m_upSelectedSeasonName.clear();
     m_controller->m_upSelectedIsSeries = false;
+    m_controller->m_upSelectedDynamic = false;
     m_controller->m_upSeasonVideoPage = 1;
     m_controller->m_upSeasonVideoHasMore = true;
+    if (m_controller->m_upDynamicModel) m_controller->m_upDynamicModel->clear();
     if (seasonChanged) emit m_controller->upSelectedSeasonChanged();
   }
 
@@ -499,7 +503,7 @@ void BiliUpModule::fetchUpVideosAroundAid(qint64 mid, qint64 aid, int pageSize) 
   }
   if (m_controller->m_upVideoModel->loading())
     return;
-  if (m_controller->m_upSelectedSeasonId > 0)
+  if (m_controller->m_upSelectedSeasonId > 0 || m_controller->m_upSelectedDynamic)
     return;
 
   pageSize = qBound(1, pageSize, 30);
@@ -576,6 +580,7 @@ void BiliUpModule::fetchUpVideosAroundAid(qint64 mid, qint64 aid, int pageSize) 
 
 bool BiliUpModule::canFetchPreviousUpVideos() const {
   return m_controller && m_controller->m_upSelectedSeasonId == 0 &&
+         !m_controller->m_upSelectedDynamic &&
          m_controller->m_upVideoHasPrevious &&
          m_controller->m_upVideoCursorPrev > 0 &&
          m_controller->m_upVideoModel &&
@@ -772,6 +777,10 @@ void BiliUpModule::clearUpSearch() {
 }
 
 void BiliUpModule::fetchMoreUpVideos() {
+  if (m_controller->m_upSelectedDynamic) {
+    m_controller->m_feedModule->fetchMoreUpDynamics();
+    return;
+  }
   // 若当前选中的是合集/系列，则委托到合集翻页
   if (m_controller->m_upSelectedSeasonId > 0) {
     m_controller->m_seasonModule->fetchMoreUpSeasonVideos();
@@ -825,10 +834,13 @@ void BiliUpModule::fetchUpSeasons(qint64 mid) {
 
 void BiliUpModule::selectUpSeason(qint64 seasonId, const QString &name, bool isSeries, int total) {
   if (m_controller->m_upUserMid <= 0) return;
-  if (m_controller->m_upSelectedSeasonId == seasonId && m_controller->m_upSelectedIsSeries == isSeries) {
+  if (!m_controller->m_upSelectedDynamic &&
+      m_controller->m_upSelectedSeasonId == seasonId &&
+      m_controller->m_upSelectedIsSeries == isSeries) {
     // 已选中，无需切换
     return;
   }
+  m_controller->m_upSelectedDynamic = false;
   m_controller->m_upSelectedSeasonId = seasonId;
   m_controller->m_upSelectedSeasonName = (seasonId == 0) ? QString() : name;
   m_controller->m_upSelectedIsSeries = (seasonId == 0) ? false : isSeries;
@@ -858,6 +870,27 @@ void BiliUpModule::selectUpSeason(qint64 seasonId, const QString &name, bool isS
     m_controller->m_upSeasonVideoHasMore = true;
     m_controller->m_seasonModule->fetchUpSeasonVideos(1, 30);
   }
+}
+
+void BiliUpModule::selectUpDynamic() {
+  if (m_controller->m_upUserMid <= 0) return;
+  if (m_controller->m_upSelectedDynamic &&
+      m_controller->m_upDynamicModel &&
+      m_controller->m_upDynamicModel->count() > 0) {
+    return;
+  }
+
+  m_controller->m_upSelectedDynamic = true;
+  m_controller->m_upSelectedSeasonId = 0;
+  m_controller->m_upSelectedSeasonName = QStringLiteral("图文动态");
+  m_controller->m_upSelectedIsSeries = false;
+  m_controller->setUpVideoTotal(0);
+  emit m_controller->upSelectedSeasonChanged();
+
+  if (m_controller->m_upVideoModel) {
+    m_controller->m_upVideoModel->setLoading(false);
+  }
+  m_controller->m_feedModule->fetchUpDynamics(m_controller->m_upUserMid);
 }
 
 void BiliUpModule::toggleUpFollow() {

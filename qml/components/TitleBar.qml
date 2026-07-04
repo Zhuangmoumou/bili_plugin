@@ -13,6 +13,7 @@ Rectangle {
     property string titleSuffix: ""
     property bool showBack: true
     property bool showSearch: false
+    property int titleSideReserve: 55
 
     signal backClicked()
     signal searchClicked()
@@ -70,7 +71,7 @@ Rectangle {
     // ── 标题 ──
     Row {
         id: titleGroup
-        property int maxWidth: parent.width - 110
+        property int maxWidth: Math.max(0, parent.width - titleBar.titleSideReserve * 2)
         anchors.centerIn: parent
         width: Math.min(maxWidth, titleText.implicitWidth + (suffixText.visible ? spacing + suffixText.implicitWidth : 0))
         height: parent.height

@@ -19,6 +19,10 @@ Rectangle {
     property string loadedKey: ""
     property bool seasonLoadingMore: false
     property bool seasonSortOldestFirst: false
+    property bool locatingLastWatched: false
+    property int locatingLastWatchedFetches: 0
+    property int locatedLastWatchedIndex: -1
+    readonly property bool locateAvailable: currentBvid.length > 0
     property var seasonModel: controller ? controller.season.seasonVideoModel() : null
     readonly property bool sortBusy: seasonModel ? seasonModel.loading : false
 
@@ -55,18 +59,75 @@ Rectangle {
         selectSort(!seasonSortOldestFirst)
     }
 
+    function resetLocateState() {
+        locatingLastWatched = false
+        locatingLastWatchedFetches = 0
+        locatedLastWatchedIndex = -1
+    }
+
+    function positionLastWatchedIndex(idx) {
+        if (idx < 0 || idx >= seasonVideoList.count) return
+        seasonVideoList.forceLayout()
+        seasonVideoList.positionViewAtIndex(idx, ListView.Center)
+        locatedLastWatchedIndex = idx
+    }
+
+    function tryScrollToLastWatched() {
+        if (!locatingLastWatched || !controller || !controller.season) return
+        if (!currentBvid || currentBvid.length === 0) {
+            locatingLastWatched = false
+            return
+        }
+        var modelObj = seasonPage.seasonModel
+        if (!modelObj) return
+
+        var idx = modelObj.indexOfBvid ? modelObj.indexOfBvid(currentBvid) : -1
+        if (idx >= 0) {
+            Qt.callLater(function() {
+                seasonPage.positionLastWatchedIndex(idx)
+            })
+            locatingLastWatched = false
+            return
+        }
+
+        if (modelObj.loading) return
+        if (modelObj.hasMore && locatingLastWatchedFetches < 20) {
+            locatingLastWatchedFetches += 1
+            seasonLoadingMore = true
+            controller.season.fetchMoreSeasonVideos()
+        } else {
+            locatingLastWatched = false
+            if (controller) controller.toastMessage("未找到上次观看")
+        }
+    }
+
+    function locateLastWatched() {
+        if (!currentBvid || currentBvid.length === 0) {
+            if (controller) controller.toastMessage("暂无上次观看记录")
+            return
+        }
+        locatingLastWatched = true
+        locatingLastWatchedFetches = 0
+        Qt.callLater(tryScrollToLastWatched)
+    }
+
     onSeasonMidChanged: {
         loadedKey = ""
+        resetLocateState()
         Qt.callLater(refresh)
     }
 
     onSeasonIdChanged: {
         loadedKey = ""
+        resetLocateState()
         Qt.callLater(refresh)
     }
 
+    onCurrentBvidChanged: resetLocateState()
+
     onSeasonSortOldestFirstChanged: {
         loadedKey = ""
+        resetLocateState()
         Qt.callLater(refresh)
     }
 
@@ -87,6 +148,7 @@ Rectangle {
         title: seasonTitle.length > 0 ? seasonTitle : "合集"
         titleSuffix: seasonPage.totalText()
         showBack: true
+        titleSideReserve: 90
         anchors.top: parent.top
         onBackClicked: seasonPage.backClicked()
     }
@@ -165,10 +227,112 @@ Rectangle {
         }
     }
 
+    Rectangle {
+        id: locateTitleButton
+        width: 42
+        height: titleBar.height
+        anchors.top: titleBar.top
+        anchors.right: sortTitleButton.left
+        anchors.rightMargin: 0
+        color: "transparent"
+        z: titleBar.z + 1
+        opacity: seasonPage.locateAvailable ? (seasonPage.locatingLastWatched ? 0.65 : 1.0) : 0.45
+
+        Canvas {
+            id: locateTitleCanvas
+            anchors.centerIn: parent
+            anchors.horizontalCenterOffset: 5
+            width: 30
+            height: 24
+
+            function roundedRect(ctx, x, y, w, h, r) {
+                ctx.beginPath()
+                ctx.moveTo(x + r, y)
+                ctx.lineTo(x + w - r, y)
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+                ctx.lineTo(x + w, y + h - r)
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+                ctx.lineTo(x + r, y + h)
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+                ctx.lineTo(x, y + r)
+                ctx.quadraticCurveTo(x, y, x + r, y)
+                ctx.closePath()
+            }
+
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+
+                var active = seasonPage.locateAvailable
+                var pressed = locateTitleButtonArea.pressed && active
+                var bg = pressed
+                    ? Theme.withAlpha(Theme.accent, 0.22)
+                    : (seasonPage.locatingLastWatched && active
+                       ? Theme.withAlpha(Theme.accent, 0.12)
+                       : "transparent")
+                var stroke = active
+                    ? Theme.withAlpha(Theme.accent, seasonPage.locatingLastWatched ? 0.55 : 0.34)
+                    : Theme.withAlpha(Theme.textTertiary, 0.28)
+                var icon = active ? Theme.accent : Theme.textTertiary
+
+                roundedRect(ctx, 0.75, 0.75, width - 1.5, height - 1.5, Theme.radiusMedium)
+                ctx.fillStyle = bg
+                ctx.fill()
+                ctx.lineWidth = 1
+                ctx.strokeStyle = stroke
+                ctx.stroke()
+
+                ctx.save()
+                ctx.translate(6, 3)
+                ctx.lineWidth = 1.7
+                ctx.lineCap = "round"
+                ctx.lineJoin = "round"
+                ctx.strokeStyle = icon
+                ctx.fillStyle = icon
+
+                ctx.beginPath()
+                ctx.arc(9, 9, 5.4, 0, Math.PI * 2, false)
+                ctx.stroke()
+
+                ctx.beginPath()
+                ctx.moveTo(9, 1.8)
+                ctx.lineTo(9, 4.2)
+                ctx.moveTo(9, 13.8)
+                ctx.lineTo(9, 16.2)
+                ctx.moveTo(1.8, 9)
+                ctx.lineTo(4.2, 9)
+                ctx.moveTo(13.8, 9)
+                ctx.lineTo(16.2, 9)
+                ctx.stroke()
+
+                ctx.beginPath()
+                ctx.arc(9, 9, 2.1, 0, Math.PI * 2, false)
+                ctx.fill()
+                ctx.restore()
+            }
+
+            Component.onCompleted: requestPaint()
+        }
+
+        MouseArea {
+            id: locateTitleButtonArea
+            anchors.fill: parent
+            enabled: seasonPage.locateAvailable
+            onPressedChanged: locateTitleCanvas.requestPaint()
+            onClicked: seasonPage.locateLastWatched()
+        }
+    }
+
     Connections {
         target: seasonPage
         function onSeasonSortOldestFirstChanged() {
             sortTitleIcon.requestPaint()
+        }
+        function onCurrentBvidChanged() {
+            locateTitleCanvas.requestPaint()
+        }
+        function onLocatingLastWatchedChanged() {
+            locateTitleCanvas.requestPaint()
         }
     }
 
@@ -205,6 +369,7 @@ Rectangle {
             width: 105
             height: seasonVideoList.height
             property bool current: (model.bvid || "") === seasonPage.currentBvid
+            property bool located: index === seasonPage.locatedLastWatchedIndex
 
             Components.VideoCardCompact {
                 anchors.fill: parent
@@ -216,7 +381,8 @@ Rectangle {
                 viewCount: model.views || ""
                 durationText: model.durationText || ""
                 bvid: model.bvid || ""
-                showCollection: model.partCount > 1
+                isLastWatched: parent.located
+                partCount: model.partCount || 1
                 titleScale: 0.9
                 subScale: 0.85
                 onClicked: {
@@ -270,7 +436,7 @@ Rectangle {
                 Components.VideoCardCompact {
                     height: seasonVideoList.height
                     placeholder: true
-                        titleScale: 0.9
+                    titleScale: 0.9
                     subScale: 0.85
                 }
             }
@@ -281,10 +447,14 @@ Rectangle {
         target: seasonPage.seasonModel
         function onLoadingChanged() {
             if (!target || !target.loading) seasonPage.seasonLoadingMore = false
-            if (target && !target.loading) Qt.callLater(seasonPage.refresh)
+            if (target && !target.loading) {
+                Qt.callLater(seasonPage.refresh)
+                Qt.callLater(seasonPage.tryScrollToLastWatched)
+            }
         }
         function onCountChanged() {
             seasonPage.seasonLoadingMore = false
+            seasonPage.tryScrollToLastWatched()
         }
     }
 

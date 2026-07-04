@@ -238,6 +238,7 @@ const (
 	defaultReferer   = "https://www.bilibili.com/"
 	appUserAgent     = "Mozilla/5.0 BiliDroid/8.43.0 (bbcallen@gmail.com) os/android model/android mobi_app/android build/8430300 channel/master innerVer/8430300 osVer/15 network/2"
 	appStatistics    = `{"appId":1,"platform":3,"version":"8.43.0","abtest":""}`
+	dynamicFeatures  = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,decorationCard,onlyfansAssetsV2,forwardListHidden,ugcDelete"
 	piliPlusAppKey   = "dfca71928277209b"
 	piliPlusAppSec   = "b5475a8825547a4fc26c7d518eaaa02e"
 )
@@ -245,6 +246,7 @@ const (
 var rootEndpoints = []string{
 	"/popular - 热门视频",
 	"/ranking - 排行榜",
+	"/dynamic/feed - 动态列表",
 	"/search - 搜索视频",
 	"/video/info - 视频详情",
 	"/video/related - 视频相关推荐",
@@ -288,6 +290,7 @@ var rootEndpoints = []string{
 var startupEndpoints = []string{
 	"GET  /popular                - 热门视频",
 	"GET  /ranking                - 排行榜",
+	"GET  /dynamic/feed           - 动态列表",
 	"GET  /search                 - 搜索视频",
 	"GET  /video/info             - 视频详情",
 	"GET  /video/related          - 视频相关推荐",
@@ -1299,6 +1302,31 @@ func (c *BilibiliClient) GetRanking(ctx context.Context, rid int, typ string) (j
 	}, "GET")
 }
 
+func (c *BilibiliClient) GetDynamicFeed(ctx context.Context, typ, offset string, hostMid int64) (json.RawMessage, error) {
+	typ = strings.TrimSpace(typ)
+	if typ == "" {
+		typ = "all"
+	}
+	params := map[string]string{
+		"type":         typ,
+		"platform":     "web",
+		"features":     dynamicFeatures,
+		"web_location": "333.1365",
+	}
+	if offset = strings.TrimSpace(offset); offset != "" {
+		params["offset"] = offset
+	}
+	if hostMid > 0 {
+		params["host_mid"] = strconv.FormatInt(hostMid, 10)
+	}
+	logInfo("获取动态列表 type=%s offset=%s host_mid=%d", typ, offset, hostMid)
+	endpoint := "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all"
+	if hostMid > 0 {
+		endpoint = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space"
+	}
+	return c.request(ctx, endpoint, params, "GET")
+}
+
 func (c *BilibiliClient) SearchVideos(ctx context.Context, keyword string, page, pageSize int) (json.RawMessage, error) {
 	logInfo("搜索视频 keyword=\"%s\" page=%d", keyword, page)
 	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/search/type", map[string]string{
@@ -2176,9 +2204,259 @@ func (c *BilibiliClient) GetHotSearch(ctx context.Context, limit int) (json.RawM
 
 func (c *BilibiliClient) GetRecommend(ctx context.Context, freshType int) (json.RawMessage, error) {
 	logInfo("获取推荐 feed fresh_type=%d", freshType)
-	return c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd", map[string]string{
+	raw, err := c.wbiRequest(ctx, "https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd", map[string]string{
 		"fresh_type": strconv.Itoa(freshType),
 	}, "GET")
+	if err != nil {
+		return nil, err
+	}
+	return c.enrichRecommendPartCounts(ctx, raw), nil
+}
+
+func (c *BilibiliClient) enrichRecommendPartCounts(ctx context.Context, raw json.RawMessage) json.RawMessage {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return raw
+	}
+	if code := jsonInt64Value(resp, "code"); code != 0 {
+		return raw
+	}
+
+	data, _ := resp["data"].(map[string]interface{})
+	if data == nil {
+		return raw
+	}
+
+	items := recommendItemObjects(data)
+	if len(items) == 0 {
+		return raw
+	}
+
+	const (
+		enrichLimit       = 12
+		enrichConcurrency = 4
+	)
+
+	sem := make(chan struct{}, enrichConcurrency)
+	var wg sync.WaitGroup
+	started := 0
+
+	for _, item := range items {
+		if ctx.Err() != nil || started >= enrichLimit {
+			break
+		}
+
+		if count := recommendPartCountFromItem(item); count > 0 {
+			setRecommendPartCount(item, count)
+			continue
+		}
+
+		aid, bvid, ok := recommendVideoIdentity(item)
+		if !ok {
+			continue
+		}
+
+		started++
+		wg.Add(1)
+		go func(item map[string]interface{}, aid int, bvid string) {
+			defer wg.Done()
+
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+
+			detail, err := c.GetVideoInfo(ctx, aid, bvid)
+			if err != nil {
+				logDebug("推荐分P补齐失败 aid=%d bvid=%s err=%s", aid, bvid, err.Error())
+				return
+			}
+			if count := videoInfoPartCount(detail); count > 0 {
+				setRecommendPartCount(item, count)
+			}
+		}(item, aid, bvid)
+	}
+
+	wg.Wait()
+
+	merged, err := json.Marshal(resp)
+	if err != nil {
+		return raw
+	}
+	return merged
+}
+
+func recommendItemObjects(data map[string]interface{}) []map[string]interface{} {
+	items := make([]map[string]interface{}, 0, 16)
+	for _, key := range []string{"item", "items", "list", "result"} {
+		arr, ok := data[key].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, value := range arr {
+			if obj, ok := value.(map[string]interface{}); ok && obj != nil {
+				items = append(items, obj)
+			}
+		}
+	}
+	return items
+}
+
+func recommendVideoIdentity(item map[string]interface{}) (int, string, bool) {
+	bvid := jsonStringValue(item, "bvid", "bvid_str")
+	gotoType := jsonStringValue(item, "goto", "card_goto")
+	aid := int(jsonInt64Value(item, "aid"))
+
+	if aid <= 0 && (gotoType == "" || gotoType == "av" || gotoType == "video") {
+		aid = int(jsonInt64Value(item, "id"))
+	}
+	if aid <= 0 {
+		param := strings.TrimSpace(jsonStringValue(item, "param"))
+		if param != "" {
+			if parsed, err := strconv.ParseInt(param, 10, 64); err == nil {
+				aid = int(parsed)
+			}
+		}
+	}
+
+	if bvid == "" && aid <= 0 {
+		return 0, "", false
+	}
+	if bvid == "" && gotoType != "" && gotoType != "av" && gotoType != "video" {
+		return 0, "", false
+	}
+	return aid, bvid, true
+}
+
+func recommendPartCountFromItem(item map[string]interface{}) int {
+	if count := partCountFromObject(item); count > 0 {
+		return count
+	}
+	for _, key := range []string{"archive", "arc", "video"} {
+		nested, _ := item[key].(map[string]interface{})
+		if nested == nil {
+			continue
+		}
+		if count := partCountFromObject(nested); count > 0 {
+			return count
+		}
+	}
+	return 0
+}
+
+func videoInfoPartCount(raw json.RawMessage) int {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return 0
+	}
+	if code := jsonInt64Value(resp, "code"); code != 0 {
+		return 0
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	if data == nil {
+		return 0
+	}
+	return partCountFromObject(data)
+}
+
+func partCountFromObject(obj map[string]interface{}) int {
+	if obj == nil {
+		return 0
+	}
+	for _, key := range []string{"videos", "page_count", "pages_count", "part_count", "parts"} {
+		if count := jsonInt64Value(obj, key); count > 0 {
+			return int(count)
+		}
+	}
+	if pages, ok := obj["pages"].([]interface{}); ok && len(pages) > 0 {
+		return len(pages)
+	}
+	if count := numericInt64(obj["pages"]); count > 0 {
+		return int(count)
+	}
+	return 0
+}
+
+func setRecommendPartCount(item map[string]interface{}, count int) {
+	if item == nil || count <= 0 {
+		return
+	}
+	item["videos"] = count
+	item["part_count"] = count
+	item["page_count"] = count
+}
+
+func jsonStringValue(obj map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		switch value := obj[key].(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		case json.Number:
+			if s := strings.TrimSpace(value.String()); s != "" {
+				return s
+			}
+		case float64:
+			if value > 0 {
+				return strconv.FormatInt(int64(value), 10)
+			}
+		case int:
+			if value > 0 {
+				return strconv.Itoa(value)
+			}
+		case int64:
+			if value > 0 {
+				return strconv.FormatInt(value, 10)
+			}
+		}
+	}
+	return ""
+}
+
+func jsonInt64Value(obj map[string]interface{}, keys ...string) int64 {
+	for _, key := range keys {
+		if value := numericInt64(obj[key]); value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func numericInt64(value interface{}) int64 {
+	switch v := value.(type) {
+	case float64:
+		return int64(v)
+	case float32:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case int32:
+		return int64(v)
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n
+		}
+		if f, err := strconv.ParseFloat(v.String(), 64); err == nil {
+			return int64(f)
+		}
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0
+		}
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int64(f)
+		}
+	}
+	return 0
 }
 
 func (c *BilibiliClient) GetRecentHistory(ctx context.Context, max, viewAt, ps int) (json.RawMessage, error) {
@@ -2871,6 +3149,22 @@ func handleRanking(w http.ResponseWriter, r *http.Request) {
 	}
 	handleAPI(w, "/ranking", func(c *BilibiliClient) (json.RawMessage, error) {
 		return c.GetRanking(r.Context(), rid, typ)
+	})
+}
+
+func handleDynamicFeed(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	hostMid, ok := getIntQuery(w, q, "host_mid", 0, 0, false)
+	if !ok {
+		return
+	}
+	typ := q.Get("type")
+	if typ == "" {
+		typ = "all"
+	}
+	offset := q.Get("offset")
+	handleAPI(w, "/dynamic/feed", func(c *BilibiliClient) (json.RawMessage, error) {
+		return c.GetDynamicFeed(r.Context(), typ, offset, int64(hostMid))
 	})
 }
 
@@ -4354,6 +4648,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleRoot)
 	mux.HandleFunc("/popular", handlePopular)
 	mux.HandleFunc("/ranking", handleRanking)
+	mux.HandleFunc("/dynamic/feed", handleDynamicFeed)
 	mux.HandleFunc("/search", handleSearch)
 	mux.HandleFunc("/video/info", handleVideoInfo)
 	mux.HandleFunc("/video/related", handleVideoRelated)

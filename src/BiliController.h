@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QFile>
 #include <QStandardPaths>
@@ -24,6 +25,7 @@ class VideoListModel;
 class CommentListModel;
 class CommentReplyListModel;
 class HotSearchModel;
+class DynamicListModel;
 class SearchResultModel;
 class QStringListModel;
 class FavoriteFolderModel;
@@ -138,6 +140,7 @@ class BiliController : public QObject {
   // UP 主合集筛选状态：当前选中的 season_id（0 表示“视频”全部投稿）
   Q_PROPERTY(qint64 upSelectedSeasonId READ upSelectedSeasonId NOTIFY upSelectedSeasonChanged)
   Q_PROPERTY(QString upSelectedSeasonName READ upSelectedSeasonName NOTIFY upSelectedSeasonChanged)
+  Q_PROPERTY(bool upSelectedDynamic READ upSelectedDynamic NOTIFY upSelectedSeasonChanged)
   // 收藏/投币/点赞状态
   Q_PROPERTY(bool isFavorited READ isFavorited NOTIFY favoriteStatusChanged)
   Q_PROPERTY(bool isCoined READ isCoined NOTIFY coinStatusChanged)
@@ -245,6 +248,7 @@ public:
   int upLastWatchedRank() const { return m_upLastWatchedRank; }
   qint64 upSelectedSeasonId() const { return m_upSelectedSeasonId; }
   QString upSelectedSeasonName() const { return m_upSelectedSeasonName; }
+  bool upSelectedDynamic() const { return m_upSelectedDynamic; }
   bool isFavorited() const { return m_isFavorited; }
   bool isCoined() const { return m_isCoined; }
   bool isLiked() const { return m_isLiked; }
@@ -284,6 +288,8 @@ public:
   VideoListModel *popularListModel() const { return m_popularModel; }
   VideoListModel *rankingListModel() const { return m_rankingModel; }
   HotSearchModel *hotSearchListModel() const { return m_hotSearchModel; }
+  DynamicListModel *dynamicListModel() const { return m_dynamicModel; }
+  DynamicListModel *upDynamicListModel() const { return m_upDynamicModel; }
   SearchResultModel *searchListModel() const { return m_searchModel; }
   QStringListModel *searchHistoryListModel() const { return m_searchHistoryModel; }
   CommentListModel *commentListModel() const { return m_commentModel; }
@@ -418,6 +424,7 @@ private:
   };
 
   QHash<QString, VideoDetailSnapshot> m_videoDetailSnapshots;
+  QSet<QString> m_videoDetailPreloadingBvids;
 
   QString m_playUrl;
   int m_playQuality;
@@ -501,6 +508,8 @@ private:
   CommentListModel *m_commentModel;
   CommentReplyListModel *m_commentReplyModel;
   HotSearchModel *m_hotSearchModel;
+  DynamicListModel *m_dynamicModel;
+  DynamicListModel *m_upDynamicModel;
   VideoPartListModel *m_videoPartModel;
   QStringListModel *m_searchHistoryModel;
 
@@ -543,6 +552,7 @@ private:
   qint64 m_upSelectedSeasonId = 0;
   QString m_upSelectedSeasonName;
   bool m_upSelectedIsSeries = false;
+  bool m_upSelectedDynamic = false;
   int m_upSeasonVideoPage = 1;
   bool m_upSeasonVideoHasMore = true;
   QString m_lastRecentViewReportKey;

@@ -13,8 +13,9 @@ Item {
     property string durationText: ""
     property string bvid: ""
     property int rankIndex: 0
-    // 由外部显式控制是否显示选集角标
-    property bool showCollection: false
+    // 多P视频选集角标：可直接传 partCount，也兼容外部显式 showCollection
+    property int partCount: 1
+    property bool showCollection: partCount > 1
     property bool showRank: false
     property bool isLastWatched: false
     property real fontScale: 1.0

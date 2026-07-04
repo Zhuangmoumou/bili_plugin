@@ -125,6 +125,17 @@ struct PlaybackProgressState {
   int heartbeatPlayedTime = 0;
 };
 
+struct ParsedVideoDetailSnapshotData {
+  VideoItem video;
+  qint64 seasonId = 0;
+  QString seasonTitle;
+  QString seasonCover;
+  qint64 seasonMid = 0;
+  int seasonTotal = 0;
+  QVector<VideoPartItem> parts;
+  bool valid = false;
+};
+
 PlaybackProgressState resolvePlaybackProgressState(const QJsonObject &data,
                                                    qint64 currentCid,
                                                    int currentDuration) {
@@ -165,6 +176,54 @@ PlaybackProgressState resolvePlaybackProgressState(const QJsonObject &data,
     }
   }
   return state;
+}
+
+ParsedVideoDetailSnapshotData parseVideoDetailSnapshotData(const QJsonObject &data) {
+  ParsedVideoDetailSnapshotData parsed;
+  VideoItem parsedVideo = VideoListModel::parseVideoItem(data);
+  parsedVideo.aid = data.value("aid").toVariant().toLongLong();
+
+  const QJsonObject ugcSeason = data.value("ugc_season").toObject();
+  parsed.seasonId = ugcSeason.value("id").toVariant().toLongLong();
+  if (parsed.seasonId > 0) {
+    parsed.seasonTitle = ugcSeason.value("title").toString();
+    parsed.seasonCover = ugcSeason.value("cover").toString();
+    if (parsed.seasonCover.isEmpty()) {
+      parsed.seasonCover = parsedVideo.pic;
+    }
+    parsed.seasonMid = ugcSeason.value("mid").toVariant().toLongLong();
+    if (parsed.seasonMid <= 0) {
+      parsed.seasonMid = parsedVideo.ownerMid;
+    }
+    bool totalKnown = false;
+    int total = BiliJson::intValue(ugcSeason.value("ep_count"), &totalKnown);
+    if (!totalKnown || total <= 0) {
+      total = 0;
+      const QJsonArray sections = ugcSeason.value("sections").toArray();
+      for (const QJsonValue &sectionValue : sections) {
+        total += sectionValue.toObject().value("episodes").toArray().size();
+      }
+    }
+    parsed.seasonTotal = qMax(0, total);
+  }
+
+  const QJsonArray pages = data.value("pages").toArray();
+  if (pages.count() > 1) {
+    parsed.parts.reserve(pages.size());
+    for (const QJsonValue &v : pages) {
+      if (v.isObject()) {
+        parsed.parts.append(VideoPartListModel::parseVideoPartItem(v.toObject()));
+      }
+    }
+  }
+  if (!pages.isEmpty() && parsedVideo.cid == 0) {
+    const QJsonObject firstPage = pages.first().toObject();
+    parsedVideo.cid = firstPage.value("cid").toVariant().toLongLong();
+  }
+
+  parsed.video = parsedVideo;
+  parsed.valid = !parsed.video.bvid.isEmpty() && !parsed.video.title.isEmpty();
+  return parsed;
 }
 
 } // namespace
@@ -395,6 +454,7 @@ void BiliVideoModule::dropCachedVideoDetail(const QString &bvid) {
     return;
 
   m_controller->m_videoDetailSnapshots.remove(bvid);
+  m_controller->m_videoDetailPreloadingBvids.remove(bvid);
   if (m_controller->m_videoDetailLoadingBvid == bvid) {
     m_controller->m_videoDetailLoadingBvid.clear();
     m_controller->setIsLoading(false);
@@ -539,6 +599,63 @@ void BiliVideoModule::reportCurrentVideoAsRecentViewIfNeeded() {
         if (self->m_lastRecentViewReportKey == reportKey) {
           self->m_lastRecentViewReportKey.clear();
         }
+      });
+}
+
+void BiliVideoModule::preloadVideoDetail(const QString &bvid) {
+  if (!m_controller || !m_controller->m_videoDetailPreloadEnabled)
+    return;
+
+  const QString requestedBvid = normalizeBvid(bvid.trimmed());
+  if (!requestedBvid.startsWith("BV") || requestedBvid.length() < 10)
+    return;
+  if (m_controller->m_currentVideo.bvid == requestedBvid &&
+      !m_controller->m_currentVideo.title.isEmpty()) {
+    return;
+  }
+  const auto cached = m_controller->m_videoDetailSnapshots.constFind(requestedBvid);
+  if (cached != m_controller->m_videoDetailSnapshots.constEnd() && cached->valid)
+    return;
+  if (m_controller->m_videoDetailPreloadingBvids.contains(requestedBvid))
+    return;
+
+  m_controller->m_videoDetailPreloadingBvids.insert(requestedBvid);
+
+  QMap<QString, QString> params;
+  params["bvid"] = requestedBvid;
+
+  QPointer<BiliController> self(m_controller);
+  m_controller->m_network->get(
+      "/video/info", params,
+      [self, requestedBvid](const QJsonObject &data) {
+        if (!self)
+          return;
+        if (!self->m_videoDetailPreloadingBvids.remove(requestedBvid))
+          return;
+        const auto cached = self->m_videoDetailSnapshots.constFind(requestedBvid);
+        if (cached != self->m_videoDetailSnapshots.constEnd() && cached->valid)
+          return;
+
+        const ParsedVideoDetailSnapshotData parsed =
+            parseVideoDetailSnapshotData(data);
+        if (!parsed.valid || parsed.video.bvid != requestedBvid)
+          return;
+
+        BiliController::VideoDetailSnapshot snapshot;
+        snapshot.video = parsed.video;
+        snapshot.seasonId = parsed.seasonId;
+        snapshot.seasonTitle = parsed.seasonTitle;
+        snapshot.seasonCover = parsed.seasonCover;
+        snapshot.seasonMid = parsed.seasonMid;
+        snapshot.seasonTotal = parsed.seasonTotal;
+        snapshot.parts = parsed.parts;
+        snapshot.valid = true;
+        self->m_videoDetailSnapshots.insert(requestedBvid, snapshot);
+      },
+      [self, requestedBvid](int, const QString &) {
+        if (!self)
+          return;
+        self->m_videoDetailPreloadingBvids.remove(requestedBvid);
       });
 }
 

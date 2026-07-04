@@ -178,7 +178,7 @@ Rectangle {
 
                             Text {
                                 width: parent.width
-                                text: "在视频详情提前加载评论、字幕、推荐"
+                                text: "详情预热评论/字幕/推荐，UP页预取视频"
                                 color: Theme.textTertiary
                                 font.family: Theme.fontFamily
                                 font.pixelSize: 9

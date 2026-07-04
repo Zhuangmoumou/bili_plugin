@@ -10,6 +10,7 @@ LoadingIndicator 1.0 components/LoadingIndicator.qml
 ErrorOverlay 1.0 components/ErrorOverlay.qml
 Toast 1.0 components/Toast.qml
 IconButton 1.0 components/IconButton.qml
+DynamicFeedCard 1.0 components/DynamicFeedCard.qml
 
 # Pages
 HomePage 1.0 pages/HomePage.qml
@@ -18,4 +19,6 @@ VideoDetailPage 1.0 pages/VideoDetailPage.qml
 PlayerPage 1.0 pages/PlayerPage.qml
 CommentsPage 1.0 pages/CommentsPage.qml
 RankingPage 1.0 pages/RankingPage.qml
+DynamicPage 1.0 pages/DynamicPage.qml
+DynamicDetailPage 1.0 pages/DynamicDetailPage.qml
 UserPage 1.0 pages/UserPage.qml

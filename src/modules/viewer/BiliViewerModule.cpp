@@ -70,8 +70,6 @@ void BiliViewerModule::prepareImageForViewer(const QString &url) {
     return;
   }
 
-  emit m_controller->toastMessage("正在打开图片...");
-
   QPointer<BiliController> self(m_controller);
   m_controller->network()->downloadImage(
       qurl,

@@ -9,14 +9,13 @@ This file provides guidance for coding agents working in this repository.
 The project expects xmake to be configured explicitly before building.
 
 - Configure xmake for the normal release build used in this repo:
-  - `xmake f --qt="/home/zhuang/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
+  - `xmake f -c --qt="/home/haiku/program/qt" --arch=arm64-v8a --toolchain=zigcc --cross=aarch64-linux-gnu.2.27 -m release -vD`
 - Build after configuration:
   - `xmake`
 
 If `xmake` starts failing with missing-file or stale-config style errors, the known recovery flow is:
 
-- `xmake f -c`
-- re-run the full `xmake f --qt="/home/zhuang/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
+- re-run the full `xmake f -c --qt="/home/haiku/program/qt" --arch=arm64-v8a --toolchain=zig --cross=aarch64-linux-gnu.2.27 -m release -vD`
 - `xmake`
 
 The main shared library target is `bili_plugin`, defined in `xmake.lua`.

@@ -103,6 +103,8 @@ BiliController::BiliController(QObject *parent)
       m_commentModel(new CommentListModel(this)),
       m_commentReplyModel(new CommentReplyListModel(this)),
       m_hotSearchModel(new HotSearchModel(this)),
+      m_dynamicModel(new DynamicListModel(this)),
+      m_upDynamicModel(new DynamicListModel(this)),
       m_videoPartModel(new VideoPartListModel(this)),
       m_searchHistoryModel(new QStringListModel(this)),
       m_favoriteFolderModel(new FavoriteFolderModel(this)),
@@ -470,6 +472,7 @@ void BiliController::cancelAll() {
   // 立即重置前端可见加载状态，避免取消后卡在 loading UI
   m_loadingCount = 0;
   m_videoDetailLoadingBvid.clear();
+  m_videoDetailPreloadingBvids.clear();
   m_playUrlLoadingKey.clear();
   m_acceptQualitiesLoadingKey.clear();
   m_favoriteModule->resetLoadingState();
@@ -486,6 +489,8 @@ void BiliController::cancelAll() {
   if (m_commentModel) m_commentModel->setLoading(false);
   if (m_commentReplyModel) m_commentReplyModel->setLoading(false);
   if (m_hotSearchModel) m_hotSearchModel->setLoading(false);
+  if (m_dynamicModel) m_dynamicModel->setLoading(false);
+  if (m_upDynamicModel) m_upDynamicModel->setLoading(false);
   if (m_favoriteFolderModel) m_favoriteFolderModel->setLoading(false);
   if (m_favoriteItemModel) m_favoriteItemModel->setLoading(false);
   if (m_recentHistoryModel) m_recentHistoryModel->setLoading(false);
@@ -780,6 +785,7 @@ void init_plugin() {
   qmlRegisterType<VideoListModel>("BiliPlugin", 1, 0, "VideoListModel");
   qmlRegisterType<CommentListModel>("BiliPlugin", 1, 0, "CommentListModel");
   qmlRegisterType<HotSearchModel>("BiliPlugin", 1, 0, "HotSearchModel");
+  qmlRegisterType<DynamicListModel>("BiliPlugin", 1, 0, "DynamicListModel");
   qmlRegisterType<SearchResultModel>("BiliPlugin", 1, 0, "SearchResultModel");
   qmlRegisterType<VideoPartListModel>("BiliPlugin", 1, 0, "VideoPartListModel");
   qmlRegisterType<FavoriteFolderModel>("BiliPlugin", 1, 0, "FavoriteFolderModel");

@@ -116,6 +116,132 @@ QVariantMap parseCommentEmotes(const QJsonObject &content)
     return emotes;
 }
 
+QString dynamicString(const QJsonObject &obj, const QStringList &keys)
+{
+    for (const QString &key : keys) {
+        const QJsonValue value = obj.value(key);
+        if (value.isString()) {
+            const QString s = value.toString().trimmed();
+            if (!s.isEmpty()) return s;
+        }
+    }
+    return QString();
+}
+
+qint64 dynamicInt(const QJsonObject &obj, const QStringList &keys)
+{
+    for (const QString &key : keys) {
+        const QJsonValue value = obj.value(key);
+        if (value.isUndefined() || value.isNull()) continue;
+        qint64 n = value.toVariant().toLongLong();
+        if (n > 0) return n;
+    }
+    return 0;
+}
+
+qint64 dynamicCountValue(const QJsonValue &value)
+{
+    if (value.isDouble()) return value.toVariant().toLongLong();
+    if (value.isString()) {
+        QString text = value.toString().trimmed();
+        text.remove(',');
+        bool ok = false;
+        if (text.contains(QStringLiteral("万"))) {
+            const double v = text.left(text.indexOf(QStringLiteral("万"))).toDouble(&ok);
+            return ok ? static_cast<qint64>(v * 10000) : 0;
+        }
+        if (text.contains(QStringLiteral("亿"))) {
+            const double v = text.left(text.indexOf(QStringLiteral("亿"))).toDouble(&ok);
+            return ok ? static_cast<qint64>(v * 100000000) : 0;
+        }
+        const qint64 n = text.toLongLong(&ok);
+        return ok ? n : 0;
+    }
+    if (value.isObject()) {
+        const QJsonObject obj = value.toObject();
+        const qint64 count = dynamicInt(obj, {"count", "num", "value"});
+        if (count > 0) return count;
+        return dynamicCountValue(obj.value("text"));
+    }
+    return 0;
+}
+
+void appendDynamicPicture(QStringList &pictures, const QString &url)
+{
+    const QString trimmed = url.trimmed();
+    if (!trimmed.isEmpty() && !pictures.contains(trimmed)) pictures.append(trimmed);
+}
+
+QStringList parseDynamicPictures(const QJsonArray &array, const QStringList &keys)
+{
+    QStringList pictures;
+    for (const QJsonValue &value : array) {
+        if (pictures.size() >= 9) break;
+        if (value.isString()) {
+            appendDynamicPicture(pictures, value.toString());
+            continue;
+        }
+        if (!value.isObject()) continue;
+        const QJsonObject obj = value.toObject();
+        appendDynamicPicture(pictures, dynamicString(obj, keys));
+    }
+    return pictures;
+}
+
+QJsonObject dynamicMajorObject(const QJsonObject &major, const QString &key)
+{
+    return major.value(key).toObject();
+}
+
+QString dynamicDescText(const QJsonObject &dynamicObj)
+{
+    QString text = dynamicObj.value("desc").toObject().value("text").toString().trimmed();
+    if (text.isEmpty()) {
+        text = dynamicObj.value("major").toObject().value("opus").toObject()
+                   .value("summary").toObject().value("text").toString().trimmed();
+    }
+    return text;
+}
+
+void fillDynamicOrig(DynamicItem &item, const QJsonObject &orig)
+{
+    if (orig.isEmpty()) return;
+    item.isForward = true;
+
+    const QJsonObject modules = orig.value("modules").toObject();
+    const QJsonObject dynamicObj = modules.value("module_dynamic").toObject();
+    const QJsonObject major = dynamicObj.value("major").toObject();
+    item.origSummary = dynamicDescText(dynamicObj);
+
+    const QJsonObject archive = dynamicMajorObject(major, "archive");
+    const QJsonObject draw = dynamicMajorObject(major, "draw");
+    const QJsonObject opus = dynamicMajorObject(major, "opus");
+    const QJsonObject article = dynamicMajorObject(major, "article");
+    const QJsonObject common = dynamicMajorObject(major, "common");
+
+    if (!archive.isEmpty()) {
+        item.origTitle = archive.value("title").toString();
+        item.origCover = archive.value("cover").toString();
+        item.origBvid = archive.value("bvid").toString();
+        item.origAid = dynamicInt(archive, {"aid"});
+    } else if (!opus.isEmpty()) {
+        item.origTitle = opus.value("title").toString();
+        const QStringList pics = parseDynamicPictures(opus.value("pics").toArray(), {"src", "url"});
+        if (!pics.isEmpty()) item.origCover = pics.first();
+        if (item.origSummary.isEmpty()) item.origSummary = opus.value("summary").toObject().value("text").toString();
+    } else if (!draw.isEmpty()) {
+        const QStringList pics = parseDynamicPictures(draw.value("items").toArray(), {"src", "url"});
+        if (!pics.isEmpty()) item.origCover = pics.first();
+    } else if (!article.isEmpty()) {
+        item.origTitle = article.value("title").toString();
+        const QJsonArray covers = article.value("covers").toArray();
+        if (!covers.isEmpty()) item.origCover = covers.first().toString();
+    } else if (!common.isEmpty()) {
+        item.origTitle = common.value("title").toString();
+        item.origCover = common.value("cover").toString();
+    }
+}
+
 } // namespace
 
 // ============ VideoListModel ============
@@ -239,6 +365,12 @@ int VideoListModel::indexOfLastWatchedRank(int rank) const
         if (m_items.at(i).lastWatchedRank == rank) return i;
     }
     return -1;
+}
+
+QString VideoListModel::bvidAt(int row) const
+{
+    if (row < 0 || row >= m_items.count()) return QString();
+    return m_items.at(row).bvid;
 }
 
 void VideoListModel::removeAt(int row)
@@ -365,8 +497,12 @@ VideoItem VideoListModel::parseVideoItem(const QJsonObject &obj)
     item.isLastWatchedArc = cursorAttr.value("is_last_watched_arc").toVariant().toBool();
     item.lastWatchedRank = cursorAttr.value("rank").toVariant().toInt();
 
-    // 分P数量（列表接口通常为 videos 字段，可能是字符串）
+    // 分P数量：不同列表接口字段名不完全一致，统一收敛到 partCount。
     int videos = obj.value("videos").toVariant().toInt();
+    if (videos <= 0) videos = obj.value("page_count").toVariant().toInt();
+    if (videos <= 0) videos = obj.value("pages_count").toVariant().toInt();
+    if (videos <= 0) videos = obj.value("part_count").toVariant().toInt();
+    if (videos <= 0) videos = obj.value("parts").toVariant().toInt();
     if (videos > 0) {
         item.partCount = videos;
     } else {
@@ -838,6 +974,266 @@ void HotSearchModel::setLoading(bool loading)
         m_loading = loading;
         emit loadingChanged();
     }
+}
+
+// ============ DynamicListModel ============
+
+DynamicListModel::DynamicListModel(QObject *parent)
+    : QAbstractListModel(parent)
+{
+}
+
+int DynamicListModel::rowCount(const QModelIndex &parent) const
+{
+    Q_UNUSED(parent)
+    return m_items.count();
+}
+
+QVariant DynamicListModel::data(const QModelIndex &index, int role) const
+{
+    if (index.row() < 0 || index.row() >= m_items.count())
+        return QVariant();
+
+    const DynamicItem &item = m_items[index.row()];
+
+    switch (role) {
+    case IdStrRole: return item.idStr;
+    case TypeRole: return item.type;
+    case VisibleRole: return item.visible;
+    case AuthorNameRole: return item.authorName;
+    case AuthorFaceRole: return item.authorFace;
+    case AuthorMidRole: return item.authorMid;
+    case PubActionRole: return item.pubAction;
+    case PubTimeRole: return item.pubTime;
+    case PubTsRole: return item.pubTs;
+    case TextRole: return item.text;
+    case IsForwardRole: return item.isForward;
+    case OrigSummaryRole: return item.origSummary;
+    case OrigTitleRole: return item.origTitle;
+    case OrigCoverRole: return item.origCover;
+    case OrigBvidRole: return item.origBvid;
+    case OrigAidRole: return item.origAid;
+    case MajorTypeRole: return item.majorType;
+    case MajorTitleRole: return item.majorTitle;
+    case MajorCoverRole: return item.majorCover;
+    case MajorBvidRole: return item.majorBvid;
+    case MajorAidRole: return item.majorAid;
+    case MajorDurationTextRole: return item.majorDurationText;
+    case PicturesRole: return item.pictures;
+    case RepostCountRole: return item.repostCount;
+    case CommentCountRole: return item.commentCount;
+    case LikeCountRole: return item.likeCount;
+    case RepostCountTextRole: return VideoListModel::formatCount(item.repostCount);
+    case CommentCountTextRole: return VideoListModel::formatCount(item.commentCount);
+    case LikeCountTextRole: return VideoListModel::formatCount(item.likeCount);
+    case CommentOidRole: return item.commentOid;
+    case CommentTypeRole: return item.commentType;
+    case IsVideoRole: return item.isVideo;
+    case IsImageRole: return item.isImage;
+    case IsArticleRole: return item.isArticle;
+    case IsLiveRole: return item.isLive;
+    default: return QVariant();
+    }
+}
+
+QHash<int, QByteArray> DynamicListModel::roleNames() const
+{
+    return {
+        {IdStrRole, "idStr"},
+        {TypeRole, "type"},
+        {VisibleRole, "visible"},
+        {AuthorNameRole, "authorName"},
+        {AuthorFaceRole, "authorFace"},
+        {AuthorMidRole, "authorMid"},
+        {PubActionRole, "pubAction"},
+        {PubTimeRole, "pubTime"},
+        {PubTsRole, "pubTs"},
+        {TextRole, "text"},
+        {IsForwardRole, "isForward"},
+        {OrigSummaryRole, "origSummary"},
+        {OrigTitleRole, "origTitle"},
+        {OrigCoverRole, "origCover"},
+        {OrigBvidRole, "origBvid"},
+        {OrigAidRole, "origAid"},
+        {MajorTypeRole, "majorType"},
+        {MajorTitleRole, "majorTitle"},
+        {MajorCoverRole, "majorCover"},
+        {MajorBvidRole, "majorBvid"},
+        {MajorAidRole, "majorAid"},
+        {MajorDurationTextRole, "majorDurationText"},
+        {PicturesRole, "pictures"},
+        {RepostCountRole, "repostCount"},
+        {CommentCountRole, "commentCount"},
+        {LikeCountRole, "likeCount"},
+        {RepostCountTextRole, "repostCountText"},
+        {CommentCountTextRole, "commentCountText"},
+        {LikeCountTextRole, "likeCountText"},
+        {CommentOidRole, "commentOid"},
+        {CommentTypeRole, "commentType"},
+        {IsVideoRole, "isVideo"},
+        {IsImageRole, "isImage"},
+        {IsArticleRole, "isArticle"},
+        {IsLiveRole, "isLive"}
+    };
+}
+
+int DynamicListModel::count() const { return m_items.count(); }
+bool DynamicListModel::loading() const { return m_loading; }
+bool DynamicListModel::hasMore() const { return m_hasMore; }
+QString DynamicListModel::errorMessage() const { return m_errorMessage; }
+
+void DynamicListModel::clear()
+{
+    beginResetModel();
+    m_items.clear();
+    m_errorMessage.clear();
+    endResetModel();
+    emit countChanged();
+    emit errorMessageChanged();
+}
+
+void DynamicListModel::appendItems(const QVector<DynamicItem> &items)
+{
+    if (items.isEmpty()) return;
+
+    QSet<QString> existing;
+    existing.reserve(m_items.size());
+    for (const DynamicItem &item : m_items) {
+        if (!item.idStr.isEmpty()) existing.insert(item.idStr);
+    }
+
+    QVector<DynamicItem> filtered;
+    filtered.reserve(items.size());
+    for (const DynamicItem &item : items) {
+        if (!item.idStr.isEmpty() && existing.contains(item.idStr)) continue;
+        if (!item.idStr.isEmpty()) existing.insert(item.idStr);
+        filtered.append(item);
+    }
+    if (filtered.isEmpty()) return;
+
+    beginInsertRows(QModelIndex(), m_items.count(), m_items.count() + filtered.count() - 1);
+    m_items.append(filtered);
+    endInsertRows();
+    emit countChanged();
+}
+
+void DynamicListModel::setLoading(bool loading)
+{
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit loadingChanged();
+    }
+}
+
+void DynamicListModel::setHasMore(bool hasMore)
+{
+    if (m_hasMore != hasMore) {
+        m_hasMore = hasMore;
+        emit hasMoreChanged();
+    }
+}
+
+void DynamicListModel::setErrorMessage(const QString &msg)
+{
+    if (m_errorMessage != msg) {
+        m_errorMessage = msg;
+        emit errorMessageChanged();
+    }
+}
+
+DynamicItem DynamicListModel::parseDynamicItem(const QJsonObject &obj)
+{
+    DynamicItem item;
+    item.idStr = obj.value("id_str").toString();
+    item.type = obj.value("type").toString();
+    item.visible = obj.value("visible").toBool(true);
+
+    const QJsonObject basic = obj.value("basic").toObject();
+    item.commentOid = dynamicString(basic, {"comment_id_str", "comment_id"});
+    if (item.commentOid.isEmpty()) {
+        const qint64 numericCommentOid = dynamicInt(basic, {"comment_id_str", "comment_id"});
+        if (numericCommentOid > 0) item.commentOid = QString::number(numericCommentOid);
+    }
+    item.commentType = static_cast<int>(dynamicInt(basic, {"comment_type"}));
+
+    const QJsonObject modules = obj.value("modules").toObject();
+    const QJsonObject author = modules.value("module_author").toObject();
+    item.authorName = author.value("name").toString();
+    item.authorFace = author.value("face").toString();
+    item.authorMid = dynamicInt(author, {"mid"});
+    item.pubAction = author.value("pub_action").toString();
+    item.pubTime = author.value("pub_time").toString();
+    item.pubTs = dynamicInt(author, {"pub_ts"});
+
+    const QJsonObject dynamicObj = modules.value("module_dynamic").toObject();
+    item.text = dynamicDescText(dynamicObj);
+
+    const QJsonObject major = dynamicObj.value("major").toObject();
+    item.majorType = major.value("type").toString();
+
+    const QJsonObject archive = dynamicMajorObject(major, "archive");
+    const QJsonObject ugcSeason = dynamicMajorObject(major, "ugc_season");
+    const QJsonObject draw = dynamicMajorObject(major, "draw");
+    const QJsonObject opus = dynamicMajorObject(major, "opus");
+    const QJsonObject article = dynamicMajorObject(major, "article");
+    const QJsonObject common = dynamicMajorObject(major, "common");
+    const QJsonObject pgc = dynamicMajorObject(major, "pgc");
+    const QJsonObject live = dynamicMajorObject(major, "live");
+    const QJsonObject liveRcmd = dynamicMajorObject(major, "live_rcmd");
+
+    const QJsonObject videoObj = !archive.isEmpty() ? archive : ugcSeason;
+    if (!videoObj.isEmpty()) {
+        item.majorTitle = videoObj.value("title").toString();
+        item.majorCover = videoObj.value("cover").toString();
+        item.majorBvid = videoObj.value("bvid").toString();
+        item.majorAid = dynamicInt(videoObj, {"aid"});
+        item.majorDurationText = videoObj.value("duration_text").toString();
+        item.isVideo = !item.majorBvid.isEmpty();
+    } else if (!opus.isEmpty()) {
+        item.majorTitle = opus.value("title").toString();
+        item.pictures = parseDynamicPictures(opus.value("pics").toArray(), {"src", "url"});
+        if (item.text.isEmpty()) item.text = opus.value("summary").toObject().value("text").toString();
+        if (!item.pictures.isEmpty()) item.majorCover = item.pictures.first();
+        item.isImage = !item.pictures.isEmpty();
+    } else if (!draw.isEmpty()) {
+        item.pictures = parseDynamicPictures(draw.value("items").toArray(), {"src", "url"});
+        if (!item.pictures.isEmpty()) item.majorCover = item.pictures.first();
+        item.isImage = !item.pictures.isEmpty();
+    } else if (!article.isEmpty()) {
+        item.majorTitle = article.value("title").toString();
+        item.majorCover = article.value("cover").toString();
+        if (item.majorCover.isEmpty()) {
+            const QJsonArray covers = article.value("covers").toArray();
+            if (!covers.isEmpty()) item.majorCover = covers.first().toString();
+        }
+        item.isArticle = true;
+    } else if (!pgc.isEmpty()) {
+        item.majorTitle = pgc.value("title").toString();
+        item.majorCover = pgc.value("cover").toString();
+        item.isVideo = false;
+    } else if (!live.isEmpty()) {
+        item.majorTitle = live.value("title").toString();
+        item.majorCover = live.value("cover").toString();
+        item.isLive = true;
+    } else if (!liveRcmd.isEmpty()) {
+        item.isLive = true;
+    } else if (!common.isEmpty()) {
+        item.majorTitle = common.value("title").toString();
+        item.majorCover = common.value("cover").toString();
+    }
+
+    if (item.majorTitle.isEmpty() && !item.text.isEmpty()) {
+        item.majorTitle = item.text.left(48);
+    }
+
+    const QJsonObject stat = modules.value("module_stat").toObject();
+    item.repostCount = dynamicCountValue(stat.value("forward"));
+    if (item.repostCount <= 0) item.repostCount = dynamicCountValue(stat.value("repost"));
+    item.commentCount = dynamicCountValue(stat.value("comment"));
+    item.likeCount = dynamicCountValue(stat.value("like"));
+
+    fillDynamicOrig(item, obj.value("orig").toObject());
+    return item;
 }
 
 // ============ SearchResultModel ============

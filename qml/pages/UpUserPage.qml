@@ -28,11 +28,16 @@ Rectangle {
     property bool upSearchMode: false
     property string upSearchKeyword: ""
     property bool upSearchLoadingMore: false
+    property bool upDynamicLoadingMore: false
     property real savedUpSearchContentX: 0
+    property int upVideoPreloadWindow: 5
+    property bool instantReadyTransition: false
     readonly property bool upContentReady: upInfoReady && controller && controller.upUserMid === Number(upMid) && controller.upUserName.length > 0
+    readonly property bool upDynamicMode: controller && controller.upSelectedDynamic
 
     signal backClicked()
     signal videoSelected(string bvid)
+    signal dynamicSelected(var dynamicData)
 
     function clampScrollState() {
         Qt.callLater(function() {
@@ -126,8 +131,128 @@ Rectangle {
         upSearchMode = false
         upSearchKeyword = ""
         upSearchLoadingMore = false
+        upDynamicLoadingMore = false
         savedUpSearchContentX = 0
         if (controller && controller.up && controller.up.clearUpSearch) controller.up.clearUpSearch()
+    }
+
+    function scheduleUpVideoPreload() {
+        if (!visible || !controller || !controller.videoDetailPreloadEnabled) return
+        if (!controller.video || !controller.video.preloadVideoDetail) return
+        if (upDynamicMode) return
+        upVideoPreloadTimer.restart()
+    }
+
+    function firstVisibleVideoIndex(listView) {
+        if (!listView || listView.count <= 0) return 0
+        listView.forceLayout()
+        var idx = listView.indexAt(Math.max(0, listView.contentX + 8), Math.max(1, listView.height / 2))
+        if (idx < 0) {
+            idx = Math.floor(Math.max(0, listView.contentX) / Math.max(1, 105 + listView.spacing))
+        }
+        return Math.max(0, Math.min(idx, listView.count - 1))
+    }
+
+    function preloadVideosFromList(listView) {
+        if (!listView || !listView.visible || listView.count <= 0) return
+        if (!controller || !controller.video || !controller.video.preloadVideoDetail) return
+        var modelObj = listView.model
+        if (!modelObj || !modelObj.bvidAt) return
+        var first = firstVisibleVideoIndex(listView)
+        var start = Math.max(0, first - 1)
+        var end = Math.min(listView.count, first + upVideoPreloadWindow)
+        for (var i = start; i < end; ++i) {
+            var bvid = modelObj.bvidAt(i)
+            if (bvid && bvid.length > 0) controller.video.preloadVideoDetail(bvid)
+        }
+    }
+
+    function runUpVideoPreload() {
+        if (!visible || !controller || !controller.videoDetailPreloadEnabled) return
+        if (upSearchMode) {
+            preloadVideosFromList(upSearchResultList)
+        } else {
+            preloadVideosFromList(upVideoList)
+        }
+    }
+
+    function hasPreloadedUpInfo(midVal) {
+        return !!(controller && midVal > 0 &&
+                  controller.upUserMid === midVal &&
+                  controller.upUserName && controller.upUserName.length > 0)
+    }
+
+    function requestUpDependentData(midVal) {
+        if (!controller || !controller.up || !midVal || midVal <= 0) return
+
+        var videoModel = controller.up.upVideoModel()
+        if (!upVideosRequested && controller.upSelectedSeasonId === 0) {
+            upVideosRequested = true
+            if (!videoModel || (videoModel.count <= 0 && !videoModel.loading)) {
+                controller.up.fetchUpVideos(midVal, 1, 20)
+            }
+        }
+
+        var seasonModel = controller.up.upSeasonModel()
+        if (!upSeasonsRequested) {
+            upSeasonsRequested = true
+            if (!seasonModel || (seasonModel.count <= 0 && !seasonModel.loading)) {
+                controller.up.fetchUpSeasons(midVal)
+            }
+        }
+    }
+
+    function syncPreloadedUpState() {
+        var midVal = Number(upMid)
+        if (!hasPreloadedUpInfo(midVal)) return false
+        var wasReady = upContentReady
+        if (!wasReady) instantReadyTransition = true
+        upInfoReady = true
+        upInfoRequested = true
+        requestScheduled = false
+        initialFetchTimer.stop()
+        requestUpDependentData(midVal)
+        if (!wasReady) {
+            Qt.callLater(function() {
+                instantReadyTransition = false
+            })
+        }
+        return true
+    }
+
+    function dynamicDataFromModel(m) {
+        return {
+            idStr: m.idStr || "",
+            type: m.type || "",
+            authorName: m.authorName || "",
+            authorFace: m.authorFace || "",
+            authorMid: m.authorMid || 0,
+            pubAction: m.pubAction || "",
+            pubTime: m.pubTime || "",
+            pubTs: m.pubTs || 0,
+            text: m.text || "",
+            majorTitle: m.majorTitle || "",
+            majorCover: m.majorCover || "",
+            majorBvid: m.majorBvid || "",
+            majorAid: m.majorAid || 0,
+            majorDurationText: m.majorDurationText || "",
+            pictures: m.pictures || [],
+            origSummary: m.origSummary || "",
+            origTitle: m.origTitle || "",
+            origCover: m.origCover || "",
+            origBvid: m.origBvid || "",
+            origAid: m.origAid || 0,
+            repostCountText: m.repostCountText || "0",
+            commentCountText: m.commentCountText || "0",
+            likeCountText: m.likeCountText || "0",
+            commentOid: m.commentOid || "",
+            commentType: m.commentType || 0,
+            isVideo: m.isVideo || false,
+            isImage: m.isImage || false,
+            isArticle: m.isArticle || false,
+            isLive: m.isLive || false,
+            isForward: m.isForward || false
+        }
     }
 
     function positionLastWatchedIndex(idx) {
@@ -195,7 +320,7 @@ Rectangle {
         locatingLastWatched = true
         locatingLastWatchedFetches = 0
         locatingLastWatchedAroundRequested = false
-        if (controller.upSelectedSeasonId !== 0) {
+        if (controller.upSelectedSeasonId !== 0 || controller.upSelectedDynamic) {
             controller.up.selectUpSeason(0, "", false, 0)
         }
         Qt.callLater(tryScrollToLastWatched)
@@ -205,6 +330,7 @@ Rectangle {
         var midVal = Number(upMid)
         if (!visible || !controller || !midVal || midVal <= 0) return
         if (rootRef && rootRef.currentPage !== "up") return
+        if (syncPreloadedUpState()) return
         if (upInfoRequested || requestScheduled) return
         requestScheduled = true
         initialFetchTimer.restart()
@@ -215,6 +341,7 @@ Rectangle {
         requestScheduled = false
         if (!visible || !controller || !midVal || midVal <= 0) return
         if (rootRef && rootRef.currentPage !== "up") return
+        if (syncPreloadedUpState()) return
         if (upInfoRequested) return
         upInfoRequested = true
         controller.up.fetchUpInfo(midVal)
@@ -247,17 +374,22 @@ Rectangle {
         upSearchLoadingMore = false
         savedUpSearchContentX = 0
         skeletonPaintToken += 1
-        if (controller && controller.up) {
+        var hasPreloadedInfo = hasPreloadedUpInfo(midVal)
+        if (controller && controller.up && !hasPreloadedInfo) {
             if (controller.up.clearUpSearch) controller.up.clearUpSearch()
             var videoModel = controller.up.upVideoModel()
             if (videoModel && videoModel.clear) videoModel.clear()
             var seasonModel = controller.up.upSeasonModel()
             if (seasonModel && seasonModel.clear) seasonModel.clear()
+            var dynamicModel = controller.feed ? controller.feed.upDynamicModel() : null
+            if (dynamicModel && dynamicModel.clear) dynamicModel.clear()
         }
-        if (controller && controller.upUserMid === midVal && controller.upSelectedSeasonId !== 0) {
+        if (controller && controller.upUserMid === midVal &&
+                (controller.upSelectedSeasonId !== 0 || controller.upSelectedDynamic)) {
             controller.up.selectUpSeason(0, "", false, 0)
             upVideosRequested = true
         }
+        syncPreloadedUpState()
         resetScrollState()
         scheduleInitialFetch()
     }
@@ -278,18 +410,32 @@ Rectangle {
                 if (videoModel && videoModel.clear) videoModel.clear()
                 var seasonModel = controller.up.upSeasonModel()
                 if (seasonModel && seasonModel.clear) seasonModel.clear()
+                var dynamicModel = controller.feed ? controller.feed.upDynamicModel() : null
+                if (dynamicModel && dynamicModel.clear) dynamicModel.clear()
                 upPage.resetUpSearchState()
             }
+            syncPreloadedUpState()
             resetScrollState()
             scheduleInitialFetch()
+            scheduleUpVideoPreload()
         }
     }
+
+    onUpSearchModeChanged: scheduleUpVideoPreload()
+    onUpDynamicModeChanged: scheduleUpVideoPreload()
 
     Timer {
         id: initialFetchTimer
         interval: Theme.animNormal + 16
         repeat: false
         onTriggered: upPage.performInitialFetch()
+    }
+
+    Timer {
+        id: upVideoPreloadTimer
+        interval: 180
+        repeat: false
+        onTriggered: upPage.runUpVideoPreload()
     }
 
     Component.onCompleted: {
@@ -299,9 +445,13 @@ Rectangle {
             if (videoModel && videoModel.clear) videoModel.clear()
             var seasonModel = controller.up.upSeasonModel()
             if (seasonModel && seasonModel.clear) seasonModel.clear()
+            var dynamicModel = controller.feed ? controller.feed.upDynamicModel() : null
+            if (dynamicModel && dynamicModel.clear) dynamicModel.clear()
             upInfoReady = false
         }
+        syncPreloadedUpState()
         scheduleInitialFetch()
+        scheduleUpVideoPreload()
     }
 
     Connections {
@@ -350,7 +500,10 @@ Rectangle {
         visible: opacity > 0
         opacity: upPage.upContentReady ? 1 : 0
         enabled: upPage.upContentReady
-        Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+        Behavior on opacity {
+            enabled: !upPage.instantReadyTransition
+            NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic }
+        }
 
         Column {
             id: contentColumn
@@ -687,9 +840,11 @@ Rectangle {
                             id: titleHeaderText
                             text: upPage.upSearchMode
                                   ? "搜索：" + upPage.upSearchKeyword
+                                  : (upPage.upDynamicMode
+                                     ? "图文动态"
                                   : (controller && controller.upSelectedSeasonId !== 0
                                      ? (controller.upSelectedSeasonName || "合集")
-                                     : "视频列表")
+                                     : "视频列表"))
                             color: Theme.textPrimary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontMedium
@@ -703,10 +858,14 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             visible: controller && (upPage.upSearchMode
                                                      ? (!!upSearchResultList.model && upSearchResultList.count > 0)
-                                                     : (controller.upVideoTotal > 0 || (!!upVideoList.model && upVideoList.count > 0)))
+                                                     : (upPage.upDynamicMode
+                                                        ? (!!upDynamicList.model && upDynamicList.count > 0)
+                                                        : (controller.upVideoTotal > 0 || (!!upVideoList.model && upVideoList.count > 0))))
                             text: " · " + (upPage.upSearchMode
-                                           ? upSearchResultList.count
-                                           : (controller.upVideoTotal > 0 ? controller.upVideoTotal : upVideoList.count)) + " 个视频"
+                                           ? upSearchResultList.count + " 个视频"
+                                           : (upPage.upDynamicMode
+                                              ? upDynamicList.count + " 条动态"
+                                              : (controller.upVideoTotal > 0 ? controller.upVideoTotal : upVideoList.count) + " 个视频"))
                             color: Theme.textTertiary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
@@ -718,7 +877,8 @@ Rectangle {
                         anchors.right: lastWatchedButton.left
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 34
+                        visible: !upPage.upDynamicMode
+                        width: visible ? 34 : 0
                         height: 20
                         radius: 10
                         color: searchArea.pressed ? Theme.withAlpha(Theme.primary, 0.22)
@@ -757,7 +917,8 @@ Rectangle {
                         anchors.right: parent.right
                         anchors.rightMargin: Theme.spacingLarge
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 58
+                        visible: !upPage.upDynamicMode
+                        width: visible ? 58 : 0
                         height: 20
                         radius: 10
                         color: lastWatchedArea.pressed ? Theme.withAlpha(Theme.primary, 0.22)
@@ -821,7 +982,7 @@ Rectangle {
                                 height: filterStrip.height
                                 width: allChipText.implicitWidth + 26
                                 radius: height / 2
-                                property bool selected: !controller || controller.upSelectedSeasonId === 0
+                                property bool selected: !controller || (!controller.upSelectedDynamic && controller.upSelectedSeasonId === 0)
                                 color: selected ? Theme.primary
                                                 : (allChipArea.pressed ? Theme.bgTertiary : Theme.bgSecondary)
                                 border.color: selected ? "transparent"
@@ -845,8 +1006,96 @@ Rectangle {
                                     anchors.fill: parent
                                     onClicked: {
                                         if (!controller) return
-                                        if (controller.upSelectedSeasonId !== 0) {
+                                        if (controller.upSelectedSeasonId !== 0 || controller.upSelectedDynamic) {
                                             controller.up.selectUpSeason(0, "", false, 0)
+                                            upPage.resetListState()
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: dynamicChip
+                                height: filterStrip.height
+                                width: dynamicChipText.implicitWidth + 26
+                                radius: height / 2
+                                property bool selected: controller && controller.upSelectedDynamic
+                                color: selected ? Theme.primary
+                                                : (dynamicChipArea.pressed ? Theme.bgTertiary : Theme.bgSecondary)
+                                border.color: selected ? "transparent"
+                                                       : Theme.withAlpha(Theme.primary, 0.25)
+                                border.width: selected ? 0 : 1
+
+                                Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 4
+
+                                    Canvas {
+                                        id: dynamicChipIcon
+                                        width: 10
+                                        height: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        property bool selected: dynamicChip.selected
+                                        onSelectedChanged: requestPaint()
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.clearRect(0, 0, width, height)
+                                            var c = dynamicChip.selected ? Theme.textOnPrimary : Theme.textSecondary
+                                            ctx.strokeStyle = c
+                                            ctx.fillStyle = c
+                                            ctx.lineWidth = 1.1
+                                            ctx.lineCap = "round"
+                                            ctx.lineJoin = "round"
+
+                                            ctx.beginPath()
+                                            ctx.moveTo(1.2, 2)
+                                            ctx.lineTo(8.8, 2)
+                                            ctx.quadraticCurveTo(9.4, 2, 9.4, 2.6)
+                                            ctx.lineTo(9.4, 7.8)
+                                            ctx.quadraticCurveTo(9.4, 8.4, 8.8, 8.4)
+                                            ctx.lineTo(1.2, 8.4)
+                                            ctx.quadraticCurveTo(0.6, 8.4, 0.6, 7.8)
+                                            ctx.lineTo(0.6, 2.6)
+                                            ctx.quadraticCurveTo(0.6, 2, 1.2, 2)
+                                            ctx.closePath()
+                                            ctx.stroke()
+
+                                            ctx.beginPath()
+                                            ctx.arc(3, 4, 0.9, 0, Math.PI * 2, false)
+                                            ctx.fill()
+
+                                            ctx.beginPath()
+                                            ctx.moveTo(1.2, 7.6)
+                                            ctx.lineTo(3.5, 5.6)
+                                            ctx.lineTo(5.1, 6.9)
+                                            ctx.lineTo(6.8, 5.1)
+                                            ctx.lineTo(8.8, 7.6)
+                                            ctx.stroke()
+                                        }
+                                        Component.onCompleted: requestPaint()
+                                    }
+
+                                    Text {
+                                        id: dynamicChipText
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "图文"
+                                        color: dynamicChip.selected ? Theme.textOnPrimary : Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSmall
+                                        font.bold: dynamicChip.selected
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: dynamicChipArea
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        if (!controller || !controller.up) return
+                                        if (!dynamicChip.selected) {
+                                            upPage.resetUpSearchState()
+                                            controller.up.selectUpDynamic()
                                             upPage.resetListState()
                                         }
                                     }
@@ -861,7 +1110,7 @@ Rectangle {
                                     height: filterStrip.height
                                     width: Math.min(seasonChipText.implicitWidth + 26, 172)
                                     radius: height / 2
-                                    property bool selected: controller && controller.upSelectedSeasonId === model.seasonId
+                                    property bool selected: controller && !controller.upSelectedDynamic && controller.upSelectedSeasonId === model.seasonId
                                     color: selected ? Theme.primary
                                                     : (seasonChipArea.pressed ? Theme.bgTertiary : Theme.bgSecondary)
                                     border.color: selected ? "transparent"
@@ -941,7 +1190,7 @@ Rectangle {
 
                 ListView {
                     id: upVideoList
-                    visible: !upPage.upSearchMode
+                    visible: !upPage.upSearchMode && !upPage.upDynamicMode
                     width: parent.width
                     height: 135
                     anchors.top: filterStrip.bottom
@@ -972,8 +1221,15 @@ Rectangle {
                     }
 
                     onAtXBeginningChanged: if (atXBeginning) maybeFetchPrevious()
-                    onMovementEnded: maybeFetchPrevious()
-                    onDraggingChanged: if (!dragging) maybeFetchPrevious()
+                    onMovementEnded: {
+                        maybeFetchPrevious()
+                        upPage.scheduleUpVideoPreload()
+                    }
+                    onDraggingChanged: if (!dragging) {
+                        maybeFetchPrevious()
+                        upPage.scheduleUpVideoPreload()
+                    }
+                    onContentXChanged: upPage.scheduleUpVideoPreload()
 
                     // 注意：当列表内容不足以撑满宽度时，atXEnd 会一直为 true，
                     // 可能导致无限触发“加载更多”并表现为“循环同一列表”。
@@ -1002,7 +1258,7 @@ Rectangle {
                         isLastWatched: (Number(upPage.upFromViewAid || 0) > 0 && Number(model.aid || 0) === Number(upPage.upFromViewAid))
                                        || model.isLastWatchedArc === true
                                        || index === upPage.locatedLastWatchedIndex
-                        showCollection: model.partCount > 1
+                        partCount: model.partCount || 1
                         titleScale: 0.9
                         subScale: 0.85
                         onClicked: upPage.videoSelected(bvid)
@@ -1024,6 +1280,71 @@ Rectangle {
                             }
                         }
                     }
+                }
+
+                ListView {
+                    id: upDynamicList
+                    visible: !upPage.upSearchMode && upPage.upDynamicMode
+                    width: parent.width
+                    height: 135
+                    anchors.top: filterStrip.bottom
+                    anchors.topMargin: Theme.spacingNormal
+                    orientation: ListView.Vertical
+                    spacing: 5
+                    clip: true
+                    cacheBuffer: 360
+                    displayMarginBeginning: 120
+                    displayMarginEnd: 160
+                    model: controller && controller.feed ? controller.feed.upDynamicModel() : null
+                    leftMargin: 6
+                    rightMargin: 6
+                    topMargin: 1
+                    bottomMargin: 1
+
+                    delegate: Components.DynamicFeedCard {
+                        width: upDynamicList.width - 12
+                        authorName: model.authorName || ""
+                        authorFace: model.authorFace || ""
+                        pubAction: model.pubAction || ""
+                        pubTime: model.pubTime || ""
+                        text: model.text || ""
+                        majorTitle: model.majorTitle || ""
+                        majorCover: model.majorCover || ""
+                        majorBvid: model.majorBvid || ""
+                        majorDurationText: model.majorDurationText || ""
+                        pictures: model.pictures || []
+                        origSummary: model.origSummary || ""
+                        origTitle: model.origTitle || ""
+                        origCover: model.origCover || ""
+                        repostCountText: model.repostCountText || "0"
+                        commentCountText: model.commentCountText || "0"
+                        likeCountText: model.likeCountText || "0"
+                        isVideo: model.isVideo || false
+                        isImage: model.isImage || false
+                        isArticle: model.isArticle || false
+                        isLive: model.isLive || false
+                        isForward: model.isForward || false
+                        imageActive: upPage.visible && upPage.upDynamicMode
+                        onClicked: {
+                            if (bvid && bvid.length > 0) {
+                                upPage.videoSelected(bvid)
+                            } else {
+                                upPage.dynamicSelected(upPage.dynamicDataFromModel(model))
+                            }
+                        }
+                    }
+
+                    onAtYEndChanged: {
+                        if (!atYEnd || !controller || !controller.feed) return
+                        if (upDynamicList.contentHeight <= upDynamicList.height + 2) return
+                        if (upPage.upDynamicLoadingMore) return
+                        if (upDynamicList.model && upDynamicList.model.loading) return
+                        if (upDynamicList.model && upDynamicList.model.hasMore === false) return
+                        upPage.upDynamicLoadingMore = true
+                        controller.feed.fetchMoreUpDynamics()
+                    }
+
+                    onCountChanged: upPage.upDynamicLoadingMore = false
                 }
 
                 ListView {
@@ -1053,7 +1374,7 @@ Rectangle {
                         viewCount: model.views || ""
                         durationText: model.durationText || ""
                         bvid: model.bvid || ""
-                        showCollection: model.partCount > 1
+                        partCount: model.partCount || 1
                         titleScale: 0.9
                         subScale: 0.85
                         onClicked: {
@@ -1095,7 +1416,12 @@ Rectangle {
                     onCountChanged: {
                         upPage.upSearchLoadingMore = false
                         upPage.restoreUpSearchPosition()
+                        upPage.scheduleUpVideoPreload()
                     }
+
+                    onContentXChanged: upPage.scheduleUpVideoPreload()
+                    onMovementEnded: upPage.scheduleUpVideoPreload()
+                    onDraggingChanged: if (!dragging) upPage.scheduleUpVideoPreload()
                 }
 
                 Connections {
@@ -1106,6 +1432,7 @@ Rectangle {
                         upVideoList._loadingPrevious = false
                         upPage.clampScrollState()
                         upPage.tryScrollToLastWatched()
+                        upPage.scheduleUpVideoPreload()
                     }
                     function onCountChanged() {
                         if (upVideoList._loadingPrevious) {
@@ -1116,6 +1443,19 @@ Rectangle {
                         }
                         upVideoList._loadingMore = false
                         upPage.tryScrollToLastWatched()
+                        upPage.scheduleUpVideoPreload()
+                    }
+                }
+
+                Connections {
+                    target: upDynamicList.model
+                    function onLoadingChanged() {
+                        if (!target || target.loading) return
+                        upPage.upDynamicLoadingMore = false
+                        upPage.clampScrollState()
+                    }
+                    function onCountChanged() {
+                        upPage.upDynamicLoadingMore = false
                     }
                 }
 
@@ -1125,16 +1465,34 @@ Rectangle {
                         if (!target || target.loading) return
                         upPage.upSearchLoadingMore = false
                         upPage.restoreUpSearchPosition()
+                        upPage.scheduleUpVideoPreload()
                     }
                 }
 
                 Text {
-                    visible: !upPage.upSearchMode && upVideoList.count === 0 && controller && !controller.isLoading
+                    visible: !upPage.upSearchMode && !upPage.upDynamicMode
+                             && upVideoList.count === 0 && controller && !controller.isLoading
                     text: controller && controller.upSelectedSeasonId !== 0 ? "该合集暂无视频" : "暂无投稿"
                     color: Theme.textTertiary
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: upVideoList.bottom
                     anchors.topMargin: 6
+                }
+
+                Text {
+                    visible: !upPage.upSearchMode && upPage.upDynamicMode
+                             && upDynamicList.count === 0
+                             && upDynamicList.model
+                             && !upDynamicList.model.loading
+                    text: upDynamicList.model && upDynamicList.model.errorMessage
+                          ? upDynamicList.model.errorMessage
+                          : "暂无图文动态"
+                    color: Theme.textTertiary
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: upDynamicList.bottom
+                    anchors.topMargin: 6
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSmall
                 }
 
                 Text {
@@ -1195,7 +1553,10 @@ Rectangle {
         opacity: upPage.upContentReady ? 0 : 1
         z: 20
         clip: true
-        Behavior on opacity { NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic } }
+        Behavior on opacity {
+            enabled: !upPage.instantReadyTransition
+            NumberAnimation { duration: Theme.animNormal; easing.type: Easing.OutCubic }
+        }
 
         Column {
             width: parent.width

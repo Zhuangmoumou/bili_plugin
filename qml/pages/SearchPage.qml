@@ -567,7 +567,7 @@ Rectangle {
             viewCount: model.views || ""
             durationText: model.durationText || ""
             bvid: model.bvid || ""
-            showCollection: model.partCount > 1
+            partCount: model.partCount || 1
 
             // 标题稍微更小 + 标题与 UP 信息间距更小
             titleScale: 0.95
